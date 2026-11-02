@@ -33,7 +33,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "008"
+#define GAME_VERSION      "009"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -104,6 +104,7 @@ struct RoomInfo {
   bool searched[MAX_DECOR];        // ...searched yet
   bool holds[MAX_DECOR];           // ...something in it
   bool kit, kitUsed;               // a first aid kit here, and whether it has been used
+  float progress[MAX_DECOR + 1];   // how far each piece has been searched (seconds; the kit last)
 };
 static RoomInfo rooms[ROOM_COUNT];         // numbered 1..30 across the rows, top to bottom
 static int8_t roomAt[ROWS][COLS];          // which room is in each place (-1: none)
@@ -190,6 +191,7 @@ static void layOut(uint32_t seed) {
       ri.decorN = (uint8_t)(EQUIPMENT_TOTAL / ROOM_COUNT);
       for (int i = 0; i < MAX_DECOR; i++) ri.searched[i] = ri.holds[i] = false;
       ri.kit = ri.kitUsed = false;
+      for (int i = 0; i <= MAX_DECOR; i++) ri.progress[i] = 0;
     }
   // the rooms with one more piece of equipment, to make EQUIPMENT_TOTAL
   for (int extra = EQUIPMENT_TOTAL - ROOM_COUNT * (EQUIPMENT_TOTAL / ROOM_COUNT); extra > 0;) {
@@ -282,8 +284,12 @@ static uint32_t held = 0, pressed = 0;
 static int searchItem = -1;
 static float searchBeepT = 0;
 #define SEARCH_BEEP_SECONDS 0.18f
-static float searchT = 0;
 static float nothingShowT = 0, nothingX = 0, nothingY = 0;
+
+// The opening: out of the air-conditioning duct onto the catwalk (as NUCLEAR MISSION's lab)
+static float introT = -1;              // >= 0: the opening is playing (seconds)
+static int ventShaft = -1, ventFloor = -1, ventX = 0;   // where the duct is
+static bool ventOpen = false;          // its grille has come out (it lies on the catwalk)
 
 // Health, the clock, the end
 static int health = HEALTH_MAX;
@@ -341,7 +347,7 @@ void micromod2_set_gain(long value);
 void micromod2_get_audio(short *output_buffer, long count);
 }
 
-enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE };
+enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND };
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -413,6 +419,10 @@ static void startEffect(uint8_t sfx) {
       startVoice(WAVE_TRIANGLE, 659, 659, 110, 120, 0.4f);
       startVoice(WAVE_TRIANGLE, 784, 784, 220, 120, 0.4f);
       startVoice(WAVE_TRIANGLE, 1047, 1047, 330, 400, 0.4f);
+      break;
+    case SFX_LAND:                             // NUCLEAR MISSION's landing
+      startVoice(WAVE_NOISE, 1500, 200, 0, 130, 0.30f);
+      startVoice(WAVE_SQUARE, 110, 50, 0, 120, 0.18f);
       break;
     case SFX_LIFT_STOP:                        // the lift settling at a stop: a soft low thump
       startVoice(WAVE_TRIANGLE, 90, 45, 0, 140, 0.30f);
@@ -1159,6 +1169,44 @@ static void drawCatwalkDoor(bool right, int fy, int room) {
   fillRect(x0, top - 4, x1, top - 1, frame);
 }
 
+// The air-conditioning duct in the catwalk's ceiling: the duct coming out of
+// the wall, its grille rattling and falling out, then lying on the catwalk
+static void drawVent(int fy, int cy) {
+  int vx = ventX;
+  fillRect(vx - 34, cy - 40, vx + 34, cy - 6, rgb565(156, 162, 170));    // the duct
+  fillRect(vx - 34, cy - 40, vx - 31, cy - 6, rgb565(196, 202, 210));
+  fillRect(vx + 31, cy - 40, vx + 34, cy - 6, rgb565(98, 104, 112));
+  for (int x = vx - 26; x < vx + 26; x += 13) fillRect(x, cy - 36, x + 1, cy - 10, rgb565(120, 126, 136));
+  fillRect(vx - 38, cy - 8, vx + 38, cy, rgb565(124, 130, 138));        // its frame in the ceiling
+  float t = introT;
+  bool fallen = ventOpen || (t >= 0.8f);
+  if (!fallen) {
+    int sh = (t >= 0 && t < 0.8f) ? (int)(2 * sinf(t * 60)) : 0;
+    fillRect(vx - 30 + sh, cy - 6, vx + 30 + sh, cy, rgb565(180, 186, 194));
+    for (int x = vx - 26; x < vx + 26; x += 6) fillRect(x + sh, cy - 5, x + 2 + sh, cy - 1, rgb565(90, 96, 106));
+    return;
+  }
+  fillRect(vx - 30, cy - 6, vx + 30, cy, rgb565(10, 10, 12));            // the hole
+  float ft = (t >= 0) ? t - 0.8f : 9.0f;                                 // the grille: falling, then on the floor
+  float gx, gy, ang = 0;
+  if (ft < 0.42f) {
+    gx = vx + ft * 70;
+    gy = cy - 3 + 0.5f * 1100 * ft * ft;
+    ang = ft * 5;
+  } else {
+    gx = vx + 40;
+    gy = fy - 3;
+  }
+  if (gy > fy - 3) gy = fy - 3;
+  float c = cosf(ang), sn = sinf(ang);
+  float px[4] = { -30, 30, 30, -30 }, py[4] = { -3, -3, 3, 3 }, xs[4], ys[4];
+  for (int k = 0; k < 4; k++) {
+    xs[k] = gx + px[k] * c - py[k] * sn;
+    ys[k] = gy + px[k] * sn + py[k] * c;
+  }
+  fillPolygonF(xs, ys, 4, rgb565(110, 116, 128));
+}
+
 // A door on this side of the shaft at the car's floor? (side 0 = left)
 static bool sideDoor(int side) { return roomOff(curShaft, carFloor, side == 1) >= 0; }
 
@@ -1218,6 +1266,7 @@ static void drawShaftScene() {
       for (int x = x0 + 50; x < x1 - 20; x += 120) fillRect(x, cy + 1, x + 18, cy + 4, lamp);
       // the door at the far end, then the hand rail in front of the wall
       drawCatwalkDoor(side == 1, fy, room);
+      if (curShaft == ventShaft && L == ventFloor && (ventX > SHAFT_X1) == (side == 1)) drawVent(fy, cy);
       int r0 = side ? x0 : 40, r1 = side ? x1 - 40 : x1;
       drawLine(r0, fy - 44, r1, fy - 44, rail, true);
       for (int x = r0 + 20; x < r1; x += 40) drawLine(x, fy - 44, x, fy - 1, rail, false);
@@ -1569,6 +1618,17 @@ static int decorAt() {
   return -1;
 }
 
+// A piece that can't be searched (any more): searched already, or a used first aid kit
+static bool pieceDone(int i) {
+  const RoomInfo &ri = rooms[curRoom];
+  return decor[i].kind == DEC_FIRSTAID ? ri.kitUsed : ri.searched[i];
+}
+// How far it has been searched (the kit's is kept after the equipment's)
+static float &pieceProgress(int i) {
+  RoomInfo &ri = rooms[curRoom];
+  return decor[i].kind == DEC_FIRSTAID ? ri.progress[MAX_DECOR] : ri.progress[i];
+}
+
 static void updateAgent(float dt) {
   bool L = held & BTN_LEFT, R = held & BTN_RIGHT;
   int want = (R && !L) ? 1 : ((L && !R) ? -1 : 0);
@@ -1598,8 +1658,17 @@ static void updateAgent(float dt) {
       } else if (pressed & BTN_JUMP) {
         if (want) agFacing = want;
         startJump();
+      } else if ((held & BTN_USE) && mode == MODE_ROOM && decorAt() >= 0 && pieceDone(decorAt())) {
+        // searched already: it isn't searched again
+        if (pressed & BTN_USE) {
+          int i = decorAt();
+          snprintf(floatText, sizeof(floatText), decor[i].kind == DEC_FIRSTAID ? "EMPTY" : "SEARCHED");
+          floatColour = rgb565(150, 156, 170);
+          nothingShowT = NOTHING_SHOW;
+          nothingX = decor[i].x;
+          nothingY = decor[i].y - decorH[decor[i].kind] - 22;
+        }
       } else if ((held & BTN_USE) && mode == MODE_ROOM) {   // (nothing to search in the lift)
-        searchT = 0;
         searchItem = -1;
         setState(ST_USE, 0.18f);
       } else if (want) {
@@ -1724,11 +1793,10 @@ static void updateAgent(float dt) {
 
     case ST_USE: {
       int i = decorAt();
-      if (i != searchItem) {
-        searchItem = i;
-        searchT = 0;
-      }
-      if (i >= 0 && searchT < SEARCH_SECONDS) {
+      if (i >= 0 && pieceDone(i)) i = -1;
+      searchItem = i;
+      if (i >= 0 && pieceProgress(i) < SEARCH_SECONDS) {   // (carrying on from wherever it was left)
+        float &searchT = pieceProgress(i);
         searchBeepT += dt;                   // NUCLEAR MISSION's searching beeps
         if (searchBeepT >= SEARCH_BEEP_SECONDS) {
           searchBeepT = 0;
@@ -1739,9 +1807,11 @@ static void updateAgent(float dt) {
           RoomInfo &ri = rooms[curRoom];
           float px = decor[i].x, py = decor[i].y - decorH[decor[i].kind] - 22;
           if (decor[i].kind == DEC_FIRSTAID) {   // the first aid kit
-            if (ri.kitUsed) snprintf(floatText, sizeof(floatText), "EMPTY"), floatColour = rgb565(170, 170, 180);
-            else if (health >= HEALTH_MAX) snprintf(floatText, sizeof(floatText), "HEALTH FULL"), floatColour = rgb565(170, 170, 180);
-            else {
+            if (health >= HEALTH_MAX) {
+              snprintf(floatText, sizeof(floatText), "HEALTH FULL");
+              floatColour = rgb565(170, 170, 180);
+              searchT = 0;                    // (not used: it can be searched again later)
+            } else {
               health = HEALTH_MAX;
               ri.kitUsed = true;
               paintRoom();                    // (it hangs open now)
@@ -1803,6 +1873,47 @@ static void updateAgent(float dt) {
   }
 }
 
+// The opening: the grille rattles and falls, he lowers himself out of the
+// duct and drops onto the catwalk (X skips it)
+static void updateIntro(float dt) {
+  float before = introT;
+  introT += dt;
+  float t = introT;
+  if (pressed & BTN_JUMP) t = introT = 2.0f;
+  int cy = CAR_FLOOR_Y - CORR_H;
+  agX = (float)ventX;
+  agFacing = ventX > SHAFT_X1 ? -1 : 1;   // (facing the lift)
+  AgentPose &p = shownPose;
+  memset(&p, 0, sizeof(p));
+  if ((before < 0.15f && t >= 0.15f) || (before < 0.5f && t >= 0.5f)) sfxPlay(SFX_CLUNK);
+  if (before < 1.2f && t >= 1.2f) sfxPlay(SFX_LAND);   // the grille hits the catwalk
+  if (t < 1.0f) {                      // still in the duct
+    agY = cy - 20;
+    p.armF = p.armN = 175;
+  } else if (t < 1.7f) {               // lowering himself out, hanging from the edge
+    float k = (t - 1.0f) / 0.7f;
+    agY = cy + 20 + 128 * k;
+    p.armF = 176; p.elbowF = 4;
+    p.armN = 172; p.elbowN = 8;
+    p.legN = 6 * sinf(t * 5); p.legF = -4;
+  } else if (t < 1.95f) {              // let go
+    float k = (t - 1.7f) / 0.25f;
+    agY = cy + 148 + (CAR_FLOOR_Y - cy - 148) * k * k;
+    p.armF = 150; p.armN = 140; p.elbowN = 20;
+  } else {                             // on the catwalk: over to the player
+    agY = CAR_FLOOR_Y;
+    introT = -1;
+    ventOpen = true;
+    placeAgent(agX, CAR_FLOOR_Y, agFacing);
+    agentSample(ANIM_JUMP, AG_JUMP_DOWN, shownPose);
+    setState(ST_LAND, 0.0f);
+    sfxPlay(SFX_LAND);
+    showMsg("OPTIONS: THE MAP", 5.0f);
+    return;
+  }
+  p.plant = 0;
+}
+
 // ============================================================ drawing each frame
 static void drawLiftPad(const Lift &l) {
   int top = shaftTop(l);
@@ -1831,11 +1942,17 @@ static void drawSearchMarks() {
       drawLine(tx + 4, ty + 5, tx + 13, ty - 6, c, true);
     }
   }
-  if (agState == ST_USE && searchItem >= 0 && searchT < SEARCH_SECONDS) {
-    const Decor &d = decor[searchItem];
+  // the search bar: over the piece being searched, and dimmer over any half searched and left
+  for (int i = 0; i < decorCount; i++) {
+    if (pieceDone(i)) continue;
+    float prog = pieceProgress(i);
+    bool now = (agState == ST_USE && searchItem == i);
+    if (!now && prog <= 0) continue;
+    const Decor &d = decor[i];
     int x0 = d.x - 36, y0 = d.y - decorH[d.kind] - 30;
-    drawRectOutline(x0, y0, x0 + 72, y0 + 9, rgb565(220, 220, 230), 1);
-    fillRect(x0 + 2, y0 + 2, x0 + 2 + (int)(68 * searchT / SEARCH_SECONDS), y0 + 7, rgb565(120, 200, 255));
+    drawRectOutline(x0, y0, x0 + 72, y0 + 9, now ? rgb565(220, 220, 230) : rgb565(110, 116, 130), 1);
+    int w = (int)(68 * fminf(prog, SEARCH_SECONDS) / SEARCH_SECONDS);
+    if (w > 0) fillRect(x0 + 2, y0 + 2, x0 + 1 + w, y0 + 7, now ? rgb565(120, 200, 255) : rgb565(70, 110, 150));
   }
   if (nothingShowT > 0)
     drawVectorText(floatText, nothingX, fmaxf(nothingY, 112.0f) - (NOTHING_SHOW - nothingShowT) * 20, 2.5f, floatColour, false);
@@ -2122,6 +2239,83 @@ static void drawMap() {
 // ============================================================ the title
 static bool onTitle = true;
 
+static inline float pulseOf(float t) { return 0.5f + 0.5f * sinf(t); }
+
+// The story on the title screen: a classified transmission, typed out line by
+// line, now and then glitching as reality wavers; the last line in red
+static float titleT = 0;                 // seconds on the title screen
+static const char *const titleStory[] = {
+  "A TOP-SECRET EXPERIMENT DESIGNED TO MANIPULATE",
+  "TIME AND MATTER HAS GONE CATASTROPHICALLY WRONG.",
+  "THE FACILITY'S DIRECTOR, PROFESSOR ADRIAN VOSS,",
+  "HAS TAKEN CONTROL OF THE INSTALLATION AND",
+  "ACTIVATED A DEVICE KNOWN AS THE QUANTUM CORE.",
+  "",
+  "THE MACHINE IS NOW DESTABILISING REALITY ITSELF.",
+};
+#define STORY_LINES (int)(sizeof(titleStory) / sizeof(titleStory[0]))
+#define STORY_CHARS_PER_SECOND 38.0f
+
+static void drawTitleStory() {
+  const int x0 = 196, x1 = 1084, y0 = 250, y1 = 572;
+  blendRect(x0, y0, x1, y1, 4, 10, 16, 0.78f);
+  drawRectOutline(x0, y0, x1, y1, rgb565(60, 170, 190), 2);
+  fillRect(x0 + 2, y0 + 2, x1 - 2, y0 + 30, rgb565(70, 16, 14));
+  bool blinkHead = fmodf(titleT, 1.2f) < 0.8f;
+  drawVectorText("CLASSIFIED TRANSMISSION", x0 + 22 + vectorTextWidth("CLASSIFIED TRANSMISSION", 2.2f) / 2, y0 + 16, 2.2f,
+                 blinkHead ? rgb565(255, 90, 70) : rgb565(150, 50, 40), true);
+  drawVectorText("FACILITY Q-7  //  PRIORITY ONE", x1 - 22 - vectorTextWidth("FACILITY Q-7  //  PRIORITY ONE", 1.8f) / 2, y0 + 16, 1.8f,
+                 rgb565(220, 150, 140), false);
+  // the text, typed out
+  float typed = (titleT - 0.6f) * STORY_CHARS_PER_SECOND;
+  int lx = x0 + 34, curLine = -1, curCol = 0;
+  // now and then a glitch: one line jumps sideways in two colours
+  float g = fmodf(titleT, 2.9f);
+  int glitchLine = g < 0.14f ? ((int)(titleT / 2.9f) * 5 + 3) % STORY_LINES : -1;
+  for (int l = 0; l < STORY_LINES; l++) {
+    int len = (int)strlen(titleStory[l]);
+    int show = typed <= 0 ? 0 : (typed >= len ? len : (int)typed);
+    typed -= len + 6;                          // (a little pause at each line's end)
+    if (show <= 0) continue;
+    char part[64];
+    snprintf(part, sizeof(part), "%.*s", show, titleStory[l]);
+    float y = y0 + 64 + l * 38;
+    float w = vectorTextWidth(part, 2.5f);
+    bool last = (l == STORY_LINES - 1);
+    uint16_t col = last ? rgb565(255, 70 + (int)(40 * pulseOf(titleT * 3.0f)), 50) : rgb565(170, 236, 246);
+    if (l == glitchLine) {
+      float jx = 8.0f * sinf(titleT * 90.0f);
+      drawVectorText(part, lx + w / 2 + jx - 3, y, 2.5f, rgb565(255, 40, 60), true);
+      drawVectorText(part, lx + w / 2 - jx + 3, y, 2.5f, rgb565(40, 220, 255), true);
+    } else {
+      drawVectorText(part, lx + w / 2, y, 2.5f, col, true);
+    }
+    if (show < len) {
+      curLine = l;
+      curCol = show;
+    }
+  }
+  // the cursor, after the last letter typed (or under the text once it is all out)
+  if (fmodf(titleT, 0.6f) < 0.35f) {
+    float cx, cy;
+    if (curLine >= 0) {
+      char part[64];
+      snprintf(part, sizeof(part), "%.*s", curCol, titleStory[curLine]);
+      cx = lx + vectorTextWidth(part, 2.5f) + 8;
+      cy = y0 + 64 + curLine * 38;
+    } else if (typed > 0) {             // all out: it waits at the end of the last line
+      cx = lx + vectorTextWidth(titleStory[STORY_LINES - 1], 2.5f) + 8;
+      cy = y0 + 64 + (STORY_LINES - 1) * 38;
+    } else {
+      cx = -100;
+      cy = 0;
+    }
+    if (cx > 0) fillRect((int)cx, (int)cy - 8, (int)cx + 10, (int)cy + 8, rgb565(170, 236, 246));
+  }
+  // scan lines over it all
+  for (int y = y0 + 34; y < y1 - 2; y += 4) blendRect(x0 + 2, y, x1 - 2, y, 0, 0, 0, 0.18f);
+}
+
 static void drawTitle() {
   gfxTarget = g_frame;
   gfxClipAll();
@@ -2145,18 +2339,13 @@ static void drawTitle() {
   const char *w1 = "QUANTUM", *w2 = "LOCKDOWN";
   float pulse = 0.5f + 0.5f * sinf(clockT * 2.0f);
   uint16_t glow = rgb565(60 + (int)(40 * pulse), 34, 12), main = rgb565(255, 190, 70);
-  drawVectorTextW(w1, SCREEN_W / 2, 150, 14.0f, glow, 11.0f);
-  drawVectorTextW(w2, SCREEN_W / 2, 280, 14.0f, glow, 11.0f);
-  drawVectorTextW(w1, SCREEN_W / 2, 150, 14.0f, main, 4.0f);
-  drawVectorTextW(w2, SCREEN_W / 2, 280, 14.0f, main, 4.0f);
-  fillRect(260, 362, 1020, 365, rgb565(90, 70, 40));
-  // him, standing by
-  AgentPose p;
-  agentSample(ANIM_IDLE, clockT, p);
-  drawAgentU(p, SCREEN_W / 2, 650, 1, 1.3f);
-  fillRect(SCREEN_W / 2 - 90, 650, SCREEN_W / 2 + 90, 656, rgb565(80, 86, 98));
-  if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 425, 4.0f, rgb565(240, 240, 245), true);
-  if (tuneProblem[0][0]) drawVectorText(tuneProblem[0], SCREEN_W / 2, 650, 1.8f, rgb565(220, 120, 90), false);
+  drawVectorTextW(w1, SCREEN_W / 2, 84, 11.0f, glow, 9.0f);
+  drawVectorTextW(w2, SCREEN_W / 2, 186, 11.0f, glow, 9.0f);
+  drawVectorTextW(w1, SCREEN_W / 2, 84, 11.0f, main, 3.4f);
+  drawVectorTextW(w2, SCREEN_W / 2, 186, 11.0f, main, 3.4f);
+  drawTitleStory();
+  if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 620, 4.0f, rgb565(240, 240, 245), true);
+  if (tuneProblem[0][0]) drawVectorText(tuneProblem[0], SCREEN_W / 2, 656, 1.8f, rgb565(220, 120, 90), false);
   if (tuneProblem[1][0]) drawVectorText(tuneProblem[1], SCREEN_W / 2, 674, 1.8f, rgb565(220, 120, 90), false);
   char b[24];
   snprintf(b, sizeof(b), "VERSION %s", GAME_VERSION);
@@ -2167,7 +2356,14 @@ static void drawTitle() {
 static void newGame() {
   layOut(layoutSeed * 7919u + 13u + (uint32_t)(clockT * 1000.0f));
   enterShaft(START_SHAFT, topStop(START_SHAFT), true);
-  placeAgent((SHAFT_X0 + SHAFT_X1) / 2, CAR_FLOOR_Y, 1);
+  // the opening: the duct is over the catwalk between the lift and the door to the first room
+  ventShaft = START_SHAFT;
+  ventFloor = carFloor;
+  bool right = roomOff(START_SHAFT, carFloor, true) >= 0;
+  ventX = right ? (SHAFT_X1 + SCREEN_W - 40) / 2 : (40 + SHAFT_X0) / 2;
+  ventOpen = false;
+  introT = 0;
+  placeAgent((float)ventX, CAR_FLOOR_Y, right ? -1 : 1);
   mapOn = false;
   onTitle = false;
   score = 0;
@@ -2178,7 +2374,7 @@ static void newGame() {
   gameOver = END_NONE;
   itemShowT = nothingShowT = 0;
   for (int i = 0; i < MAX_POPS; i++) popT[i] = 0;
-  showMsg("OPTIONS: THE MAP", 5.0f);
+  msgT = 0;
 }
 
 void gameInit(uint32_t seed) {
@@ -2202,6 +2398,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   }
 
   if (onTitle) {
+    titleT += dt;
     if (pressed & BTN_JUMP) {
       newGame();
       pressed = 0;                     // (that X starts the game; it isn't a somersault)
@@ -2215,6 +2412,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     gameOverT += dt;
     if (gameOverT > 1.5f && (pressed & BTN_JUMP)) {
       onTitle = true;
+      titleT = 0;
       tuneWanted.store(0, std::memory_order_relaxed);
       drawTitle();
       return;
@@ -2223,12 +2421,17 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     mapOn = false;
   }
 
+  if (introT >= 0) {                     // the opening: no map, no clock, no control
+    updateIntro(dt);
+    pressed = 0;
+  }
+
   if (pressed & BTN_MAP) mapOn = !mapOn;   // (the map pauses everything, the clock too)
   if (mapOn) {
     if (pressed & BTN_NEW) newGame();
     pressed = 0;
   } else {
-    if (gameOver == END_NONE) {
+    if (gameOver == END_NONE && introT < 0) {
       timeLeft -= dt;
       if (timeLeft <= 0) {
         timeLeft = 0;
@@ -2242,7 +2445,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     for (int i = 0; i < MAX_POPS; i++)
       if (popT[i] > 0) popT[i] -= dt;
     updateLifts(dt);
-    updateAgent(dt);
+    if (introT < 0) updateAgent(dt);
   }
 
   // the picture
@@ -2258,7 +2461,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     gfxClip(HUD_H, PANEL_Y - 1);
     drawShaftScene();
   }
-  gfxClip(HUD_H, mode == MODE_SHAFT ? PANEL_Y - 1 : PLAY_Y1);
+  gfxClip(introT >= 0 && introT < 1.9f ? CAR_FLOOR_Y - CORR_H + 1 : HUD_H, mode == MODE_SHAFT ? PANEL_Y - 1 : PLAY_Y1);   // (in the duct: hidden)
   drawAgentU(shownPose, agX, agY, agFacing, myScale);
   gfxClip(HUD_H, PLAY_Y1);
   if (mode == MODE_SHAFT) drawPanel();

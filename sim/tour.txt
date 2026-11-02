@@ -1,10 +1,12 @@
-# A short tour (seed 1): the title, the start in lift A, the map, the four
+# A short tour (seed 1): the title, the opening (out of the duct by lift A), the map, the four
 # room layouts, a lift pad called across THE CHASM.
 seed 1
 hold NONE 30
 shot 01_title
 tap JUMP
-hold NONE 30
+hold NONE 70
+shot 02_opening_duct
+hold NONE 90
 shot 02_lift_A_start
 tap MAP
 hold NONE 30

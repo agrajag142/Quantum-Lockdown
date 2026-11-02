@@ -36,8 +36,12 @@ The lift car only stops at floors with a door. Everywhere else the shaft is
 wall, and the car runs past it (picking up speed on a long run). A catwalk
 leads off the car only on the side the door is.
 
-Each new game (X on the title screen) lays out a new complex. You start in
-the car of shaft A - the top left corner - at its first floor with a room.
+The title screen tells the story, typed out as a classified transmission
+that glitches now and then. Each new game (X on the title screen) lays out a
+new complex and opens, as NUCLEAR MISSION's lab does, with him coming out of
+an air-conditioning duct in the catwalk's ceiling at shaft A - the top left
+corner, at its first floor with a room - landing between the lift and the
+door to the first room (X skips it). The clock starts when he lands.
 
 Each room is one of the four layouts in `src/rooms_wide.h` (FOUR DECKS,
 CENTRE LIFT, TWIN TOWERS, THE CHASM), picked at random, each with four levels
@@ -55,7 +59,10 @@ Each column of rooms has its own wall colour (teal, maroon, olive, navy,
 purple, rust, forest green, mustard, plum - `wallColours` in `src/game.cpp`). 36 of them, anywhere, have
 something in them; the other 92 have nothing.
 
-- Searching a piece (hold Square) scores **50**, the first time.
+- Searching a piece (hold Square) scores **50**. A piece is searched once:
+  after that Square there just says SEARCHED. Each piece remembers how far it
+  was searched: let go half way, come back later, and it carries on from
+  there (a dim bar over it shows how far).
 - Finding something in it shows **FOUND OBJECT** and scores **200** more.
 - Searched pieces get a tick: green for nothing, gold for a find. On the map
   each room you've been in shows its pieces the same way (grey: not searched).
