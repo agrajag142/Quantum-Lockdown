@@ -1,8 +1,8 @@
 # Mission 2 (working title) for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 001: the lift shafts, one room design and
-the layout of the complex. No sound yet.
+NUCLEAR MISSION's parts. Version 002: the lift shafts, one room design with
+four levels, and the layout of the complex. No sound yet.
 
 ## What's different from NUCLEAR MISSION's PS5 port
 
@@ -22,15 +22,23 @@ it draws the whole 1920x1080 picture itself.
 
 ## The complex
 
-30 rooms (6 across, 5 down) between 7 lift shafts, A to G. Every room has a
-door on its left and on its right, each at the room's **top** or its
-**bottom** (picked at random for each room, each game). A door opens onto the
-lift shaft on that side, at the floor that matches it: each shaft has two
-floors for each row of rooms (the top doors' floor, then the bottom doors'),
-10 floors in all. You start in the car of shaft D, at floor 1.
+30 rooms in 9 columns, laid out afresh each game: every column has at least
+2 and at most 6 rooms, on any of 6 rows. A lift shaft runs down each side of
+every column: 10 shafts, A to J. Every room has a door on its left and on its
+right, each at the room's **top** or its **bottom** (picked at random for
+each room). A door opens onto the shaft on that side, at the floor that
+matches it: each row has two floor positions in the shaft (the top doors',
+then the bottom doors'), 12 in all.
 
-Each room is one of the layouts in `src/rooms_wide.h` (one so far: TWIN LIFTS)
-with three pieces of equipment to search, picked at random from five kinds.
+The lift car only stops at floors with a door. Everywhere else the shaft is
+wall, and the car runs past it (picking up speed on a long run). A catwalk
+leads off the car only on the side the door is.
+
+You start in the car of shaft F, at its top stop.
+
+Each room is one of the layouts in `src/rooms_wide.h` (one so far: FOUR
+DECKS, with four levels - the floor and three above it) with three pieces of
+equipment to search, picked at random from five kinds.
 
 ## Controls
 
@@ -41,6 +49,9 @@ with three pieces of equipment to search, picked at random from five kinds.
 | Square or Circle | hold to search equipment |
 | Options or touchpad | the map (shows every room and where its doors lead) |
 | Triangle, on the map | lay out a new complex |
+
+A lift pad only moves while he rides it, so the way across a room depends on
+where the pads were left: they start at the stop nearest the door he came in by.
 
 ## Build and install
 
@@ -75,7 +86,7 @@ checked on the PC before it goes on the console.
 
 | | |
 | --- | --- |
-| `src/game.cpp` | the game: the complex, the shafts, the rooms, the agent, searching, the map |
+| `src/game.cpp` | the game: the complex, the shafts, the rooms, the agent, searching, the map (settings at the top: columns, rows, rooms, rooms per column) |
 | `src/rooms_wide.h` | the room layouts (1280 units wide) |
 | `src/gfx.cpp`, `gfx.h` | drawing: the 1920x1080 picture, unit-space calls as in the sketch, vector letters |
 | `src/ps5_platform.cpp` | the PS5 side: the TV picture, the DualSense, the loop |

@@ -1,15 +1,18 @@
 // game.cpp - the full-screen game: the lift shafts and the rooms
 //
-// The complex, Impossible Mission style: ROWS x COLS rooms (5 x 6 = 30) set
-// between SHAFTS lift shafts (7). Every room has a door on its left and one on
-// its right, each at the room's TOP or BOTTOM; a door leads into the shaft on
-// that side, at the floor that matches it. Each shaft has two floors for each
-// row of rooms (the top doors' floor, then the bottom doors'), so it runs
-// FLOORS (10) floors from top to bottom.
+// The complex, Impossible Mission style: 30 rooms in COLS (9) columns, each
+// column holding MIN_PER_COL..MAX_PER_COL (2..6) of them on any of ROWS (6)
+// rows, laid out afresh each game. A lift shaft runs down each side of every
+// column (SHAFTS: 10, A to J). Every room has a door on its left and one on its
+// right, each at the room's TOP or BOTTOM; a door leads into the shaft on that
+// side, at the floor that matches it. Each shaft has two floor positions for
+// each row (the top doors', then the bottom doors'), but the car only stops
+// where there is a door: the rest of the shaft is wall.
 //
-//            shaft A    room 1     shaft B    room 2     shaft C ...
+//            shaft A    column 1   shaft B    column 2   shaft C ...
 //   floor 1    |-------[top    ]     |                    |
 //   floor 2    |       [ bottom]-----|-------[top    ]    |
+//   floor 3    |  (no room here)     |       [ bottom]----|
 //
 // The agent, his poses and the somersault are NUCLEAR MISSION's (agent_rig.h);
 // the movement, the lift car, the catwalks, the lift pads, the platforms and
@@ -27,13 +30,15 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "001"
-#define COLS              6        // rooms across...
-#define ROWS              5        // ...and down: 30 rooms
+#define GAME_VERSION      "002"
+#define COLS              9        // columns of rooms across...
+#define ROWS              6        // ...rows down...
+#define ROOM_COUNT        30       // ...and the rooms in them
+#define MIN_PER_COL       2        // each column has at least this many rooms...
+#define MAX_PER_COL       6        // ...and at most this many
 #define SHAFTS            (COLS + 1)
 #define FLOORS            (ROWS * 2)
-#define START_SHAFT       3        // he starts in this shaft's car (the middle one)...
-#define START_FLOOR       0        // ...at its top floor
+#define START_SHAFT       (SHAFTS / 2)   // he starts in this shaft's car (one of the middle two), at its top stop
 
 #define AGENT_SCALE       1.3f
 #define RUN_SPEED         175.0f
@@ -43,7 +48,9 @@
 #define FALL_SAFE_PX      200
 #define EDGE_GRACE_PX     8
 #define LIFT_SPEED        150.0f   // lift pads in rooms
-#define CAR_SPEED         260.0f   // the lift car in the shafts
+#define CAR_SPEED         260.0f   // the lift car in the shafts: its speed to start with...
+#define CAR_MAX_SPEED     1100.0f  // ...picking up to this over a long run past walled-off floors
+#define CAR_ACCEL         900.0f   // (units a second, each second; it slows the same way to stop)
 #define RESPAWN_SECONDS   1.6f
 #define BLEND_SECONDS     0.12f
 #define SEARCH_SECONDS    1.6f     // hold USE this long to search a piece of equipment
@@ -54,24 +61,28 @@
 #define PLAY_Y1  (SCREEN_H - 1)
 #define PLAT_T   16
 #define PAD_H    12
-#define DOOR_H   168
+#define DOOR_H   140               // a room's doorway (he is 130 tall)
+#define CEIL_Y   56                // a room's ceiling (under it: the top level's headroom)
 
 // The shaft view
 #define SHAFT_X0     580
 #define SHAFT_X1     700
 #define CAR_FLOOR_Y  520           // the car's floor on screen (the view follows the car)
-#define LEVEL_GAP    330           // between floors in the shaft
+#define LEVEL_GAP    330           // between floor positions in the shaft
 #define CORR_H       190           // catwalk: floor to the beam above
+#define CAT_DOOR_H   168           // the doorway at the end of a catwalk
 
 // ============================================================ the complex
 struct RoomInfo {
+  int8_t row, col;                 // where it is
   bool topL, topR;                 // the doors: true = at the top, false = at the bottom
   uint8_t tpl;                     // its layout (rooms_wide.h)
   uint16_t seed;                   // its equipment
   bool visited;
   bool searched[DECOR_PER_ROOM];
 };
-static RoomInfo rooms[ROWS][COLS];
+static RoomInfo rooms[ROOM_COUNT];         // numbered 1..30 across the rows, top to bottom
+static int8_t roomAt[ROWS][COLS];          // which room is in each place (-1: none)
 static bool shaftSeen[SHAFTS][FLOORS];
 static uint32_t layoutSeed = 1;
 
@@ -82,29 +93,70 @@ static uint32_t rnd32() {
 }
 static int rnd(int n) { return n > 0 ? (int)(rnd32() % (uint32_t)n) : 0; }
 
-static int roomNumber(int r, int c) { return r * COLS + c + 1; }
 static char shaftLetter(int s) { return (char)('A' + s); }
 
-// The room through the door on one side of a shaft at a floor, or -1 (a wall)
-// right: the room to the right of the shaft (its left door), else to the left (its right door)
-static int roomOff(int s, int f, bool right, int *rowOut = nullptr, int *colOut = nullptr) {
+// The room through the door on one side of a shaft at a floor (its index), or
+// -1 (a wall). right: the room to the right of the shaft (through its left
+// door), else the one to the left (through its right door).
+static int roomOff(int s, int f, bool right) {
   if (f < 0 || f >= FLOORS) return -1;
   int c = right ? s : s - 1, r = f / 2;
   if (c < 0 || c >= COLS) return -1;
+  int i = roomAt[r][c];
+  if (i < 0) return -1;
   bool top = (f % 2) == 0;
-  bool door = right ? rooms[r][c].topL == top : rooms[r][c].topR == top;
-  if (!door) return -1;
-  if (rowOut) *rowOut = r;
-  if (colOut) *colOut = c;
-  return roomNumber(r, c);
+  bool door = right ? rooms[i].topL == top : rooms[i].topR == top;
+  return door ? i : -1;
+}
+
+// Does the car stop here? (a door on either side)
+static bool isStop(int s, int f) { return roomOff(s, f, false) >= 0 || roomOff(s, f, true) >= 0; }
+static int topStop(int s) {
+  for (int f = 0; f < FLOORS; f++)
+    if (isStop(s, f)) return f;
+  return -1;
+}
+static int bottomStop(int s) {
+  for (int f = FLOORS - 1; f >= 0; f--)
+    if (isStop(s, f)) return f;
+  return -1;
 }
 
 static void layOut(uint32_t seed) {
   layoutSeed = seed;
   rngState = seed * 2654435761u + 77u;
+  // how many rooms in each column: MIN_PER_COL each, the rest shared out at random
+  int count[COLS];
+  int left = ROOM_COUNT;
+  for (int c = 0; c < COLS; c++) {
+    count[c] = MIN_PER_COL;
+    left -= MIN_PER_COL;
+  }
+  while (left > 0) {
+    int c = rnd(COLS);
+    if (count[c] >= MAX_PER_COL) continue;
+    count[c]++;
+    left--;
+  }
+  // which rows they are on
+  memset(roomAt, -1, sizeof(roomAt));
+  bool used[ROWS][COLS] = {};
+  for (int c = 0; c < COLS; c++)
+    for (int k = 0; k < count[c];) {
+      int r = rnd(ROWS);
+      if (used[r][c]) continue;
+      used[r][c] = true;
+      k++;
+    }
+  // number them across the rows, and give each its doors, layout and equipment
+  int n = 0;
   for (int r = 0; r < ROWS; r++)
     for (int c = 0; c < COLS; c++) {
-      RoomInfo &ri = rooms[r][c];
+      if (!used[r][c]) continue;
+      RoomInfo &ri = rooms[n];
+      roomAt[r][c] = (int8_t)n++;
+      ri.row = (int8_t)r;
+      ri.col = (int8_t)c;
       ri.topL = rnd(2) == 0;
       ri.topR = rnd(2) == 0;
       ri.tpl = (uint8_t)rnd(WIDE_ROOM_COUNT);
@@ -119,12 +171,13 @@ static void layOut(uint32_t seed) {
 enum Mode : uint8_t { MODE_SHAFT, MODE_ROOM };
 static Mode mode = MODE_SHAFT;
 static int curShaft = START_SHAFT;     // in a shaft
-static int curRow = 0, curCol = 0;     // in a room
+static int curRoom = 0;                // in a room
 
 // The lift car (one per shaft; it is where he is)
 static float carWorldY = 0;            // world height of the car (floor * LEVEL_GAP)
 static int carFloor = 0;               // the floor it is at, or heading for
 static bool carMoving = false;
+static float carSpeed = 0;
 
 // The current room, built from its layout
 struct Lift {
@@ -248,8 +301,8 @@ static void paintPlatform(const Plat &p) {
 }
 
 static int shaftTop(const Lift &l) {
-  int t = l.stops[0] - 150;
-  return t < 104 ? 104 : t;
+  int t = l.stops[0] - 130;
+  return t < CEIL_Y + 14 ? CEIL_Y + 14 : t;
 }
 
 static void paintLiftShaft(const Lift &l) {
@@ -276,7 +329,7 @@ static void paintPit(int x0, int x1) {
 }
 
 // One side of the room: a bulkhead, with a doorway cut in it at doorY (the
-// top level or the floor) and an EXIT lamp over it
+// top level or the floor) and an EXIT lamp beside it
 static void paintRoomSide(bool right, int doorY) {
   uint16_t frame = rgb565(96, 104, 118), frameHi = rgb565(150, 158, 172), dark = rgb565(8, 10, 14);
   // the bulkhead
@@ -292,9 +345,12 @@ static void paintRoomSide(bool right, int doorY) {
   fillRect(fx0, top - 12, fx1, doorY - 1, frame);
   fillRect(right ? fx0 : fx1 - 2, top - 12, right ? fx0 + 2 : fx1, doorY - 1, frameHi);
   fillRect(x0, top - 12, x1, top - 1, frame);
-  int lx = right ? SCREEN_W - 36 : 6;
-  fillRect(lx, top - 34, lx + 30, top - 18, rgb565(20, 60, 30));
-  fillRect(lx + 3, top - 31, lx + 27, top - 21, rgb565(60, 220, 110));
+  // the EXIT lamp: over the doorway, or beside it where the ceiling is too close
+  bool above = top - 36 > CEIL_Y + 20;
+  int lx = above ? (right ? SCREEN_W - 36 : 6) : (right ? SCREEN_W - 112 : 82);
+  int ly = above ? top - 34 : top + 6;
+  fillRect(lx, ly, lx + 30, ly + 16, rgb565(20, 60, 30));
+  fillRect(lx + 3, ly + 3, lx + 27, ly + 13, rgb565(60, 220, 110));
 }
 
 // ---- the equipment (the sketch's painters)
@@ -472,31 +528,32 @@ static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
 }
 
 static void paintRoom() {
-  const RoomInfo &ri = rooms[curRow][curCol];
   gfxTarget = roomBg;
   gfxClipAll();
   // back wall, tinted a little differently in each room
-  int tint = ((curRow * 5 + curCol * 3) % 6) * 4;
+  int tint = ((rooms[curRoom].row * 5 + rooms[curRoom].col * 3) % 6) * 4;
   fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(24 + tint, 30, 40 - tint / 2));
   uint16_t panel = rgb565(32 + tint, 40, 52 - tint / 2), seam = rgb565(14, 18, 24);
   for (int x = 0; x < SCREEN_W; x += 144) {
-    fillRect(x + 6, 96, x + 137, ROOM_FLOOR_Y - 8, panel);
+    fillRect(x + 6, CEIL_Y + 24, x + 137, ROOM_FLOOR_Y - 8, panel);
     fillRect(x, HUD_H, x + 3, ROOM_FLOOR_Y - 1, seam);
   }
   uint16_t rib = rgb565(44, 52, 66), rivet = rgb565(80, 92, 108);
-  const int ribs[3] = { LEVEL_TOP - 90, LEVEL_MID - 90, ROOM_FLOOR_Y - 90 };
-  for (int k = 0; k < 3; k++) {
+  const int ribs[4] = { LEVEL_TOP - 90, LEVEL_2 - 90, LEVEL_1 - 90, ROOM_FLOOR_Y - 90 };
+  for (int k = 0; k < 4; k++) {
     int y = ribs[k];
     fillRect(0, y, SCREEN_W - 1, y + 9, rib);
     for (int x = 18; x < SCREEN_W; x += 36) fillCircle(x, y + 4, 2, rivet);
   }
-  paintPipe(52, 22);
-  paintPipe(80, 12);
+  // the ceiling: a steel beam with a pipe under it
+  fillRect(0, HUD_H, SCREEN_W - 1, CEIL_Y - 1, rgb565(52, 58, 70));
+  fillRect(0, CEIL_Y - 3, SCREEN_W - 1, CEIL_Y - 1, rgb565(30, 34, 42));
+  paintPipe(CEIL_Y + 4, 14);
   if (signX > 0) paintRadiationSign(signX, signY, 40);
   // the room's number, stencilled on the back wall
   char b[16];
-  snprintf(b, sizeof(b), "%d", roomNumber(curRow, curCol));
-  drawVectorText(b, signX > 0 ? signX : SCREEN_W / 2, signY + 78, 4.0f, rgb565(70, 80, 96), true);
+  snprintf(b, sizeof(b), "%d", curRoom + 1);
+  drawVectorText(b, signX > 0 ? signX : SCREEN_W / 2, signY + 64, 3.5f, rgb565(70, 80, 96), true);
   for (int i = 0; i < liftCount; i++) paintLiftShaft(lifts[i]);
   for (int i = 0; i < platCount; i++) paintPlatform(plats[i]);
   for (int i = 0; i < liftCount; i++) {
@@ -507,7 +564,6 @@ static void paintRoom() {
   for (int i = 0; i < decorCount; i++) paintDecor(decor[i]);
   paintRoomSide(false, doorYL);
   paintRoomSide(true, doorYR);
-  (void)ri;
   gfxTarget = g_frame;
 }
 
@@ -569,135 +625,113 @@ static void paintShaftPicture() {
   gfxTarget = g_frame;
 }
 
-// Brushed aluminium panels between y0 and y1, on one side of the shaft (or both)
-static void paintAluminium(int y0, int y1, int sideMask) {
+// The wall on one side of the shaft, from y0 to y1: brushed aluminium panels
+// fixed to the shaft (seams and rivets anchored to the world, so they scroll
+// past as the car moves)
+static void paintShaftWall(int side, int y0, int y1) {
   uint16_t a = rgb565(118, 124, 132), b = rgb565(108, 114, 122);
   uint16_t seam = rgb565(74, 80, 88), hi = rgb565(156, 162, 170), rivet = rgb565(172, 178, 186);
   int top = y0 < HUD_H ? HUD_H : y0, bot = y1 > PLAY_Y1 ? PLAY_Y1 : y1;
   if (bot < top) return;
-  for (int side = 0; side < 2; side++) {
-    if (!(sideMask & (1 << side))) continue;
-    int x0 = side ? SHAFT_X1 : 0, x1 = side ? SCREEN_W - 1 : SHAFT_X0 - 1;
-    fillRect(x0, top, x1, bot, a);
-    for (int y = y0; y <= y1; y += 3)
-      if (y >= top && y <= bot) fillRect(x0, y, x1, y, b);   // the brushed lines
-    for (int x = x0 + 100; x < x1; x += 100) {
-      fillRect(x, top, x + 1, bot, seam);
-      fillRect(x + 2, top, x + 2, bot, hi);
-      for (int ry = y0 + 10; ry < y1 - 4; ry += 34) {
-        if (ry < HUD_H || ry > PLAY_Y1) continue;
-        fillCircle(x - 6, ry, 2, rivet);
-        fillCircle(x + 8, ry, 2, rivet);
-      }
-    }
-    fillRect(x0, top, x1, top + 1 > bot ? bot : top + 1, hi);
-    if (y1 <= PLAY_Y1) fillRect(x0, y1 - 1, x1, y1, seam);
-  }
-}
-
-// A riveted steel wall on one side of the shaft from y0 to y1 (world-anchored
-// rivets, so it scrolls with the rest)
-static void paintSteelWall(int side, int y0, int y1) {
   int x0 = side ? SHAFT_X1 : 0, x1 = side ? SCREEN_W - 1 : SHAFT_X0 - 1;
-  int top = y0 < HUD_H ? HUD_H : y0, bot = y1 > PLAY_Y1 ? PLAY_Y1 : y1;
-  if (bot < top) return;
-  fillRect(x0, top, x1, bot, rgb565(56, 60, 70));
+  int w0 = (int)lroundf(carWorldY) - CAR_FLOOR_Y;     // world y of screen row 0
+  fillRect(x0, top, x1, bot, a);
+  for (int y = top; y <= bot; y++)
+    if (((y + w0) % 3 + 3) % 3 == 0) fillRect(x0, y, x1, y, b);   // the brushed lines
+  // horizontal seams every 110 units of the shaft
+  int first = top - (((top + w0) % 110) + 110) % 110;
+  for (int y = first; y <= bot; y += 110) {
+    if (y >= top) {
+      fillRect(x0, y, x1, y + 1, seam);
+      if (y + 2 <= bot) fillRect(x0, y + 2, x1, y + 2, hi);
+    }
+    for (int x = x0 + 100; x < x1; x += 100)
+      for (int ry = y + 16; ry < y + 110; ry += 34)
+        if (ry >= top + 3 && ry <= bot - 3) {
+          fillCircle(x - 6, ry, 2, rivet);
+          fillCircle(x + 8, ry, 2, rivet);
+        }
+  }
+  for (int x = x0 + 100; x < x1; x += 100) {
+    fillRect(x, top, x + 1, bot, seam);
+    fillRect(x + 2, top, x + 2, bot, hi);
+  }
+  // the edge at the shaft
   if (side == 0) fillRect(x1 - 5, top, x1, bot, rgb565(90, 96, 108));
   else fillRect(x0, top, x0 + 5, bot, rgb565(90, 96, 108));
-  float off = fmodf(carWorldY, 40.0f);
-  for (int k = 0; k < 20; k++) {
-    int y = (int)lroundf(HUD_H + 20 + k * 40 - off);
-    if (y < top + 4 || y > bot - 4) continue;
-    for (int x = x0 + 22; x < x1 - 10; x += 52) fillCircle(x, y, 3, rgb565(80, 86, 98));
-  }
 }
 
-// The doorway at the outer end of a catwalk: open (a room through it), or a
-// locked bulkhead door
+// The doorway at the outer end of a catwalk, into a room
 static void drawCatwalkDoor(bool right, int fy, int room) {
   int x0 = right ? SCREEN_W - 30 : 0, x1 = right ? SCREEN_W - 1 : 29;
-  int top = fy - DOOR_H;
+  int top = fy - CAT_DOOR_H;
   uint16_t frame = rgb565(96, 104, 118), frameHi = rgb565(150, 158, 172);
   int fx0 = right ? x0 - 10 : x1 + 1;
   // the wall the door is in
   int wx0 = right ? x0 - 10 : 0, wx1 = right ? SCREEN_W - 1 : x1 + 10;
   fillRect(wx0, fy - CORR_H, wx1, fy - 1, rgb565(56, 60, 70));
-  if (room >= 0) {
-    fillRect(x0, top, x1, fy - 1, rgb565(8, 10, 14));
-    int lx = right ? SCREEN_W - 36 : 6;
-    fillRect(lx, top - 20, lx + 30, top - 6, rgb565(20, 60, 30));
-    fillRect(lx + 3, top - 17, lx + 27, top - 9, rgb565(60, 220, 110));
-    // the room's number beside the door
-    char b[16];
-    snprintf(b, sizeof(b), "ROOM %d", room);
-    float w = vectorTextWidth(b, 2.2f);
-    drawVectorText(b, right ? x0 - 22 - w / 2 : x1 + 22 + w / 2, top + 14, 2.2f, rgb565(170, 230, 180), false);
-  } else {
-    fillRect(x0, top, x1, fy - 1, rgb565(70, 76, 88));
-    for (int y = top + 12; y < fy - 12; y += 34) hazardBand(x0 + 2, x1 - 2, y, y + 7);
-    int lx = right ? SCREEN_W - 36 : 6;
-    fillRect(lx, top - 20, lx + 30, top - 6, rgb565(60, 16, 14));
-    fillRect(lx + 3, top - 17, lx + 27, top - 9, rgb565(230, 40, 30));
-  }
+  fillRect(x0, top, x1, fy - 1, rgb565(8, 10, 14));
+  int lx = right ? SCREEN_W - 36 : 6;
+  fillRect(lx, top - 20, lx + 30, top - 6, rgb565(20, 60, 30));
+  fillRect(lx + 3, top - 17, lx + 27, top - 9, rgb565(60, 220, 110));
+  // the room's number beside the door
+  char b[16];
+  snprintf(b, sizeof(b), "ROOM %d", room + 1);
+  float w = vectorTextWidth(b, 2.2f);
+  drawVectorText(b, right ? x0 - 22 - w / 2 : x1 + 22 + w / 2, top + 14, 2.2f, rgb565(170, 230, 180), false);
   fillRect(fx0, top, fx0 + 9, fy - 1, frame);
   fillRect(right ? fx0 : fx0 + 7, top, right ? fx0 + 2 : fx0 + 9, fy - 1, frameHi);
   fillRect(x0, top - 4, x1, top - 1, frame);
 }
 
-static bool sideHasRooms(int side) {   // side 0 = left of the shaft
-  return side ? curShaft < COLS : curShaft > 0;
-}
+// A door on this side of the shaft at the car's floor? (side 0 = left)
+static bool sideDoor(int side) { return roomOff(curShaft, carFloor, side == 1) >= 0; }
 
-// The catwalks, beams, doors and signs that scroll past the car
+// The shaft: walls on both sides, and a catwalk out to each door - only at
+// the floors where there is one. The car stays put on screen; all this scrolls.
 static void drawShaftScene() {
   uint16_t deck = rgb565(80, 86, 98), deckHi = rgb565(150, 156, 168), truss = rgb565(54, 60, 72);
   uint16_t beam = rgb565(60, 66, 78), lamp = rgb565(255, 220, 140), rail = rgb565(110, 116, 130);
+  auto screenY = [](int f) { return (int)lroundf(CAR_FLOOR_Y + (f * LEVEL_GAP - carWorldY)); };
+  int ts = topStop(curShaft), bs = bottomStop(curShaft);
+  int capY = screenY(ts) - CORR_H - 70;          // the head of the shaft, above its top stop
+  int pitY = screenY(bs) + 14;                   // its bottom, under the last stop
   // rungs on the back of the shaft (they show the car moving)
   float off = fmodf(carWorldY, 60.0f);
   for (int k = -1; k < 14; k++) {
     int y = (int)lroundf(HUD_H + k * 60 - off);
     if (y >= CAR_FLOOR_Y - 194 && y <= CAR_FLOOR_Y + 14) continue;   // (the car is in front)
+    if (y <= capY || y >= pitY) continue;
     drawLine(SHAFT_X0 + 10, y, SHAFT_X1 - 11, y, rgb565(28, 32, 42), false);
   }
-  int mask = (sideHasRooms(0) ? 1 : 0) | (sideHasRooms(1) ? 2 : 0);
-  // a side with no rooms at all (the outer shafts): a wall all the way
-  for (int side = 0; side < 2; side++)
-    if (!(mask & (1 << side))) paintSteelWall(side, HUD_H, PLAY_Y1);
-  // behind the catwalks: aluminium between the floors, steel above the top one and below the last
-  for (int L = -1; L < FLOORS; L++) {
-    int fy = (int)lroundf(CAR_FLOOR_Y + (L * LEVEL_GAP - carWorldY));
-    if (L == -1) {
-      int beamY = fy + LEVEL_GAP - CORR_H - 13;
-      for (int side = 0; side < 2; side++)
-        if (mask & (1 << side)) paintSteelWall(side, HUD_H, beamY);
-      continue;
-    }
-    if (L == FLOORS - 1) {
-      for (int side = 0; side < 2; side++)
-        if (mask & (1 << side)) paintSteelWall(side, fy + 33, PLAY_Y1);
-      continue;
-    }
-    int y0 = fy + 14, y1 = fy + LEVEL_GAP - CORR_H - 13;
-    if (y1 < HUD_H || y0 > PLAY_Y1) continue;
-    paintAluminium(y0, y1, mask);
+  paintShaftWall(0, HUD_H, PLAY_Y1);
+  paintShaftWall(1, HUD_H, PLAY_Y1);
+  // the head of the shaft and its bottom
+  if (capY >= HUD_H) {
+    fillRect(SHAFT_X0, HUD_H, SHAFT_X1 - 1, capY, rgb565(56, 60, 70));
+    hazardBand(SHAFT_X0, SHAFT_X1 - 1, capY - 12, capY);
+    fillCircle((SHAFT_X0 + SHAFT_X1) / 2, capY - 30, 9, rgb565(30, 32, 38));   // the pulley
   }
-  // the bottom of the shaft
-  {
-    int fy = (int)lroundf(CAR_FLOOR_Y + ((FLOORS - 1) * LEVEL_GAP - carWorldY));
-    if (fy + 14 <= PLAY_Y1) {
-      fillRect(SHAFT_X0 + 8, fy + 14, SHAFT_X1 - 9, PLAY_Y1, rgb565(14, 16, 20));
-      hazardBand(SHAFT_X0 + 8, SHAFT_X1 - 9, fy + 14, fy + 22);
-    }
+  if (pitY <= PLAY_Y1) {
+    fillRect(SHAFT_X0, pitY, SHAFT_X1 - 1, PLAY_Y1, rgb565(14, 16, 20));
+    hazardBand(SHAFT_X0 + 8, SHAFT_X1 - 9, pitY, pitY + 8);
   }
   for (int L = 0; L < FLOORS; L++) {
-    int fy = (int)lroundf(CAR_FLOOR_Y + (L * LEVEL_GAP - carWorldY));
+    int fy = screenY(L);
     if (fy < HUD_H - 40 || fy - CORR_H - 20 > PLAY_Y1) continue;
     int cy = fy - CORR_H;
     char name[8];
     snprintf(name, sizeof(name), "%d", L + 1);
     for (int side = 0; side < 2; side++) {
-      if (!(mask & (1 << side))) continue;
+      int room = roomOff(curShaft, L, side == 1);
+      if (room < 0) continue;                      // no door: the wall carries on
       int x0 = side ? SHAFT_X1 : 0, x1 = side ? SCREEN_W - 1 : SHAFT_X0 - 1;
+      // the bay: dark behind, girders standing in it
+      fillRect(x0, cy, x1, fy + 32, rgb565(10, 13, 20));
+      for (int gx = x0 + 150; gx < x1 - 40; gx += 230) {
+        fillRect(gx, cy, gx + 15, fy - 1, rgb565(30, 36, 48));
+        fillRect(gx, cy, gx + 2, fy - 1, rgb565(48, 56, 70));
+      }
       // catwalk deck and the truss under it
       fillRect(x0, fy, x1, fy + 13, deck);
       fillRect(x0, fy, x1, fy + 2, deckHi);
@@ -708,20 +742,21 @@ static void drawShaftScene() {
       fillRect(x0, cy - 12, x1, cy - 10, deckHi);
       for (int x = x0 + 50; x < x1 - 20; x += 120) fillRect(x, cy + 1, x + 18, cy + 4, lamp);
       // the door at the far end, then the hand rail in front of the wall
-      drawCatwalkDoor(side == 1, fy, roomOff(curShaft, L, side == 1));
+      drawCatwalkDoor(side == 1, fy, room);
       int r0 = side ? x0 : 40, r1 = side ? x1 - 40 : x1;
       drawLine(r0, fy - 44, r1, fy - 44, rail, true);
       for (int x = r0 + 20; x < r1; x += 40) drawLine(x, fy - 44, x, fy - 1, rail, false);
-      // the floor's number, near the shaft
+      // the floor's number, near the shaft, and the hazard edge
       drawVectorText(name, side ? SHAFT_X1 + 70 : SHAFT_X0 - 70, cy + 34, 5.0f, rgb565(255, 190, 70), true);
+      if (side == 0) fillRect(SHAFT_X0 - 8, fy, SHAFT_X0 - 1, fy + 5, rgb565(230, 186, 36));
+      else fillRect(SHAFT_X1, fy, SHAFT_X1 + 7, fy + 5, rgb565(230, 186, 36));
     }
-    if (mask & 1) fillRect(SHAFT_X0 - 8, fy, SHAFT_X0 - 1, fy + 5, rgb565(230, 186, 36));
-    if (mask & 2) fillRect(SHAFT_X1, fy, SHAFT_X1 + 7, fy + 5, rgb565(230, 186, 36));
   }
   // the car: cables, roof, cage and floor (it stays put on screen)
   int cx0 = SHAFT_X0 + 8, cx1 = SHAFT_X1 - 9;
-  drawLine(SHAFT_X0 + 30, HUD_H, SHAFT_X0 + 30, CAR_FLOOR_Y - 190, rgb565(120, 126, 138), false);
-  drawLine(SHAFT_X1 - 31, HUD_H, SHAFT_X1 - 31, CAR_FLOOR_Y - 190, rgb565(120, 126, 138), false);
+  int cableTop = capY > HUD_H ? capY : HUD_H;
+  drawLine(SHAFT_X0 + 30, cableTop, SHAFT_X0 + 30, CAR_FLOOR_Y - 190, rgb565(120, 126, 138), false);
+  drawLine(SHAFT_X1 - 31, cableTop, SHAFT_X1 - 31, CAR_FLOOR_Y - 190, rgb565(120, 126, 138), false);
   fillRect(cx0, CAR_FLOOR_Y - 192, cx1, CAR_FLOOR_Y - 184, rgb565(110, 116, 130));
   fillRect(cx0, CAR_FLOOR_Y - 184, cx0 + 4, CAR_FLOOR_Y - 1, rgb565(90, 96, 110));
   fillRect(cx1 - 4, CAR_FLOOR_Y - 184, cx1, CAR_FLOOR_Y - 1, rgb565(90, 96, 110));
@@ -733,8 +768,8 @@ static void drawShaftScene() {
 }
 
 // ============================================================ rooms and shafts: building and moving between
-static void buildRoom(int r, int c, bool fromLeft) {
-  const RoomInfo &ri = rooms[r][c];
+static void buildRoom(int idx, bool fromLeft) {
+  const RoomInfo &ri = rooms[idx];
   const WideRoom &t = wideRooms[ri.tpl];
   platCount = t.platCount;
   for (int i = 0; i < platCount; i++) plats[i] = t.plats[i];
@@ -784,14 +819,12 @@ static void placeAgent(float x, float y, int facing) {
   searchItem = -1;
 }
 
-static void enterRoom(int r, int c, bool fromLeft) {
+static void enterRoom(int idx, bool fromLeft) {
   mode = MODE_ROOM;
-  curRow = r;
-  curCol = c;
-  buildRoom(r, c, fromLeft);
+  curRoom = idx;
+  buildRoom(idx, fromLeft);
   paintRoom();
-  RoomInfo &ri = rooms[r][c];
-  if (!ri.visited) ri.visited = true;
+  rooms[idx].visited = true;
   int y = fromLeft ? doorYL : doorYR;
   placeAgent(fromLeft ? 36 : SCREEN_W - 36, (float)y, fromLeft ? 1 : -1);
 }
@@ -811,14 +844,14 @@ static void enterShaft(int s, int f, bool fromLeft) {
 // Walked off the screen edge: where does that lead?
 static void leaveThroughEdge(bool right) {
   if (mode == MODE_SHAFT) {
-    int r, c;
-    if (roomOff(curShaft, carFloor, right, &r, &c) < 0) return;
-    enterRoom(r, c, right);            // going right: in through the room's left door
+    int idx = roomOff(curShaft, carFloor, right);
+    if (idx < 0) return;
+    enterRoom(idx, right);             // going right: in through the room's left door
     return;
   }
-  const RoomInfo &ri = rooms[curRow][curCol];
-  if (right) enterShaft(curCol + 1, curRow * 2 + (ri.topR ? 0 : 1), true);
-  else enterShaft(curCol, curRow * 2 + (ri.topL ? 0 : 1), false);
+  const RoomInfo &ri = rooms[curRoom];
+  if (right) enterShaft(ri.col + 1, ri.row * 2 + (ri.topR ? 0 : 1), true);
+  else enterShaft(ri.col, ri.row * 2 + (ri.topL ? 0 : 1), false);
 }
 
 // ============================================================ the agent's world
@@ -882,7 +915,7 @@ static float landingTop(float x, float y0, float y1, int &liftOut) {
 static float headroom(float x0, float x1, float y) {
   if (mode == MODE_SHAFT) return CORR_H - 14;
   if (x0 > x1) { float t = x0; x0 = x1; x1 = t; }
-  float room = 9999;
+  float room = y - CEIL_Y;
   for (int i = 0; i < platCount; i++) {
     const Plat &p = plats[i];
     if (p.x1 < x0 || p.x0 > x1) continue;
@@ -906,11 +939,11 @@ static bool exitOpen(bool right) {
 }
 
 static float edgeMin() {
-  if (mode == MODE_SHAFT && !sideHasRooms(0)) return SHAFT_X0 + 20;   // the outer wall
+  if (mode == MODE_SHAFT && !sideDoor(0)) return SHAFT_X0 + 20;   // no door on this side: the wall
   return 34.0f * myScale;
 }
 static float edgeMax() {
-  if (mode == MODE_SHAFT && !sideHasRooms(1)) return SHAFT_X1 - 20;
+  if (mode == MODE_SHAFT && !sideDoor(1)) return SHAFT_X1 - 20;
   return SCREEN_W - 34.0f * myScale;
 }
 
@@ -958,7 +991,7 @@ static void knockOut() {
 
 static void respawn() {
   if (mode == MODE_ROOM) {
-    buildRoom(curRow, curCol, entryFacing > 0);   // (the lift pads back where they were)
+    buildRoom(curRoom, entryFacing > 0);   // (the lift pads back where they were)
   }
   float x = clampv(entryX, edgeMin(), edgeMax());
   placeAgent(x, entryY, entryFacing);
@@ -974,13 +1007,15 @@ static bool callLift(int i, int dir) {
   return true;
 }
 
-// The lift car: one floor up (dir -1) or down (+1)
+// The lift car: to the next stop up (dir -1) or down (+1), past the walled-off floors
 static bool callCar(int dir) {
   if (carMoving) return false;
   int next = carFloor + dir;
+  while (next >= 0 && next < FLOORS && !isStop(curShaft, next)) next += dir;
   if (next < 0 || next >= FLOORS) return false;
   carFloor = next;
   carMoving = true;
+  carSpeed = 0;
   return true;
 }
 
@@ -999,10 +1034,14 @@ static void updateLifts(float dt) {
   }
   if (mode == MODE_SHAFT && carMoving) {
     float target = (float)(carFloor * LEVEL_GAP);
-    float step = CAR_SPEED * dt;
-    if (fabsf(target - carWorldY) <= step) {
+    float dist = fabsf(target - carWorldY);
+    carSpeed = fminf(fmaxf(carSpeed, CAR_SPEED) + CAR_ACCEL * dt, CAR_MAX_SPEED);
+    float v = fminf(carSpeed, fmaxf(sqrtf(2.0f * CAR_ACCEL * dist), CAR_SPEED * 0.5f));   // (slowing down for the stop)
+    float step = v * dt;
+    if (dist <= step) {
       carWorldY = target;
       carMoving = false;
+      carSpeed = 0;
       shaftSeen[curShaft][carFloor] = true;
     } else {
       carWorldY += (target > carWorldY) ? step : -step;
@@ -1170,7 +1209,7 @@ static void updateAgent(float dt) {
       if (i >= 0 && searchT < SEARCH_SECONDS) {
         searchT += dt;
         if (searchT >= SEARCH_SECONDS) {
-          rooms[curRow][curCol].searched[i] = true;
+          rooms[curRoom].searched[i] = true;
           nothingShowT = NOTHING_SHOW;   // (nothing hidden anywhere yet)
           nothingX = decor[i].x;
           nothingY = decor[i].y - decorH[decor[i].kind] - 22;
@@ -1220,7 +1259,7 @@ static void drawLiftPad(const Lift &l) {
 }
 
 static void drawSearchMarks() {
-  const RoomInfo &ri = rooms[curRow][curCol];
+  const RoomInfo &ri = rooms[curRoom];
   for (int i = 0; i < decorCount; i++) {
     const Decor &d = decor[i];
     int top = d.y - decorH[d.kind];
@@ -1247,13 +1286,12 @@ static void drawHud() {
   fillRect(0, HUD_H - 2, SCREEN_W - 1, HUD_H - 1, rgb565(44, 50, 62));
   char b[64];
   if (mode == MODE_SHAFT) snprintf(b, sizeof(b), "LIFT %c  FLOOR %d", shaftLetter(curShaft), carFloor + 1);
-  else snprintf(b, sizeof(b), "ROOM %d", roomNumber(curRow, curCol));
+  else snprintf(b, sizeof(b), "ROOM %d", curRoom + 1);
   float w = vectorTextWidth(b, 2.6f);
   drawVectorText(b, 24 + w / 2, HUD_H / 2, 2.6f, rgb565(255, 190, 70), true);
   int seen = 0;
-  for (int r = 0; r < ROWS; r++)
-    for (int c = 0; c < COLS; c++) seen += rooms[r][c].visited;
-  snprintf(b, sizeof(b), "ROOMS %d/%d", seen, ROWS * COLS);
+  for (int i = 0; i < ROOM_COUNT; i++) seen += rooms[i].visited;
+  snprintf(b, sizeof(b), "ROOMS %d/%d", seen, ROOM_COUNT);
   drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 2.6f, rgb565(200, 206, 220), true);
   snprintf(b, sizeof(b), "V%s  FPS %d", GAME_VERSION, (int)lroundf(fpsShown));
   w = vectorTextWidth(b, 2.0f);
@@ -1272,44 +1310,46 @@ static void drawMessage() {
 // The map: every room, its doors and the shafts they lead to
 static void drawMap() {
   gfxClipAll();
-  blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 4, 6, 10, 0.86f);
-  const int RW = 128, SW = 34, RH = 72, GAP = 30;
-  const int left = (SCREEN_W - (COLS * RW + SHAFTS * SW)) / 2, top = 128;
-  const int bottom = top + ROWS * RH + (ROWS - 1) * GAP;
+  blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 4, 6, 10, 0.88f);
+  const int RW = 96, SW = 30, RH = 60, GAP = 22;
+  const int left = (SCREEN_W - (COLS * RW + SHAFTS * SW)) / 2, top = 124;
   bool blink = fmodf(clockT, 0.8f) < 0.5f;
-  drawVectorText("THE COMPLEX", SCREEN_W / 2, 76, 4.0f, rgb565(255, 190, 70), true);
-  auto floorY = [&](int f) { int r = f / 2; return top + r * (RH + GAP) + ((f & 1) ? RH - 14 : 14); };
-  // the shafts
+  drawVectorText("THE COMPLEX", SCREEN_W / 2, 72, 4.0f, rgb565(255, 190, 70), true);
+  auto floorY = [&](int f) { int r = f / 2; return top + r * (RH + GAP) + ((f & 1) ? RH - 12 : 12); };
+  // the shafts: from their top stop to their bottom one, a mark at each stop
   for (int s = 0; s < SHAFTS; s++) {
     int x0 = left + s * (RW + SW);
-    fillRect(x0 + 6, top - 18, x0 + SW - 7, bottom + 18, rgb565(26, 30, 40));
-    drawRectOutline(x0 + 6, top - 18, x0 + SW - 7, bottom + 18, rgb565(70, 78, 96), 1);
+    int ts = topStop(s), bs = bottomStop(s);
     char b[2] = { shaftLetter(s), 0 };
-    drawVectorText(b, x0 + SW / 2, top - 36, 2.4f, rgb565(200, 206, 220), true);
-    for (int f = 0; f < FLOORS; f++) {
+    drawVectorText(b, x0 + SW / 2, top - 30, 2.2f, rgb565(200, 206, 220), true);
+    if (ts < 0) continue;
+    int y0 = floorY(ts) - 14, y1 = floorY(bs) + 14;
+    fillRect(x0 + 6, y0, x0 + SW - 7, y1, rgb565(26, 30, 40));
+    drawRectOutline(x0 + 6, y0, x0 + SW - 7, y1, rgb565(70, 78, 96), 1);
+    for (int f = ts; f <= bs; f++) {
+      if (!isStop(s, f)) continue;
       int y = floorY(f);
       fillRect(x0 + 9, y, x0 + SW - 10, y + 1, shaftSeen[s][f] ? rgb565(150, 160, 180) : rgb565(60, 66, 80));
     }
   }
   // the rooms, and a corridor from each door to its shaft
-  for (int r = 0; r < ROWS; r++)
-    for (int c = 0; c < COLS; c++) {
-      const RoomInfo &ri = rooms[r][c];
-      int x0 = left + SW + c * (RW + SW), y0 = top + r * (RH + GAP);
-      uint16_t fill = ri.visited ? rgb565(40, 64, 96) : rgb565(22, 26, 34);
-      uint16_t edge = ri.visited ? rgb565(110, 160, 220) : rgb565(70, 78, 96);
-      fillRect(x0, y0, x0 + RW - 1, y0 + RH - 1, fill);
-      drawRectOutline(x0, y0, x0 + RW - 1, y0 + RH - 1, edge, 2);
-      uint16_t door = rgb565(80, 230, 120);
-      int yl = floorY(r * 2 + (ri.topL ? 0 : 1)), yr = floorY(r * 2 + (ri.topR ? 0 : 1));
-      fillRect(x0 - SW / 2 + 6, yl - 2, x0 + 10, yl + 3, door);
-      fillRect(x0 + RW - 11, yr - 2, x0 + RW + SW / 2 - 6, yr + 3, door);
-      char b[8];
-      snprintf(b, sizeof(b), "%d", roomNumber(r, c));
-      drawVectorText(b, x0 + RW / 2, y0 + RH / 2, 2.6f, ri.visited ? rgb565(230, 236, 245) : rgb565(110, 118, 136), true);
-      if (mode == MODE_ROOM && r == curRow && c == curCol && blink)
-        drawRectOutline(x0 - 4, y0 - 4, x0 + RW + 3, y0 + RH + 3, rgb565(255, 190, 70), 3);
-    }
+  for (int i = 0; i < ROOM_COUNT; i++) {
+    const RoomInfo &ri = rooms[i];
+    int x0 = left + SW + ri.col * (RW + SW), y0 = top + ri.row * (RH + GAP);
+    uint16_t fill = ri.visited ? rgb565(40, 64, 96) : rgb565(22, 26, 34);
+    uint16_t edge = ri.visited ? rgb565(110, 160, 220) : rgb565(70, 78, 96);
+    fillRect(x0, y0, x0 + RW - 1, y0 + RH - 1, fill);
+    drawRectOutline(x0, y0, x0 + RW - 1, y0 + RH - 1, edge, 2);
+    uint16_t door = rgb565(80, 230, 120);
+    int yl = floorY(ri.row * 2 + (ri.topL ? 0 : 1)), yr = floorY(ri.row * 2 + (ri.topR ? 0 : 1));
+    fillRect(x0 - SW / 2 + 6, yl - 2, x0 + 8, yl + 3, door);
+    fillRect(x0 + RW - 9, yr - 2, x0 + RW + SW / 2 - 6, yr + 3, door);
+    char b[8];
+    snprintf(b, sizeof(b), "%d", i + 1);
+    drawVectorText(b, x0 + RW / 2, y0 + RH / 2, 2.4f, ri.visited ? rgb565(230, 236, 245) : rgb565(110, 118, 136), true);
+    if (mode == MODE_ROOM && i == curRoom && blink)
+      drawRectOutline(x0 - 4, y0 - 4, x0 + RW + 3, y0 + RH + 3, rgb565(255, 190, 70), 3);
+  }
   // him, in a shaft
   if (mode == MODE_SHAFT) {
     int x = left + curShaft * (RW + SW) + SW / 2;
@@ -1317,12 +1357,13 @@ static void drawMap() {
     int f0 = (int)f;
     float k = f - f0;
     float y = floorY(f0) + (f0 + 1 < FLOORS ? (floorY(f0 + 1) - floorY(f0)) * k : 0);
-    fillCircle(x, (int)y, 10, rgb565(10, 12, 16));
-    fillCircle(x, (int)y, 8, blink ? rgb565(255, 190, 70) : rgb565(255, 240, 200));
+    fillCircle(x, (int)y, 9, rgb565(10, 12, 16));
+    fillCircle(x, (int)y, 7, blink ? rgb565(255, 190, 70) : rgb565(255, 240, 200));
   }
-  drawVectorText("TOP DOOR OR BOTTOM DOOR ON EACH SIDE - GREEN: THE WAY THROUGH TO THE SHAFT", SCREEN_W / 2, bottom + 52, 1.9f,
-                 rgb565(150, 158, 176), false);
-  drawVectorText("OPTIONS: BACK TO THE GAME     TRIANGLE: LAY OUT A NEW COMPLEX", SCREEN_W / 2, bottom + 80, 2.2f,
+  int bottom = top + ROWS * RH + (ROWS - 1) * GAP;
+  drawVectorText("EACH ROOM: A DOOR AT THE TOP OR THE BOTTOM ON EACH SIDE (GREEN) - THE LIFTS STOP ONLY AT DOORS", SCREEN_W / 2,
+                 bottom + 40, 1.8f, rgb565(150, 158, 176), false);
+  drawVectorText("OPTIONS: BACK TO THE GAME     TRIANGLE: LAY OUT A NEW COMPLEX", SCREEN_W / 2, bottom + 70, 2.2f,
                  rgb565(200, 206, 220), true);
 }
 
@@ -1331,14 +1372,14 @@ void gameInit(uint32_t seed) {
   gfxInit();
   layOut(seed);
   paintShaftPicture();
-  enterShaft(START_SHAFT, START_FLOOR, true);
+  enterShaft(START_SHAFT, topStop(START_SHAFT), true);
   placeAgent((SHAFT_X0 + SHAFT_X1) / 2, CAR_FLOOR_Y, 1);
   showMsg("OPTIONS: THE MAP", 5.0f);
 }
 
 static void newComplex() {
   layOut(layoutSeed * 7919u + 13u);
-  enterShaft(START_SHAFT, START_FLOOR, true);
+  enterShaft(START_SHAFT, topStop(START_SHAFT), true);
   placeAgent((SHAFT_X0 + SHAFT_X1) / 2, CAR_FLOOR_Y, 1);
 }
 
@@ -1393,7 +1434,12 @@ const char *gameDebug() {
   if (mode == MODE_SHAFT)
     snprintf(b, sizeof(b), "shaft %c floor %d%s x=%.0f y=%.0f %s", shaftLetter(curShaft), carFloor + 1, carMoving ? " (moving)" : "", agX, agY, st[agState]);
   else
-    snprintf(b, sizeof(b), "room %d (row %d col %d, doors L:%s R:%s) x=%.0f y=%.0f %s", roomNumber(curRow, curCol), curRow, curCol,
-             rooms[curRow][curCol].topL ? "top" : "bottom", rooms[curRow][curCol].topR ? "top" : "bottom", agX, agY, st[agState]);
+    snprintf(b, sizeof(b), "room %d (row %d col %d, doors L:%s R:%s) x=%.0f y=%.0f %s", curRoom + 1, rooms[curRoom].row, rooms[curRoom].col,
+             rooms[curRoom].topL ? "top" : "bottom", rooms[curRoom].topR ? "top" : "bottom", agX, agY, st[agState]);
   return b;
+}
+void gameDebugPos(float *x, float *y, int *state) {
+  *x = agX;
+  *y = agY;
+  *state = (int)agState;
 }

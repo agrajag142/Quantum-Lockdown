@@ -1,16 +1,16 @@
 // rooms_wide.h
 // Room layouts for the full-screen game. A room is the whole screen: 1280
-// units wide (1920 pixels), floor at y = 664 and two more levels above it at
-// 504 and 344 - one level is 160 units, as in NUCLEAR MISSION, sized for the
-// agent at scale 1.3.
+// units wide (1920 pixels) with FOUR levels: the floor at y = 680, and 520,
+// 360 and 200 above it - one level is 160 units, as in NUCLEAR MISSION, sized
+// for the agent at scale 1.3. The ceiling is at 56.
 //
-// Every room has a door on each side, at its TOP (y = 344) or at its BOTTOM
-// (the floor, y = 664): which, is decided for each room when the complex is
-// laid out. So a layout must work with any of the four combinations:
+// Every room has a door on each side, at its TOP (the top level, y = 200) or
+// at its BOTTOM (the floor, y = 680): which, is decided for each room when the
+// complex is laid out. So a layout must work with any of the four combinations:
 //   - the floor reaches both screen edges (x = 0 and x = 1280)
 //   - a top level platform reaches both screen edges
 //   - both doors' ledges, and every spot, can be reached from both doors
-//     (on foot, by lift pad, by somersaulting a gap, or a short drop:
+//     (on foot, by lift pad, by somersaulting a gap, or a drop of one level:
 //     a drop of more than 200 units knocks him out)
 // The side without a door at a level is a wall there.
 //
@@ -24,9 +24,10 @@
 
 #include <stdint.h>
 
-#define ROOM_FLOOR_Y 664
-#define LEVEL_MID    504
-#define LEVEL_TOP    344
+#define ROOM_FLOOR_Y 680
+#define LEVEL_1      520
+#define LEVEL_2      360
+#define LEVEL_TOP    200
 #define MAX_PLATS    16
 #define MAX_LIFTS    4
 #define MAX_STOPS    4
@@ -61,22 +62,26 @@ struct WideRoom {
 };
 
 static const WideRoom wideRooms[] = {
-  // 0: two lift pads, a pit in the floor, a gap to somersault at the top
+  // 0: two lift pads, a pit in the floor, a gap to somersault at the top, a
+  //    long deck in the middle you drop down to
   //
-  //   344  ========[A]=========      ========[B]=========    (top: both edges)
-  //   504          [A]=========      ==========[B]
-  //   664  ===========[A]=====   pit   ==========[B]=======  (floor: both edges)
-  { "TWIN LIFTS",
-    8, { { 0, 560, 664 }, { 680, 1280, 664 },                      // floor, a pit in the middle
-         { 340, 520, 504 }, { 760, 940, 504 },                     // the middle level, off the lifts
-         { 0, 260, 344 }, { 340, 560, 344 },                       // the top, left of the gap...
-         { 720, 940, 344 }, { 1020, 1280, 344 } },                 // ...and right of it
-    2, { { 260, 340, { 344, 504, 664 }, 3 },
-         { 940, 1020, { 344, 504, 664 }, 3 } },
+  //   200  ======[A]======         ======[B]======    (top: both edges)
+  //   360  ======[A]===               ===[B]======
+  //   520          [A]     =========     [B]====
+  //   680  =========[A]====  pit  =======[B]======    (floor: both edges)
+  { "FOUR DECKS",
+    12, { { 0, 560, 680 }, { 680, 1280, 680 },                     // floor, a pit in the middle
+          { 420, 860, 520 }, { 1040, 1180, 520 },                  // level 1: the middle deck, a ledge off lift B
+          { 0, 240, 360 }, { 320, 480, 360 },                      // level 2, either side of lift A...
+          { 800, 960, 360 }, { 1040, 1280, 360 },                  // ...and of lift B
+          { 0, 240, 200 }, { 320, 560, 200 },                      // the top, left of the gap...
+          { 720, 960, 200 }, { 1040, 1280, 200 } },                // ...and right of it
+    2, { { 240, 320, { 200, 360, 680 }, 3 },
+         { 960, 1040, { 200, 360, 520, 680 }, 4 } },
     1, { { 560, 680 } },
-    8, { { 430, 504 }, { 850, 504 }, { 460, 344 }, { 830, 344 },
-         { 180, 664 }, { 1110, 664 }, { 450, 664 }, { 820, 664 } },
-    640, 214 },
+    8, { { 120, 360 }, { 400, 360 }, { 640, 520 }, { 880, 360 },
+         { 440, 200 }, { 840, 200 }, { 160, 680 }, { 820, 680 } },
+    640, 280 },
 };
 #define WIDE_ROOM_COUNT (int)(sizeof(wideRooms) / sizeof(wideRooms[0]))
 

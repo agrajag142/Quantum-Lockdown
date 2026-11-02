@@ -19,5 +19,6 @@ void gameInit(uint32_t seed);
 // Draws the whole picture into g_frame (gfx.h).
 void gameFrame(float dt, uint32_t held, uint32_t pressed);
 const char *gameDebug();   // (the PC test build: where he is)
+void gameDebugPos(float *x, float *y, int *state);
 
 #endif // GAME_H

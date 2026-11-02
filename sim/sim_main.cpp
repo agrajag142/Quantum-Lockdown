@@ -6,12 +6,15 @@
 //                tap BUTTONS           (one frame down, one up)
 //                shot NAME             (out/NAME.ppm)
 //                seed N                (before anything else)
+//                walkto X              run left or right until he is at x = X (units)
+//                waitidle              until he stands still (a lift arrived, a landing)
 //                # comment
 #include "game.h"
 #include "gfx.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 static uint32_t parseButtons(const char *s) {
   uint32_t b = 0;
@@ -75,6 +78,24 @@ int main(int argc, char **argv) {
     } else if (!strcmp(cmd, "tap")) {
       step(parseButtons(a));
       step(0);
+    } else if (!strcmp(cmd, "walkto")) {
+      float target = (float)atof(a), x, y;
+      int st;
+      for (int i = 0; i < 900; i++) {
+        gameDebugPos(&x, &y, &st);
+        if (fabsf(x - target) < 3) break;
+        step(x < target ? BTN_RIGHT : BTN_LEFT);
+      }
+      step(0);
+    } else if (!strcmp(cmd, "waitidle")) {
+      float x, y;
+      int st = -1;
+      step(0);
+      for (int i = 0; i < 900; i++) {
+        gameDebugPos(&x, &y, &st);
+        if (st == 0) break;
+        step(0);
+      }
     } else if (!strcmp(cmd, "shot")) {
       shot(argv[2], a);
     }

@@ -1,5 +1,6 @@
-# A short tour with the layout from seed 1: the lift, the map, into room 4,
-# over the pit, search the safe, out of the far door into lift E.
+# A short tour with the layout from seed 1: the lift, the map, the car past
+# walled-off floors, into room 2, over the pit, up lift pad B to the top
+# door, out into lift G.
 seed 1
 hold NONE 30
 shot 01_lift_start
@@ -10,25 +11,29 @@ tap MAP
 tap DOWN
 hold NONE 40
 shot 03_lift_moving
-hold NONE 50
-hold RIGHT 172
-hold NONE 1
-shot 04_room4
-hold RIGHT 134
-hold RIGHT+JUMP 1
-hold RIGHT 30
-shot 05_somersault
-hold NONE 40
-hold RIGHT 20
-hold NONE 10
-hold USE 60
-shot 06_searching
-hold USE 60
-hold NONE 20
-shot 07_searched
-hold RIGHT 150
+waitidle
+tap UP
+waitidle
+hold RIGHT 175
+walkto 300
+shot 04_room2
+walkto 540
+tap JUMP
 hold NONE 30
-shot 08_lift_E
+shot 05_somersault
+waitidle
+walkto 1000
+tap UP
+waitidle
+tap UP
+hold NONE 30
+shot 06_riding_up
+waitidle
+tap UP
+waitidle
+hold RIGHT 100
+hold NONE 30
+shot 07_lift_G
 tap MAP
 hold NONE 30
-shot 09_map_after
+shot 08_map_after
