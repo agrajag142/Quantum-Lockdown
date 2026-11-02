@@ -3,7 +3,7 @@
 // in the top left corner, 5 first aid kits in different rooms, every room's
 // pieces placed and none overlapping.
 //
-//   g++ -std=c++20 -O2 -w -I../src check_layout.cpp ../src/gfx.cpp -o check_layout && ./check_layout
+//   gcc -O2 -c ../src/micromod.c && g++ -std=c++20 -O2 -w -I../src check_layout.cpp ../src/gfx.cpp micromod.o -o check_layout && ./check_layout
 #include "../src/game.cpp"
 
 int main() {

@@ -1,6 +1,7 @@
 // The PC test build: the game with a scripted controller, saving screenshots.
 //
-//   g++ -O2 -I../src ../src/game.cpp ../src/gfx.cpp sim_main.cpp -o sim && ./sim script.txt out/
+//   gcc -O2 -c ../src/micromod.c && g++ -O2 -I../src ../src/game.cpp ../src/gfx.cpp sim_main.cpp micromod.o -o sim
+//   ./sim script.txt out/ [elevator.mod]
 //
 // Script lines:  hold BUTTONS FRAMES   (BUTTONS: LEFT+JUMP etc, or NONE)
 //                tap BUTTONS           (one frame down, one up)
@@ -9,6 +10,7 @@
 //                walkto X              run left or right until he is at x = X (units)
 //                waitidle              until he stands still (a lift arrived, a landing)
 //                room N DOORS          straight into layout N (DOORS: TT, TB, BT or BB - left, right)
+//                wav SECONDS NAME      the sound for the next SECONDS (the game running): out/NAME.wav
 //                # comment
 #include "game.h"
 #include "gfx.h"
@@ -54,7 +56,18 @@ static void shot(const char *dir, const char *name) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 3) { fprintf(stderr, "usage: sim script.txt outdir\n"); return 2; }
+  if (argc < 3) { fprintf(stderr, "usage: sim script.txt outdir [elevator.mod]\n"); return 2; }
+  if (argc > 3) {   // the music, as the PS5 build loads it
+    FILE *mf = fopen(argv[3], "rb");
+    if (mf) {
+      fseek(mf, 0, SEEK_END);
+      long len = ftell(mf);
+      fseek(mf, 0, SEEK_SET);
+      signed char *data = (signed char *)malloc(len);
+      if (data && fread(data, 1, len, mf) == (size_t)len) gameSetMusic(data, len);
+      fclose(mf);
+    }
+  }
   FILE *sf = fopen(argv[1], "r");
   if (!sf) return 2;
   char line[256];
@@ -97,6 +110,23 @@ int main(int argc, char **argv) {
         if (st == 0) break;
         step(0);
       }
+    } else if (!strcmp(cmd, "wav")) {   // the game runs on at 60 fps, its sound saved (48 kHz stereo)
+      float secs = (float)atof(a);
+      char name[64] = "sound";
+      sscanf(line, "%*s %*s %63s", name);
+      char path[256];
+      snprintf(path, sizeof(path), "%s/%s.wav", argv[2], name);
+      FILE *wf = fopen(path, "wb");
+      int total = (int)(secs * 48000), per = 800;   // 800 frames: one 60th of a second
+      unsigned hdr[11] = { 0x46464952u, (unsigned)(36 + total * 4), 0x45564157u, 0x20746d66u, 16, 0x00020001u, 48000, 48000 * 4, 0x00100004u, 0x61746164u, (unsigned)(total * 4) };
+      if (wf) fwrite(hdr, 4, 11, wf);
+      static short buf[800 * 2];
+      for (int done = 0; done < total; done += per) {
+        step(prev);
+        gameAudio(buf, per);
+        if (wf) fwrite(buf, 4, per, wf);
+      }
+      if (wf) fclose(wf);
     } else if (!strcmp(cmd, "room")) {
       char doors[8] = "BB";
       sscanf(line, "%*s %*s %7s", doors);

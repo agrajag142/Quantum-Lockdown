@@ -4,15 +4,18 @@
 // into the tiled scanout buffer each frame and flips. Video and controller
 // code from NUCLEAR MISSION's ps5_platform.cpp (which follows the starter's
 // screen.cpp: ps5-native-app-boilerplate's demo renderer, Copyright (C) 2026
-// BlackBearReloaded; changes for Breeze, MiladRTX). No sound yet.
+// BlackBearReloaded; changes for Breeze, MiladRTX). The sound: the game's
+// mixer (gameAudio) in a thread, out through AudioOut, as NUCLEAR MISSION's.
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "game.h"
 #include "gfx.h"
 
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/mman.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -42,6 +45,9 @@ int scePadInit();
 int scePadOpen(int32_t user_id, int32_t type, int32_t index, const void *param);
 int scePadGetHandle(int32_t user_id, int32_t type, int32_t index);
 int scePadRead(int32_t handle, void *data, int32_t count);
+int sceAudioOutInit();
+int sceAudioOutOpen(int user, int type, int index, unsigned grain, unsigned rate, unsigned format);
+int sceAudioOutOutput(int handle, const void *samples);
 }
 
 static uint64_t nowUs() {
@@ -205,6 +211,54 @@ static uint32_t gameButtons() {
   return b;
 }
 
+// ============================================================ the sound
+// AudioOut's main port, 48 kHz 16-bit stereo in 256-frame grains: Output
+// waits until the last grain is playing, which paces the thread.
+static const int kGrain = 256;
+static int audioPort = -1;
+
+static void *audioThread(void *) {
+  static short buf[kGrain * 2];
+  for (;;) {
+    gameAudio(buf, kGrain);
+    if (audioPort < 0 || sceAudioOutOutput(audioPort, buf) < 0) {
+      audioPort = -1;
+      sceKernelUsleep(kGrain * 1000000 / 48000);   // no output: keep the pace
+    }
+  }
+  return nullptr;
+}
+
+// elevator.mod from the app's assets (/app0/assets: the build copies mission2/assets
+// in, or copy it over FTP to /data/homebrew/PPSA99903/assets). Straight from
+// the system with mmap: the app's malloc heap is small (docs/PS5_NOTES.md).
+static void loadMusic() {
+  FILE *f = fopen("/app0/assets/elevator.mod", "rb");
+  if (!f) return;                      // (the title screen says it's missing)
+  fseek(f, 0, SEEK_END);
+  long len = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (len > 0) {
+    void *p = mmap(nullptr, (size_t)len, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    if (p != MAP_FAILED && fread(p, 1, (size_t)len, f) == (size_t)len) gameSetMusic((signed char *)p, len);
+  }
+  fclose(f);
+}
+
+static void soundInit() {
+  int r = sceAudioOutInit();
+  if (r != 0 && (unsigned)r != 0x8026000eu) printf("Sound: AudioOut init failed %x\n", (unsigned)r);   // (already initialised is fine)
+  audioPort = sceAudioOutOpen(0xff, 0, 0, kGrain, 48000, 1);
+  if (audioPort < 0) notify("Quantum Lockdown: no sound output");
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, 256 * 1024);
+  pthread_t th;
+  // (no thread name: pthread_setname_np hangs on the PS5)
+  if (pthread_create(&th, &attr, audioThread, nullptr) == 0) pthread_detach(th);
+  pthread_attr_destroy(&attr);
+}
+
 // ============================================================ the program
 int main() {
   padInit();
@@ -212,6 +266,8 @@ int main() {
   timespec wall{};
   clock_gettime(CLOCK_REALTIME, &wall);
   gameInit((uint32_t)(wall.tv_sec ^ (wall.tv_nsec >> 10)));
+  loadMusic();
+  soundInit();
   // the first picture, then the splash screen can go
   gameFrame(1 / 60.0f, 0, 0);
   copyFrame(scanout[0]);

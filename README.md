@@ -3,8 +3,8 @@
 A new full-screen game in the style of Impossible Mission, built from
 NUCLEAR MISSION's parts. Version 005: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
-equipment to search, the score, health, first aid kits and a 15 minute
-countdown. No sound yet.
+equipment to search, the score, health, first aid kits, a 15 minute
+countdown, the lift area's panel with its mini map, and music in the lift.
 
 ## What's different from NUCLEAR MISSION's PS5 port
 
@@ -53,6 +53,21 @@ something in them; the other 92 have nothing.
 - Finding something in it shows **FOUND OBJECT** and scores **200** more.
 - Searched pieces get a tick: green for nothing, gold for a find. On the map
   each room you've been in shows its pieces the same way (grey: not searched).
+
+## On screen
+
+- **The top bar:** the score on the left, the countdown in the middle, the
+  health bar on the right.
+- **The lift area** is laid out like Impossible Mission's: the shaft view
+  across the top with the lift in the middle, and a panel under it. In the
+  panel, under the lift, the **mini map** - a green screen in a hazard-striped
+  frame showing the rooms you've been in and the shafts as far as you've
+  ridden them, your place blinking. On its left: the lift and floor, and the
+  car's up / down arrows (lit while it moves). On its right: rooms visited,
+  objects found, first aid kits left, the version and frame rate.
+- **The music:** `assets/elevator.mod` plays while he is in the lift area,
+  fading out in the rooms (and picking up where it left off next time).
+  Nothing can be searched in the lift area.
 
 ## Health, first aid and the clock
 
@@ -110,7 +125,7 @@ it sits beside Hello PS5 and NUCLEAR MISSION.
 ## The PC test build
 
 ```bash
-mission2/build.sh sim                     # plays sim/tour.txt, screenshots in build/mission2-sim/shots
+mission2/build.sh sim                     # plays sim/tour.txt, screenshots in build/mission2-sim/shots (and elevator.mod, if it's in assets)
 g++ -O2 -Imission2/src mission2/sim/check_rooms.cpp -o check && ./check   # checks the room layouts
 mission2/build.sh sim my_script.txt       # your own script (see sim/sim_main.cpp for the commands)
 ```
@@ -125,9 +140,10 @@ checked on the PC before it goes on the console.
 | `src/game.cpp` | the game: the complex, the shafts, the rooms, the agent, searching, the map (settings at the top: columns, rows, rooms, rooms per column) |
 | `src/rooms_wide.h` | the room layouts (1280 units wide, four levels) |
 | `src/gfx.cpp`, `gfx.h` | drawing: the 1920x1080 picture, unit-space calls as in the sketch, vector letters |
-| `src/ps5_platform.cpp` | the PS5 side: the TV picture, the DualSense, the loop |
+| `src/ps5_platform.cpp` | the PS5 side: the TV picture, the DualSense, the sound, the loop |
+| `src/micromod.c`, `.h` | the MOD player (Martin Cameron's Micromod, as in NUCLEAR MISSION) |
 | `src/agent_rig.h`, `people.h` | NUCLEAR MISSION's agent and people, unchanged |
 | `sim/` | the PC test build, the room layout checker and the icon maker (not compiled into the app) |
 | `sce_sys/` | `param.json` (PPSA99903) and the home-screen icon |
-| `assets/` | files to copy into the app (none yet) |
+| `assets/` | files copied into the app: put `elevator.mod` here |
 | `docs/PS5_NOTES.md` | what we learned getting NUCLEAR MISSION running on a real PS5 |

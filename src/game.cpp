@@ -25,12 +25,15 @@
 #include "agent_rig.h"
 #include "rooms_wide.h"
 
+#include "micromod.h"
+
+#include <atomic>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "005"
+#define GAME_VERSION      "006"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -67,6 +70,9 @@
 #define ITEM_SHOW         2.5f     // seconds FOUND OBJECT stays up
 #define MAX_POPS          6        // score numbers floating up at once
 #define HURT_SECONDS      0.8f     // knocked down by a long drop before he gets up
+#define ELEVATOR_MUSIC_VOLUME 0.40f  // elevator.mod, in the lift area: 0.0 = off ... 1.0 = full
+#define MUSIC_FADE_SECONDS    0.8f   // fading in and out
+#define AUDIO_RATE        48000      // the PS5's output rate
 
 #define HUD_H    40
 #define PLAY_Y1  (SCREEN_H - 1)
@@ -78,7 +84,8 @@
 // The shaft view
 #define SHAFT_X0     580
 #define SHAFT_X1     700
-#define CAR_FLOOR_Y  520           // the car's floor on screen (the view follows the car)
+#define CAR_FLOOR_Y  400           // the car's floor on screen (the view follows the car)
+#define PANEL_Y      500           // the lift area: the shaft above this, the panel (mini map, details) below
 #define LEVEL_GAP    330           // between floor positions in the shaft
 #define CORR_H       190           // catwalk: floor to the beam above
 #define CAT_DOOR_H   168           // the doorway at the end of a catwalk
@@ -1193,7 +1200,7 @@ static void updateAgent(float dt) {
       } else if (pressed & BTN_JUMP) {
         if (want) agFacing = want;
         startJump();
-      } else if (held & BTN_USE) {
+      } else if ((held & BTN_USE) && mode == MODE_ROOM) {   // (nothing to search in the lift)
         searchT = 0;
         searchItem = -1;
         setState(ST_USE, 0.18f);
@@ -1457,23 +1464,23 @@ static void drawItemPanel() {
   drawVectorText(b, SCREEN_W / 2, y1 - 28, 2.6f, rgb565(100, 240, 140), true);
 }
 
+// The top bar: the score on the left, the clock in the middle, health on the right
 static void drawHud() {
   gfxClipAll();
   fillRect(0, 0, SCREEN_W - 1, HUD_H - 1, rgb565(10, 12, 16));
   fillRect(0, HUD_H - 2, SCREEN_W - 1, HUD_H - 1, rgb565(44, 50, 62));
   char b[64];
-  if (mode == MODE_SHAFT) snprintf(b, sizeof(b), "LIFT %c  FLOOR %d", shaftLetter(curShaft), carFloor + 1);
-  else snprintf(b, sizeof(b), "ROOM %d", curRoom + 1);
+  snprintf(b, sizeof(b), "SCORE %06ld", score);
   float w = vectorTextWidth(b, 2.6f);
-  drawVectorText(b, 24 + w / 2, HUD_H / 2, 2.6f, rgb565(255, 190, 70), true);
+  drawVectorText(b, 24 + w / 2, HUD_H / 2, 2.6f, rgb565(240, 240, 245), true);
   // the clock (red in the last minute, flashing in the last ten seconds)
   int secs = (int)ceilf(timeLeft > 0 ? timeLeft : 0);
-  snprintf(b, sizeof(b), "TIME %d:%02d", secs / 60, secs % 60);
+  snprintf(b, sizeof(b), "%d:%02d", secs / 60, secs % 60);
   bool lastMin = secs <= 60, flash = secs <= 10 && fmodf(clockT, 0.5f) < 0.25f;
-  drawVectorText(b, 330, HUD_H / 2, 2.6f, flash ? rgb565(120, 30, 24) : (lastMin ? rgb565(255, 70, 50) : rgb565(240, 240, 245)), true);
+  drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 3.2f, flash ? rgb565(120, 30, 24) : (lastMin ? rgb565(255, 70, 50) : rgb565(255, 190, 70)), true);
   // the health bar
-  drawVectorText("HEALTH", 470, HUD_H / 2, 2.0f, rgb565(170, 178, 196), false);
-  int hx0 = 512, hx1 = 662, hy0 = HUD_H / 2 - 8, hy1 = HUD_H / 2 + 8;
+  int hx1 = SCREEN_W - 26, hx0 = hx1 - 200, hy0 = HUD_H / 2 - 8, hy1 = HUD_H / 2 + 8;
+  drawVectorText("HEALTH", hx0 - 50, HUD_H / 2, 2.2f, rgb565(170, 178, 196), false);
   drawRectOutline(hx0 - 2, hy0 - 2, hx1 + 2, hy1 + 2, rgb565(90, 100, 120), 1);
   fillRect(hx0, hy0, hx1, hy1, rgb565(30, 20, 20));
   int fill = (hx1 - hx0) * health / HEALTH_MAX;
@@ -1481,14 +1488,125 @@ static void drawHud() {
   if (hurtFlashT > 0 && fmodf(hurtFlashT, 0.2f) < 0.1f) hc = rgb565(255, 255, 255);
   if (fill > 0) fillRect(hx0, hy0, hx0 + fill - 1, hy1, hc);
   for (int k = 1; k < 5; k++) fillRect(hx0 + (hx1 - hx0) * k / 5, hy0, hx0 + (hx1 - hx0) * k / 5, hy1, rgb565(20, 22, 28));   // a mark every 10
-  // the score and the finds
-  snprintf(b, sizeof(b), "SCORE %06ld", score);
-  drawVectorText(b, 820, HUD_H / 2, 2.6f, rgb565(240, 240, 245), true);
-  snprintf(b, sizeof(b), "FOUND %d/%d", itemsFound, ITEMS_HIDDEN);
-  drawVectorText(b, 1010, HUD_H / 2, 2.0f, rgb565(170, 178, 196), false);
+}
+
+// ---- the lift area's panel, as Impossible Mission's: where you are on the
+// left, the mini map in the middle (under the lift), the details on the right
+static void bevelBox(int x0, int y0, int x1, int y1, uint16_t face) {
+  fillRect(x0, y0, x1, y1, face);
+  fillRect(x0, y0, x1, y0 + 2, rgb565(170, 184, 210));
+  fillRect(x0, y0, x0 + 2, y1, rgb565(170, 184, 210));
+  fillRect(x0, y1 - 2, x1, y1, rgb565(30, 34, 48));
+  fillRect(x1 - 2, y0, x1, y1, rgb565(30, 34, 48));
+}
+
+static void drawArrowKey(int cx, int cy, bool up, bool lit) {
+  bevelBox(cx - 34, cy - 26, cx + 34, cy + 26, rgb565(84, 88, 160));
+  int d = up ? -1 : 1;
+  int xs[7] = { cx, cx + 20, cx + 9, cx + 9, cx - 9, cx - 9, cx - 20 };
+  int ys[7] = { cy + d * 16, cy, cy, cy - d * 14, cy - d * 14, cy, cy };
+  fillPolygon(xs, ys, 7, lit ? rgb565(255, 220, 80) : rgb565(150, 130, 60));
+}
+
+static void drawMiniMap(int x0, int y0, int x1, int y1) {
+  // the screen: a black bezel, a hazard-striped frame, green inside
+  fillRect(x0, y0, x1, y1, rgb565(10, 10, 12));
+  int fx0 = x0 + 10, fy0 = y0 + 10, fx1 = x1 - 10, fy1 = y1 - 10;
+  fillRect(fx0, fy0, fx1, fy1, rgb565(230, 200, 40));
+  for (int x = fx0 - 40; x < fx1 + 40; x += 16) {   // the black stripes, slanting
+    for (int side = 0; side < 4; side++) {
+      // top and bottom bands
+      if (side < 2) {
+        int yb0 = side ? fy1 - 7 : fy0, yb1 = side ? fy1 : fy0 + 7;
+        int xs[4] = { x, x + 8, x + 8 + (yb1 - yb0), x + (yb1 - yb0) };
+        int ys[4] = { yb0, yb0, yb1 + 1, yb1 + 1 };
+        for (int k = 0; k < 4; k++) xs[k] = clampv(xs[k], fx0, fx1 + 1);
+        fillPolygon(xs, ys, 4, rgb565(16, 16, 18));
+      }
+    }
+  }
+  for (int y = fy0 - 40; y < fy1 + 40; y += 16)
+    for (int side = 0; side < 2; side++) {   // left and right bands
+      int xb0 = side ? fx1 - 7 : fx0, xb1 = side ? fx1 : fx0 + 7;
+      int xs[4] = { xb0, xb1 + 1, xb1 + 1, xb0 };
+      int ys[4] = { y, y + (xb1 - xb0), y + 8 + (xb1 - xb0), y + 8 };
+      for (int k = 0; k < 4; k++) ys[k] = clampv(ys[k], fy0, fy1 + 1);
+      fillPolygon(xs, ys, 4, rgb565(16, 16, 18));
+    }
+  int gx0 = fx0 + 8, gy0 = fy0 + 8, gx1 = fx1 - 8, gy1 = fy1 - 8;
+  fillRect(gx0, gy0, gx1, gy1, rgb565(132, 210, 76));
+  // the complex, scaled into the screen: the rooms you've been in, the shafts as far as you've seen them
+  const int RW = 36, SW = 12, RH = 18, GAP = 7;
+  int mw = COLS * RW + SHAFTS * SW, mh = ROWS * RH + (ROWS - 1) * GAP;
+  int left = (gx0 + gx1 - mw) / 2, top = (gy0 + gy1 - mh) / 2;
+  uint16_t ink = rgb565(20, 34, 16);
+  auto floorY = [&](int f) { int r = f / 2; return top + r * (RH + GAP) + ((f & 1) ? RH - 4 : 4); };
+  for (int sh = 0; sh < SHAFTS; sh++) {
+    int lo = -1, hi = -1;
+    for (int f = 0; f < FLOORS; f++)
+      if (shaftSeen[sh][f]) { if (lo < 0) lo = f; hi = f; }
+    if (lo < 0) continue;
+    int x = left + sh * (RW + SW) + SW / 2;
+    fillRect(x - 1, floorY(lo) - 2, x + 1, floorY(hi) + 2, ink);
+  }
+  for (int i = 0; i < ROOM_COUNT; i++) {
+    const RoomInfo &ri = rooms[i];
+    if (!ri.visited) continue;
+    int rx = left + SW + ri.col * (RW + SW), ry = top + ri.row * (RH + GAP);
+    fillRect(rx + 2, ry, rx + RW - 3, ry + RH - 1, ink);
+    int yl = floorY(ri.row * 2 + (ri.topL ? 0 : 1)), yr = floorY(ri.row * 2 + (ri.topR ? 0 : 1));
+    fillRect(rx - SW / 2, yl - 1, rx + 2, yl + 1, ink);                // the corridors to the shafts
+    fillRect(rx + RW - 3, yr - 1, rx + RW + SW / 2, yr + 1, ink);
+  }
+  if (fmodf(clockT, 0.6f) < 0.4f) {           // him
+    int x = left + curShaft * (RW + SW) + SW / 2;
+    float f = carWorldY / LEVEL_GAP;
+    int f0 = (int)f;
+    float k = f - f0;
+    float y = floorY(f0) + (f0 + 1 < FLOORS ? (floorY(f0 + 1) - floorY(f0)) * k : 0);
+    fillRect(x - 3, (int)y - 3, x + 3, (int)y + 3, rgb565(250, 250, 240));
+    drawRectOutline(x - 4, (int)y - 4, x + 4, (int)y + 4, ink, 1);
+  }
+}
+
+static void drawPanel() {
+  gfxClipAll();
+  uint16_t face = rgb565(120, 164, 196);
+  fillRect(0, PANEL_Y, SCREEN_W - 1, SCREEN_H - 1, rgb565(30, 34, 48));
+  bevelBox(4, PANEL_Y + 4, SCREEN_W - 5, SCREEN_H - 5, face);
+  const int mx0 = 390, mx1 = 890;              // the mini map: under the lift, in the middle
+  drawMiniMap(mx0, PANEL_Y + 16, mx1, SCREEN_H - 18);
+  // on the left: where you are, and the car's arrows
+  bevelBox(20, PANEL_Y + 16, 372, SCREEN_H - 18, rgb565(70, 78, 120));
+  char b[40];
+  snprintf(b, sizeof(b), "LIFT %c", shaftLetter(curShaft));
+  drawVectorText(b, 150, PANEL_Y + 62, 4.2f, rgb565(255, 220, 80), true);
+  snprintf(b, sizeof(b), "FLOOR %d", carFloor + 1);
+  drawVectorText(b, 150, PANEL_Y + 112, 3.4f, rgb565(230, 236, 245), true);
+  bool movingUp = carMoving && carFloor * LEVEL_GAP < carWorldY, movingDown = carMoving && !movingUp;
+  drawArrowKey(310, PANEL_Y + 64, true, movingUp);
+  drawArrowKey(310, PANEL_Y + 140, false, movingDown);
+  drawVectorText(carMoving ? "MOVING" : "STOPPED", 150, PANEL_Y + 160, 2.4f, carMoving ? rgb565(255, 190, 70) : rgb565(120, 230, 140), false);
+  // on the right: the details
+  bevelBox(908, PANEL_Y + 16, SCREEN_W - 20, SCREEN_H - 18, rgb565(70, 78, 120));
+  int seen = 0, kitsLeft = 0;
+  for (int i = 0; i < ROOM_COUNT; i++) {
+    seen += rooms[i].visited;
+    kitsLeft += rooms[i].kit && !rooms[i].kitUsed;
+  }
+  int lx = 932;
+  auto line = [&](const char *label, const char *value, int y, uint16_t col) {
+    drawVectorText(label, lx + vectorTextWidth(label, 2.4f) / 2, y, 2.4f, rgb565(190, 200, 220), false);
+    drawVectorText(value, SCREEN_W - 44 - vectorTextWidth(value, 2.8f) / 2, y, 2.8f, col, true);
+  };
+  snprintf(b, sizeof(b), "%d/%d", seen, ROOM_COUNT);
+  line("ROOMS", b, PANEL_Y + 46, rgb565(240, 240, 245));
+  snprintf(b, sizeof(b), "%d/%d", itemsFound, ITEMS_HIDDEN);
+  line("FOUND", b, PANEL_Y + 86, rgb565(255, 220, 80));
+  snprintf(b, sizeof(b), "%d", kitsLeft);
+  line("FIRST AID LEFT", b, PANEL_Y + 126, rgb565(120, 230, 140));
   snprintf(b, sizeof(b), "V%s  FPS %d", GAME_VERSION, (int)lroundf(fpsShown));
-  w = vectorTextWidth(b, 2.0f);
-  drawVectorText(b, SCREEN_W - 24 - w / 2, HUD_H / 2, 2.0f, rgb565(110, 120, 140), false);
+  drawVectorText(b, (lx + SCREEN_W - 44) / 2, PANEL_Y + 170, 1.8f, rgb565(150, 160, 186), false);
 }
 
 // GAME OVER: why, and the score
@@ -1591,6 +1709,43 @@ static void drawMap() {
 }
 
 // ============================================================ the game
+// ============================================================ the music
+// elevator.mod, while he is in the lift area. The platform hands over the
+// file (gameSetMusic) and calls gameAudio from its sound thread; the game only
+// says whether it wants the music (musicWanted), and the sound thread fades.
+static bool musicReady = false;
+static std::atomic<int> musicWanted{0};
+static float musicGain = 0;              // (the sound thread's)
+static char musicProblem[48] = "NO ELEVATOR.MOD IN THE ASSETS";
+static short musicBuf[2048 * 2];
+
+void gameSetMusic(signed char *data, long len) {
+  if (!data || len < 1084) return;
+  long need = micromod_calculate_mod_file_len(data);
+  if (need < 0) { snprintf(musicProblem, sizeof(musicProblem), "ELEVATOR.MOD: NOT A MOD FILE"); return; }
+  if (need > len) { snprintf(musicProblem, sizeof(musicProblem), "ELEVATOR.MOD: FILE CUT SHORT"); return; }
+  if (micromod_initialise(data, AUDIO_RATE) != 0) { snprintf(musicProblem, sizeof(musicProblem), "ELEVATOR.MOD: WON'T PLAY"); return; }
+  micromod_set_gain(64);
+  musicProblem[0] = 0;
+  musicReady = true;
+}
+
+void gameAudio(short *out, int frames) {
+  memset(out, 0, (size_t)frames * 4);
+  if (!musicReady || frames > 2048) return;
+  float target = musicWanted.load(std::memory_order_relaxed) ? ELEVATOR_MUSIC_VOLUME : 0.0f;
+  if (musicGain <= 0 && target <= 0) return;     // silent: the tune waits where it was
+  memset(musicBuf, 0, (size_t)frames * 4);
+  micromod_get_audio(musicBuf, frames);
+  float step = ELEVATOR_MUSIC_VOLUME / (MUSIC_FADE_SECONDS * AUDIO_RATE);
+  for (int i = 0; i < frames; i++) {
+    if (musicGain < target) musicGain = fminf(musicGain + step, target);
+    else if (musicGain > target) musicGain = fmaxf(musicGain - step, target);
+    out[i * 2] = (short)(musicBuf[i * 2] * musicGain);
+    out[i * 2 + 1] = (short)(musicBuf[i * 2 + 1] * musicGain);
+  }
+}
+
 // ============================================================ the title
 static bool onTitle = true;
 
@@ -1628,6 +1783,7 @@ static void drawTitle() {
   drawAgentU(p, SCREEN_W / 2, 650, 1, 1.3f);
   fillRect(SCREEN_W / 2 - 90, 650, SCREEN_W / 2 + 90, 656, rgb565(80, 86, 98));
   if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 425, 4.0f, rgb565(240, 240, 245), true);
+  if (musicProblem[0]) drawVectorText(musicProblem, SCREEN_W / 2, 674, 1.8f, rgb565(220, 120, 90), false);
   char b[24];
   snprintf(b, sizeof(b), "VERSION %s", GAME_VERSION);
   drawVectorText(b, SCREEN_W / 2, 698, 1.8f, rgb565(100, 110, 130), false);
@@ -1685,6 +1841,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     gameOverT += dt;
     if (gameOverT > 1.5f && (pressed & BTN_JUMP)) {
       onTitle = true;
+      musicWanted.store(0, std::memory_order_relaxed);
       drawTitle();
       return;
     }
@@ -1724,16 +1881,19 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     drawSearchMarks();
   } else {
     memcpy(g_frame, shaftBg, sizeof(shaftBg));
-    gfxClip(HUD_H, PLAY_Y1);
+    gfxClip(HUD_H, PANEL_Y - 1);
     drawShaftScene();
   }
-  gfxClip(HUD_H, PLAY_Y1);
+  gfxClip(HUD_H, mode == MODE_SHAFT ? PANEL_Y - 1 : PLAY_Y1);
   drawAgentU(shownPose, agX, agY, agFacing, myScale);
+  gfxClip(HUD_H, PLAY_Y1);
+  if (mode == MODE_SHAFT) drawPanel();
   if (mode == MODE_ROOM) drawScorePops();
   if (itemShowT > 0 && mode == MODE_ROOM && !mapOn) drawItemPanel();
   if (mapOn) drawMap();
   else if (itemShowT <= 0) drawMessage();
   if (gameOver != END_NONE) drawGameOver();
+  musicWanted.store(mode == MODE_SHAFT && gameOver == END_NONE ? 1 : 0, std::memory_order_relaxed);
   drawHud();
 }
 
