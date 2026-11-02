@@ -1,0 +1,34 @@
+# A short tour with the layout from seed 1: the lift, the map, into room 4,
+# over the pit, search the safe, out of the far door into lift E.
+seed 1
+hold NONE 30
+shot 01_lift_start
+tap MAP
+hold NONE 20
+shot 02_map
+tap MAP
+tap DOWN
+hold NONE 40
+shot 03_lift_moving
+hold NONE 50
+hold RIGHT 172
+hold NONE 1
+shot 04_room4
+hold RIGHT 134
+hold RIGHT+JUMP 1
+hold RIGHT 30
+shot 05_somersault
+hold NONE 40
+hold RIGHT 20
+hold NONE 10
+hold USE 60
+shot 06_searching
+hold USE 60
+hold NONE 20
+shot 07_searched
+hold RIGHT 150
+hold NONE 30
+shot 08_lift_E
+tap MAP
+hold NONE 30
+shot 09_map_after
