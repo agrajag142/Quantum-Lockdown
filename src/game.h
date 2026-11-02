@@ -18,9 +18,10 @@ void gameInit(uint32_t seed);
 // One frame: dt in seconds, held = buttons down now, pressed = went down this frame.
 // Draws the whole picture into g_frame (gfx.h).
 void gameFrame(float dt, uint32_t held, uint32_t pressed);
-// The music: the platform hands over elevator.mod's bytes once (they must stay put),
-// then calls gameAudio from its sound thread for stereo 16-bit samples at 48 kHz.
-void gameSetMusic(signed char *data, long len);
+// The music: the platform hands over each tune's bytes once (they must stay put):
+// 0 elevator.mod (in the lift car), 1 stage1.mod. Then it calls gameAudio from
+// its sound thread for stereo 16-bit samples at 48 kHz.
+void gameSetTune(int which, signed char *data, long len);
 void gameAudio(short *out, int frames);
 const char *gameDebug();   // (the PC test build: where he is)
 void gameDebugPos(float *x, float *y, int *state);

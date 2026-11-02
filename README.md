@@ -4,7 +4,7 @@ A new full-screen game in the style of Impossible Mission, built from
 NUCLEAR MISSION's parts. Version 005: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
-countdown, the lift area's panel with its mini map, and music in the lift.
+countdown, the lift area's panel with its mini map, music and sound.
 
 ## What's different from NUCLEAR MISSION's PS5 port
 
@@ -45,8 +45,11 @@ CENTRE LIFT, TWIN TOWERS, THE CHASM), picked at random, each with four levels
 
 ## Equipment and the score
 
-Every room has 4 or 5 pieces of equipment to search (cabinet, safe, plant,
-radar, control panel): 128 in the whole complex. 36 of them, anywhere, have
+Every room has 4 or 5 pieces of equipment to search, 128 in the whole complex,
+each a different kind in its room, from twelve: from NUCLEAR MISSION a filing
+cabinet, safe, plant, radar, control panel, wooden desk, water cooler,
+bookshelf and coat stand; new, a desk with a computer (its screen scrolling),
+a steel cupboard and a computer rack (its lamps winking, tapes turning). 36 of them, anywhere, have
 something in them; the other 92 have nothing.
 
 - Searching a piece (hold Square) scores **50**, the first time.
@@ -65,9 +68,20 @@ something in them; the other 92 have nothing.
   ridden them, your place blinking. On its left: the lift and floor, and the
   car's up / down arrows (lit while it moves). On its right: rooms visited,
   objects found, first aid kits left, the version and frame rate.
-- **The music:** `assets/elevator.mod` plays while he is in the lift area,
-  fading out in the rooms (and picking up where it left off next time).
-  Nothing can be searched in the lift area.
+- Nothing can be searched in the lift area.
+
+## Sound
+
+- **Music:** `assets/elevator.mod` while he stands in the lift car;
+  `assets/stage1.mod` the rest of the time (stage 1 is the only stage so far).
+  The two cross-fade, and each picks up where it left off - they are two
+  separate copies of the MOD player (`micromod.c` and `micromod2.c`).
+- **The lift moving:** a low buzzing motor hum that throbs, its pitch drifting
+  up as it rises and down as it falls, after Impossible Mission's (room lift
+  pads hum a little quieter); a soft thump when it stops.
+- **Running:** NUCLEAR MISSION's footstep, each stride.
+- The levels are at the top of `src/game.cpp`: `ELEVATOR_MUSIC_VOLUME`,
+  `STAGE1_MUSIC_VOLUME`, `SFX_VOLUME`, `LIFT_HUM_VOLUME`.
 
 ## Health, first aid and the clock
 
@@ -84,8 +98,8 @@ something in them; the other 92 have nothing.
 - **Game over:** why, the score, what was found; X goes back to the title.
 
 `sim/check_layout.cpp` lays out 2000 complexes and checks the counts (128
-pieces, 4 or 5 a room, 36 finds, 5 first aid kits, 2-6 rooms a column) and that no two pieces
-overlap. `sim/check_rooms.cpp` checks that every
+pieces, 4 or 5 a room, 36 finds, 5 first aid kits, 2-6 rooms a column), that
+every piece stands on its platform clear of the lifts, and that no two overlap. `sim/check_rooms.cpp` checks that every
 layout can be crossed with every door combination and every spot reached:
 run it after adding or changing a layout.
 
@@ -141,7 +155,7 @@ checked on the PC before it goes on the console.
 | `src/rooms_wide.h` | the room layouts (1280 units wide, four levels) |
 | `src/gfx.cpp`, `gfx.h` | drawing: the 1920x1080 picture, unit-space calls as in the sketch, vector letters |
 | `src/ps5_platform.cpp` | the PS5 side: the TV picture, the DualSense, the sound, the loop |
-| `src/micromod.c`, `.h` | the MOD player (Martin Cameron's Micromod, as in NUCLEAR MISSION) |
+| `src/micromod.c`, `.h` | the MOD player (Martin Cameron's Micromod, as in NUCLEAR MISSION); `micromod2.c` a second copy of it |
 | `src/agent_rig.h`, `people.h` | NUCLEAR MISSION's agent and people, unchanged |
 | `sim/` | the PC test build, the room layout checker and the icon maker (not compiled into the app) |
 | `sce_sys/` | `param.json` (PPSA99903) and the home-screen icon |

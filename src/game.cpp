@@ -33,7 +33,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "006"
+#define GAME_VERSION      "007"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -70,8 +70,11 @@
 #define ITEM_SHOW         2.5f     // seconds FOUND OBJECT stays up
 #define MAX_POPS          6        // score numbers floating up at once
 #define HURT_SECONDS      0.8f     // knocked down by a long drop before he gets up
-#define ELEVATOR_MUSIC_VOLUME 0.40f  // elevator.mod, in the lift area: 0.0 = off ... 1.0 = full
-#define MUSIC_FADE_SECONDS    0.8f   // fading in and out
+#define ELEVATOR_MUSIC_VOLUME 0.40f  // elevator.mod, while he stands in the lift car: 0.0 = off ... 1.0 = full
+#define STAGE1_MUSIC_VOLUME   0.25f  // stage1.mod, the rest of the time in stage 1
+#define MUSIC_FADE_SECONDS    0.8f   // fading in and out (the two cross over)
+#define SFX_VOLUME            1.00f  // the sound effects (steps, the lift)
+#define LIFT_HUM_VOLUME       0.30f  // the lift's motor while it moves (room lift pads a little quieter)
 #define AUDIO_RATE        48000      // the PS5's output rate
 
 #define HUD_H    40
@@ -244,9 +247,13 @@ static int doorYL = ROOM_FLOOR_Y, doorYR = ROOM_FLOOR_Y;
 static int signX = 0, signY = 0;
 
 // Equipment (searchable)
-enum DecorKind : uint8_t { DEC_CABINET, DEC_SAFE, DEC_PLANT, DEC_RADAR, DEC_PANEL, DEC_KINDS, DEC_FIRSTAID = DEC_KINDS };
-static const int16_t decorW[DEC_KINDS + 1] = { 52, 62, 44, 84, 96, 48 };
-static const int16_t decorH[DEC_KINDS + 1] = { 96, 68, 96, 92, 82, 100 };
+enum DecorKind : uint8_t {
+  DEC_CABINET, DEC_SAFE, DEC_PLANT, DEC_RADAR, DEC_PANEL,       // from NUCLEAR MISSION's silo rooms
+  DEC_DESK, DEC_COOLER, DEC_SHELF, DEC_COAT,                    // ...and its offices
+  DEC_COMPUTER, DEC_CUPBOARD, DEC_SERVER,                       // new: a desk with a computer, a cupboard, a computer rack
+  DEC_KINDS, DEC_FIRSTAID = DEC_KINDS };
+static const int16_t decorW[DEC_KINDS + 1] = { 52, 62, 44, 84, 96, 104, 34, 70, 56, 104, 72, 58, 48 };
+static const int16_t decorH[DEC_KINDS + 1] = { 96, 68, 96, 92, 82, 98, 96, 110, 132, 108, 118, 120, 100 };
 struct Decor {
   uint8_t kind;
   int16_t x, y;                    // middle, and the top of what it stands on
@@ -316,6 +323,197 @@ static int fpsFrames = 0;
 static void showMsg(const char *s, float secs) {
   snprintf(msgText, sizeof(msgText), "%s", s);
   msgT = secs;
+}
+
+// ============================================================ sound
+// The platform calls gameAudio from its sound thread for 48 kHz stereo. The
+// game only says what it wants: which tune (tuneWanted), whether a lift is
+// moving (liftHum), and sound effects through a little queue. The sound thread
+// does the rest: the effects are NUCLEAR MISSION's little synthesiser (square,
+// triangle and noise voices that slide in pitch); the music is two MOD players,
+// one for each tune, so each keeps its place while the other plays.
+extern "C" {
+long micromod2_calculate_mod_file_len(signed char *module_header);
+long micromod2_initialise(signed char *data, long sampling_rate);
+void micromod2_set_gain(long value);
+void micromod2_get_audio(short *output_buffer, long count);
+}
+
+enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP };
+enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
+struct Voice {
+  bool active;
+  Wave wave;
+  float f0, f1, level, phase, noiseValue;
+  uint32_t delay, length, pos;
+};
+#define MAX_VOICES 12
+static Voice voices[MAX_VOICES];
+static uint32_t noiseState = 22222;
+
+static std::atomic<int> tuneWanted{0};    // 0 none, 1 the lift's (elevator.mod), 2 stage 1's (stage1.mod)
+static std::atomic<int> liftHum{0};       // 0 still, 1 the car going up, 2 down, 3 / 4 a room's lift pad
+static bool tuneReady[2] = { false, false };
+static char tuneProblem[2][48] = { "NO ELEVATOR.MOD IN THE ASSETS", "NO STAGE1.MOD IN THE ASSETS" };
+static float tuneGain[2] = { 0, 0 };       // (the sound thread's)
+static short tuneBuf[2048 * 2];
+static uint8_t sfxRing[64];
+static std::atomic<int> sfxHead{0}, sfxTail{0};
+
+static void sfxPlay(uint8_t sfx) {           // (the game's side of the queue)
+  int h = sfxHead.load(std::memory_order_relaxed), nx = (h + 1) & 63;
+  if (nx == sfxTail.load(std::memory_order_acquire)) return;
+  sfxRing[h] = sfx;
+  sfxHead.store(nx, std::memory_order_release);
+}
+
+static void startVoice(Wave wave, float f0, float f1, int delayMs, int lengthMs, float level) {
+  for (int i = 0; i < MAX_VOICES; i++) {
+    Voice &v = voices[i];
+    if (v.active) continue;
+    v.active = true;
+    v.wave = wave;
+    v.f0 = f0;
+    v.f1 = f1;
+    v.delay = (uint32_t)delayMs * AUDIO_RATE / 1000;
+    v.length = (uint32_t)lengthMs * AUDIO_RATE / 1000;
+    v.pos = 0;
+    v.level = level;
+    v.phase = 0;
+    v.noiseValue = 0;
+    return;
+  }
+}
+
+static void startEffect(uint8_t sfx) {
+  switch (sfx) {
+    case SFX_STEP:                             // NUCLEAR MISSION's footstep
+      startVoice(WAVE_NOISE, 1800, 500, 0, 35, 0.22f);
+      startVoice(WAVE_SQUARE, 150, 90, 0, 30, 0.10f);
+      break;
+    case SFX_LIFT_STOP:                        // the lift settling at a stop: a soft low thump
+      startVoice(WAVE_TRIANGLE, 90, 45, 0, 140, 0.30f);
+      startVoice(WAVE_NOISE, 500, 120, 0, 90, 0.10f);
+      break;
+  }
+}
+
+static inline float voiceSample(Voice &v) {
+  float p = (float)v.pos / (float)v.length;
+  float freq = v.f0 + (v.f1 - v.f0) * p;
+  v.phase += freq / AUDIO_RATE;
+  bool wrapped = false;
+  if (v.phase >= 1.0f) {
+    v.phase -= 1.0f;
+    wrapped = true;
+  }
+  float out;
+  switch (v.wave) {
+    case WAVE_SQUARE: out = (v.phase < 0.5f) ? 1.0f : -1.0f; break;
+    case WAVE_TRIANGLE: out = 4.0f * fabsf(v.phase - 0.5f) - 1.0f; break;
+    default:
+      if (wrapped || v.pos == 0) {
+        noiseState = noiseState * 1664525u + 1013904223u;
+        v.noiseValue = (float)(noiseState >> 16) / 32768.0f - 1.0f;
+      }
+      out = v.noiseValue;
+      break;
+  }
+  float attack = (float)v.pos / (0.003f * AUDIO_RATE);
+  float env = (attack < 1.0f) ? attack : (1.0f - p);
+  return out * env * v.level;
+}
+
+// The lift's motor, in the manner of Impossible Mission's: a low buzzing hum
+// that throbs, its pitch rising while the lift goes up and falling going down
+static float humPhase = 0, humPhase2 = 0, humWob = 0, humPitch = 0, humLevel = 0;
+static inline float liftHumSample(int hum) {
+  float target = hum ? LIFT_HUM_VOLUME * (hum >= 3 ? 0.7f : 1.0f) : 0.0f;
+  humLevel += (target - humLevel) * 0.0015f;                       // (a short swell in and out)
+  if (humLevel < 0.0005f && !hum) return 0;
+  bool up = (hum == 1 || hum == 3);
+  float bend = up ? 1.0f : -1.0f;
+  if (hum) humPitch += (bend - humPitch) * 0.00004f;               // the pitch drifts the way it's going
+  float f = 62.0f + 14.0f * humPitch;
+  humPhase += f / AUDIO_RATE;
+  if (humPhase >= 1) humPhase -= 1;
+  humPhase2 += f * 2.01f / AUDIO_RATE;
+  if (humPhase2 >= 1) humPhase2 -= 1;
+  humWob += 11.0f / AUDIO_RATE;                                    // the throb
+  if (humWob >= 1) humWob -= 1;
+  float pulse = humPhase < 0.3f ? 1.0f : -0.43f;                   // a narrow pulse: buzzy
+  float tri = 4.0f * fabsf(humPhase2 - 0.5f) - 1.0f;
+  float throb = 0.65f + 0.35f * sinf(humWob * TWO_PI);
+  return (pulse * 0.6f + tri * 0.4f) * throb * humLevel;
+}
+
+void gameSetTune(int which, signed char *data, long len) {
+  if (which < 0 || which > 1 || !data || len < 1084) return;
+  const char *name = which ? "STAGE1.MOD" : "ELEVATOR.MOD";
+  long need = which ? micromod2_calculate_mod_file_len(data) : micromod_calculate_mod_file_len(data);
+  if (need < 0) { snprintf(tuneProblem[which], 48, "%s: NOT A MOD FILE", name); return; }
+  if (need > len) { snprintf(tuneProblem[which], 48, "%s: FILE CUT SHORT", name); return; }
+  long ok = which ? micromod2_initialise(data, AUDIO_RATE) : micromod_initialise(data, AUDIO_RATE);
+  if (ok != 0) { snprintf(tuneProblem[which], 48, "%s: WON'T PLAY", name); return; }
+  if (which) micromod2_set_gain(64);
+  else micromod_set_gain(64);
+  tuneProblem[which][0] = 0;
+  tuneReady[which] = true;
+}
+
+void gameAudio(short *out, int frames) {
+  if (frames > 2048) frames = 2048;
+  // new effects from the game
+  int t = sfxTail.load(std::memory_order_relaxed);
+  while (t != sfxHead.load(std::memory_order_acquire)) {
+    startEffect(sfxRing[t]);
+    t = (t + 1) & 63;
+    sfxTail.store(t, std::memory_order_release);
+  }
+  // the effects and the lift's hum (mono)
+  int hum = liftHum.load(std::memory_order_relaxed);
+  static float fx[2048];
+  for (int n = 0; n < frames; n++) {
+    float mix = 0;
+    for (int i = 0; i < MAX_VOICES; i++) {
+      Voice &v = voices[i];
+      if (!v.active) continue;
+      if (v.delay > 0) {
+        v.delay--;
+        continue;
+      }
+      mix += voiceSample(v);
+      if (++v.pos >= v.length) v.active = false;
+    }
+    fx[n] = mix * SFX_VOLUME + liftHumSample(hum);
+  }
+  // the two tunes, each fading towards its level (a tune at nothing waits where it was)
+  static int32_t acc[2048 * 2];
+  memset(acc, 0, (size_t)frames * 2 * sizeof(int32_t));
+  int want = tuneWanted.load(std::memory_order_relaxed);
+  for (int k = 0; k < 2; k++) {
+    float vol = k ? STAGE1_MUSIC_VOLUME : ELEVATOR_MUSIC_VOLUME;
+    float target = (tuneReady[k] && want == k + 1) ? vol : 0.0f;
+    if (!tuneReady[k] || (tuneGain[k] <= 0 && target <= 0)) continue;
+    memset(tuneBuf, 0, (size_t)frames * 4);
+    if (k) micromod2_get_audio(tuneBuf, frames);
+    else micromod_get_audio(tuneBuf, frames);
+    float step = vol / (MUSIC_FADE_SECONDS * AUDIO_RATE);
+    for (int n = 0; n < frames; n++) {
+      if (tuneGain[k] < target) tuneGain[k] = fminf(tuneGain[k] + step, target);
+      else if (tuneGain[k] > target) tuneGain[k] = fmaxf(tuneGain[k] - step, target);
+      // the MOD's channels are panned hard left and right: each side gets a little of the other
+      float l = tuneBuf[n * 2], r = tuneBuf[n * 2 + 1];
+      acc[n * 2] += (int32_t)((l * 0.62f + r * 0.25f) * tuneGain[k]);
+      acc[n * 2 + 1] += (int32_t)((r * 0.62f + l * 0.25f) * tuneGain[k]);
+    }
+  }
+  for (int n = 0; n < frames; n++) {
+    int32_t e = (int32_t)(fx[n] * 9000.0f);
+    int32_t l = acc[n * 2] + e, r = acc[n * 2 + 1] + e;
+    out[n * 2] = (short)(l > 32767 ? 32767 : (l < -32768 ? -32768 : l));
+    out[n * 2 + 1] = (short)(r > 32767 ? 32767 : (r < -32768 ? -32768 : r));
+  }
 }
 
 // ============================================================ painting: rooms (into roomBg, once per room)
@@ -511,6 +709,137 @@ static void paintPanel(int x, int fy) {
   fillCircle(x - 30, fy - 27, 6, rgb565(200, 40, 34));
 }
 
+// ---- from NUCLEAR MISSION's offices
+static void paintDesk(int x, int fy) {
+  uint16_t wood = rgb565(120, 86, 54), dark = rgb565(84, 58, 36), top = rgb565(150, 112, 74);
+  fillRect(x - 52, fy - 70, x + 52, fy - 62, top);
+  fillRect(x - 50, fy - 62, x - 14, fy - 1, wood);                 // drawers
+  for (int k = 0; k < 3; k++) {
+    fillRect(x - 46, fy - 58 + k * 19, x - 18, fy - 43 + k * 19, rgb565(132, 96, 62));
+    fillRect(x - 36, fy - 52 + k * 19, x - 28, fy - 50 + k * 19, rgb565(200, 190, 150));
+  }
+  fillRect(x + 42, fy - 62, x + 50, fy - 1, dark);                 // leg
+  fillRect(x - 14, fy - 62, x + 42, fy - 56, dark);
+  fillRect(x + 4, fy - 76, x + 34, fy - 71, rgb565(236, 234, 224)); // papers
+  fillRect(x + 8, fy - 79, x + 36, fy - 76, rgb565(220, 218, 206));
+  drawLine(x - 30, fy - 71, x - 24, fy - 98, rgb565(60, 60, 64), true);   // a desk lamp
+  drawLine(x - 24, fy - 98, x - 8, fy - 92, rgb565(60, 60, 64), true);
+  fillCircle(x - 6, fy - 90, 6, rgb565(70, 110, 70));
+  fillRect(x - 36, fy - 72, x - 22, fy - 70, rgb565(60, 60, 64));
+}
+
+static void paintCooler(int x, int fy) {
+  fillRect(x - 15, fy - 60, x + 15, fy - 1, rgb565(210, 210, 206));
+  fillRect(x - 15, fy - 60, x + 15, fy - 57, rgb565(236, 236, 232));
+  fillRect(x + 11, fy - 56, x + 15, fy - 1, rgb565(170, 170, 168));
+  fillRect(x - 6, fy - 40, x + 2, fy - 34, rgb565(60, 120, 200));   // taps
+  fillRect(x - 6, fy - 30, x + 2, fy - 26, rgb565(200, 60, 50));
+  int xs[6] = { x - 12, x + 12, x + 14, x + 8, x - 8, x - 14 };
+  int ys[6] = { fy - 96, fy - 96, fy - 70, fy - 60, fy - 60, fy - 70 };
+  fillPolygon(xs, ys, 6, rgb565(110, 170, 220));                   // the bottle
+  fillRect(x - 6, fy - 92, x - 2, fy - 66, rgb565(170, 210, 240));
+}
+
+static void paintShelf(int x, int fy) {
+  uint16_t wood = rgb565(110, 80, 52), dark = rgb565(70, 50, 32);
+  fillRect(x - 35, fy - 110, x + 35, fy - 1, wood);
+  fillRect(x - 31, fy - 106, x + 31, fy - 4, dark);
+  static const uint8_t bookRGB[6][3] = { { 160, 40, 36 }, { 40, 80, 150 }, { 200, 170, 80 }, { 50, 110, 60 }, { 180, 180, 170 }, { 120, 60, 120 } };
+  uint32_t h = (uint32_t)x * 2654435761u;
+  for (int sh = 0; sh < 3; sh++) {
+    int by = fy - 106 + sh * 35 + 34;
+    fillRect(x - 31, by - 2, x + 31, by, wood);
+    int bx = x - 30;
+    while (bx < x + 26) {
+      h = h * 1664525u + 1013904223u;
+      int w = 5 + (h >> 28), ht = 20 + ((h >> 20) & 7);
+      if (bx + w > x + 30) break;
+      const uint8_t *c = bookRGB[(h >> 12) % 6];
+      fillRect(bx, by - 2 - ht, bx + w - 1, by - 3, rgb565(c[0], c[1], c[2]));
+      bx += w + 1;
+    }
+  }
+}
+
+// A coat stand with a jacket and a cap hanging on it
+static void paintCoatStand(int x, int fy) {
+  uint16_t wood = rgb565(96, 66, 40), dark = rgb565(66, 44, 26);
+  fillRect(x - 3, fy - 122, x + 3, fy - 6, wood);
+  fillRect(x - 1, fy - 122, x, fy - 6, rgb565(130, 92, 58));
+  int bx[4] = { x - 26, x + 26, x + 20, x - 20 }, by[4] = { fy - 1, fy - 1, fy - 8, fy - 8 };
+  fillPolygon(bx, by, 4, dark);
+  fillCircle(x, fy - 124, 4, dark);
+  drawLine(x, fy - 116, x - 14, fy - 124, wood, true);
+  drawLine(x, fy - 116, x + 14, fy - 124, wood, true);
+  uint16_t jk = rgb565(70, 82, 56), jkd = rgb565(50, 60, 40);
+  int jx[6] = { x - 26, x - 6, x - 2, x - 4, x - 30, x - 32 };
+  int jy[6] = { fy - 116, fy - 120, fy - 100, fy - 52, fy - 50, fy - 100 };
+  fillPolygon(jx, jy, 6, jk);
+  int cx[3] = { x - 22, x - 8, x - 15 }, cy[3] = { fy - 118, fy - 120, fy - 100 };
+  fillPolygon(cx, cy, 3, jkd);
+  drawLine(x - 15, fy - 100, x - 16, fy - 54, jkd, false);
+  for (int k = 0; k < 3; k++) fillCircle(x - 13, fy - 92 + k * 14, 1, rgb565(190, 170, 110));
+  fillRect(x - 28, fy - 84, x - 20, fy - 80, jkd);
+  int sx[4] = { x - 32, x - 26, x - 26, x - 34 }, sy[4] = { fy - 100, fy - 100, fy - 58, fy - 60 };
+  fillPolygon(sx, sy, 4, jkd);
+  fillRect(x + 6, fy - 132, x + 24, fy - 124, rgb565(60, 64, 50));
+  fillRect(x + 18, fy - 125, x + 30, fy - 122, rgb565(40, 42, 34));
+}
+
+// ---- new
+// A steel desk with a computer on it: a monitor (its screen moves: drawDecorAnim),
+// a keyboard, and the computer box underneath
+static void paintComputerDesk(int x, int fy) {
+  uint16_t dark = rgb565(56, 60, 70), top = rgb565(140, 146, 156);
+  fillRect(x - 52, fy - 62, x + 52, fy - 56, top);                 // the desk top
+  fillRect(x - 50, fy - 56, x - 44, fy - 1, dark);                 // legs
+  fillRect(x + 44, fy - 56, x + 50, fy - 1, dark);
+  fillRect(x + 10, fy - 50, x + 38, fy - 4, rgb565(196, 192, 176)); // the computer box, under it
+  fillRect(x + 14, fy - 44, x + 34, fy - 40, rgb565(60, 60, 64));
+  fillCircle(x + 30, fy - 12, 2, rgb565(80, 230, 120));
+  // the monitor: a beige case round a dark screen
+  fillRect(x - 34, fy - 108, x + 18, fy - 68, rgb565(196, 192, 176));
+  fillRect(x - 30, fy - 104, x + 14, fy - 74, rgb565(8, 24, 12));
+  fillRect(x - 14, fy - 68, x - 2, fy - 63, rgb565(160, 156, 142));   // its stand
+  fillRect(x - 40, fy - 66, x + 20, fy - 63, rgb565(220, 218, 206)); // the keyboard
+  for (int k = 0; k < 9; k++) fillRect(x - 37 + k * 6, fy - 65, x - 34 + k * 6, fy - 64, rgb565(150, 150, 146));
+}
+
+// A tall steel cupboard with two doors
+static void paintCupboard(int x, int fy) {
+  int x0 = x - 36, x1 = x + 36, top = fy - 118;
+  uint16_t body = rgb565(118, 124, 112), edge = rgb565(70, 74, 66), face = rgb565(132, 138, 126);
+  fillRect(x0 + 3, fy - 5, x0 + 9, fy - 1, edge);
+  fillRect(x1 - 9, fy - 5, x1 - 3, fy - 1, edge);
+  fillRect(x0, top, x1, fy - 6, body);
+  fillRect(x0, top, x1, top + 3, rgb565(160, 166, 154));
+  fillRect(x0 + 4, top + 7, x - 2, fy - 11, face);                 // the doors
+  fillRect(x + 2, top + 7, x1 - 4, fy - 11, face);
+  fillRect(x - 1, top + 7, x + 1, fy - 11, edge);
+  for (int k = 0; k < 4; k++) fillRect(x0 + 10, top + 14 + k * 5, x - 8, top + 15 + k * 5, edge);   // vents
+  for (int k = 0; k < 4; k++) fillRect(x + 8, top + 14 + k * 5, x1 - 10, top + 15 + k * 5, edge);
+  fillRect(x - 8, top + 52, x - 5, top + 70, rgb565(60, 62, 58));  // handles
+  fillRect(x + 5, top + 52, x + 8, top + 70, rgb565(60, 62, 58));
+  fillRect(x + 12, top + 30, x + 26, top + 40, rgb565(220, 214, 180));   // a label
+}
+
+// A computer rack: tape reels, rows of lamps (they blink: drawDecorAnim)
+static void paintServer(int x, int fy) {
+  int x0 = x - 29, x1 = x + 29, top = fy - 120;
+  fillRect(x0, top, x1, fy - 1, rgb565(38, 42, 50));
+  fillRect(x0, top, x1, top + 3, rgb565(90, 96, 108));
+  fillRect(x1 - 4, top + 4, x1, fy - 1, rgb565(26, 28, 34));
+  for (int k = 0; k < 2; k++) {                                    // two tape reels
+    int cx = x - 12 + k * 24, cy = top + 24;
+    fillCircle(cx, cy, 10, rgb565(150, 154, 164));
+    fillCircle(cx, cy, 7, rgb565(60, 52, 44));
+    fillCircle(cx, cy, 2, rgb565(150, 154, 164));
+  }
+  for (int r = 0; r < 4; r++) fillRect(x0 + 6, top + 44 + r * 14, x1 - 8, top + 52 + r * 14, rgb565(22, 24, 30));   // lamp rows
+  fillRect(x0 + 6, fy - 22, x1 - 8, fy - 8, rgb565(54, 58, 68));   // a vent
+  for (int k = 0; k < 6; k++) fillRect(x0 + 9 + k * 7, fy - 20, x0 + 12 + k * 7, fy - 10, rgb565(26, 28, 34));
+}
+
 // A first aid kit on the wall: a white case with a red cross (open and empty once used)
 static void paintFirstAid(int x, int fy, bool used) {
   int x0 = x - 24, x1 = x + 24, y0 = fy - 100, y1 = fy - 56;
@@ -538,6 +867,13 @@ static void paintDecor(const Decor &d) {
     case DEC_PLANT:   paintPlant(d.x, d.y); break;
     case DEC_RADAR:   paintRadar(d.x, d.y); break;
     case DEC_PANEL:   paintPanel(d.x, d.y); break;
+    case DEC_DESK:    paintDesk(d.x, d.y); break;
+    case DEC_COOLER:  paintCooler(d.x, d.y); break;
+    case DEC_SHELF:   paintShelf(d.x, d.y); break;
+    case DEC_COAT:    paintCoatStand(d.x, d.y); break;
+    case DEC_COMPUTER: paintComputerDesk(d.x, d.y); break;
+    case DEC_CUPBOARD: paintCupboard(d.x, d.y); break;
+    case DEC_SERVER:  paintServer(d.x, d.y); break;
     case DEC_FIRSTAID: paintFirstAid(d.x, d.y, rooms[curRoom].kitUsed); break;
   }
 }
@@ -556,6 +892,30 @@ static void drawDecorAnim() {
       if (k < 2.5f) {
         int g = (int)(220 * (1.0f - k / 2.5f));
         fillCircle(cx + (int)(cosf(ba) * 15), cy + (int)(sinf(ba) * 15), 2, rgb565(40, 40 + g, 60));
+      }
+    } else if (d.kind == DEC_COMPUTER) {     // lines of green text scrolling up the screen, a cursor blinking
+      int sx0 = d.x - 28, sy0 = d.y - 102;
+      int scroll = (int)(clockT * 2.5f) + d.seed;
+      for (int row = 0; row < 5; row++) {
+        uint32_t h = (uint32_t)(scroll + row) * 2654435761u;
+        int len = 10 + (int)((h >> 20) % 28);
+        fillRect(sx0 + 2, sy0 + 3 + row * 5, sx0 + 2 + len, sy0 + 4 + row * 5, rgb565(70, 220, 110));
+      }
+      if (fmodf(clockT, 0.8f) < 0.4f) fillRect(sx0 + 4, sy0 + 27, sx0 + 8, sy0 + 28, rgb565(140, 255, 170));
+    } else if (d.kind == DEC_SERVER) {       // rows of lamps winking
+      int x0 = d.x - 23, top = d.y - 120;
+      for (int r = 0; r < 4; r++)
+        for (int k = 0; k < 6; k++) {
+          int ph = (int)(clockT * 4.0f) + k * 5 + r * 11 + d.seed;
+          if (!(((ph * 2654435761u) >> 12) & 1)) continue;
+          uint16_t col = (k + r) % 3 == 0 ? rgb565(255, 80, 60) : ((k + r) % 3 == 1 ? rgb565(80, 230, 120) : rgb565(255, 200, 70));
+          fillRect(x0 + k * 7, top + 46 + r * 14, x0 + k * 7 + 3, top + 49 + r * 14, col);
+        }
+      // the tape reels turning
+      for (int k = 0; k < 2; k++) {
+        float a = clockT * (k ? 3.0f : -2.2f);
+        int cx = d.x - 12 + k * 24, cy = top + 24;
+        drawLineF(cx + 0.5f, cy + 0.5f, cx + 0.5f + cosf(a) * 6, cy + 0.5f + sinf(a) * 6, rgb565(150, 154, 164), 1.5f);
       }
     } else if (d.kind == DEC_PANEL) {
       for (int row = 0; row < 2; row++)
@@ -1228,7 +1588,10 @@ static void updateAgent(float dt) {
       if (!openSide && (agX <= edgeMin() || agX >= edgeMax())) {
         agX = clampv(agX, edgeMin(), edgeMax());
         setState(ST_IDLE, 0.15f);
+        break;
       }
+      float p0 = fmodf(oldT / AG_RUN_CYCLE, 1.0f), p1 = fmodf(agT / AG_RUN_CYCLE, 1.0f);   // a footstep each stride
+      if (p1 < p0 || (p0 < 0.5f && p1 >= 0.5f)) sfxPlay(SFX_STEP);
       break;
     }
 
@@ -1709,43 +2072,6 @@ static void drawMap() {
 }
 
 // ============================================================ the game
-// ============================================================ the music
-// elevator.mod, while he is in the lift area. The platform hands over the
-// file (gameSetMusic) and calls gameAudio from its sound thread; the game only
-// says whether it wants the music (musicWanted), and the sound thread fades.
-static bool musicReady = false;
-static std::atomic<int> musicWanted{0};
-static float musicGain = 0;              // (the sound thread's)
-static char musicProblem[48] = "NO ELEVATOR.MOD IN THE ASSETS";
-static short musicBuf[2048 * 2];
-
-void gameSetMusic(signed char *data, long len) {
-  if (!data || len < 1084) return;
-  long need = micromod_calculate_mod_file_len(data);
-  if (need < 0) { snprintf(musicProblem, sizeof(musicProblem), "ELEVATOR.MOD: NOT A MOD FILE"); return; }
-  if (need > len) { snprintf(musicProblem, sizeof(musicProblem), "ELEVATOR.MOD: FILE CUT SHORT"); return; }
-  if (micromod_initialise(data, AUDIO_RATE) != 0) { snprintf(musicProblem, sizeof(musicProblem), "ELEVATOR.MOD: WON'T PLAY"); return; }
-  micromod_set_gain(64);
-  musicProblem[0] = 0;
-  musicReady = true;
-}
-
-void gameAudio(short *out, int frames) {
-  memset(out, 0, (size_t)frames * 4);
-  if (!musicReady || frames > 2048) return;
-  float target = musicWanted.load(std::memory_order_relaxed) ? ELEVATOR_MUSIC_VOLUME : 0.0f;
-  if (musicGain <= 0 && target <= 0) return;     // silent: the tune waits where it was
-  memset(musicBuf, 0, (size_t)frames * 4);
-  micromod_get_audio(musicBuf, frames);
-  float step = ELEVATOR_MUSIC_VOLUME / (MUSIC_FADE_SECONDS * AUDIO_RATE);
-  for (int i = 0; i < frames; i++) {
-    if (musicGain < target) musicGain = fminf(musicGain + step, target);
-    else if (musicGain > target) musicGain = fmaxf(musicGain - step, target);
-    out[i * 2] = (short)(musicBuf[i * 2] * musicGain);
-    out[i * 2 + 1] = (short)(musicBuf[i * 2 + 1] * musicGain);
-  }
-}
-
 // ============================================================ the title
 static bool onTitle = true;
 
@@ -1783,7 +2109,8 @@ static void drawTitle() {
   drawAgentU(p, SCREEN_W / 2, 650, 1, 1.3f);
   fillRect(SCREEN_W / 2 - 90, 650, SCREEN_W / 2 + 90, 656, rgb565(80, 86, 98));
   if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 425, 4.0f, rgb565(240, 240, 245), true);
-  if (musicProblem[0]) drawVectorText(musicProblem, SCREEN_W / 2, 674, 1.8f, rgb565(220, 120, 90), false);
+  if (tuneProblem[0][0]) drawVectorText(tuneProblem[0], SCREEN_W / 2, 650, 1.8f, rgb565(220, 120, 90), false);
+  if (tuneProblem[1][0]) drawVectorText(tuneProblem[1], SCREEN_W / 2, 674, 1.8f, rgb565(220, 120, 90), false);
   char b[24];
   snprintf(b, sizeof(b), "VERSION %s", GAME_VERSION);
   drawVectorText(b, SCREEN_W / 2, 698, 1.8f, rgb565(100, 110, 130), false);
@@ -1841,7 +2168,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     gameOverT += dt;
     if (gameOverT > 1.5f && (pressed & BTN_JUMP)) {
       onTitle = true;
-      musicWanted.store(0, std::memory_order_relaxed);
+      tuneWanted.store(0, std::memory_order_relaxed);
       drawTitle();
       return;
     }
@@ -1893,7 +2220,16 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mapOn) drawMap();
   else if (itemShowT <= 0) drawMessage();
   if (gameOver != END_NONE) drawGameOver();
-  musicWanted.store(mode == MODE_SHAFT && gameOver == END_NONE ? 1 : 0, std::memory_order_relaxed);
+  // the music: the lift's tune in the car, stage 1's everywhere else; the lift's motor
+  tuneWanted.store(gameOver != END_NONE ? 0 : (mode == MODE_SHAFT && inCar(agX) && agState != ST_JUMP ? 1 : 2), std::memory_order_relaxed);
+  int hum = 0;
+  if (!mapOn && gameOver == END_NONE) {
+    if (mode == MODE_SHAFT && carMoving) hum = carFloor * LEVEL_GAP < carWorldY ? 1 : 2;
+    for (int i = 0; i < liftCount && mode == MODE_ROOM; i++)
+      if (lifts[i].moving) hum = (lifts[i].stops[lifts[i].at] < lifts[i].y ? 1 : 2) + 2;   // (3, 4: a pad - quieter)
+  }
+  int was = liftHum.exchange(hum, std::memory_order_relaxed);
+  if (was != 0 && hum == 0 && !mapOn) sfxPlay(SFX_LIFT_STOP);
   drawHud();
 }
 

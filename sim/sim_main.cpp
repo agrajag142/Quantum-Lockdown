@@ -1,7 +1,7 @@
 // The PC test build: the game with a scripted controller, saving screenshots.
 //
-//   gcc -O2 -c ../src/micromod.c && g++ -O2 -I../src ../src/game.cpp ../src/gfx.cpp sim_main.cpp micromod.o -o sim
-//   ./sim script.txt out/ [elevator.mod]
+//   gcc -O2 -c ../src/micromod.c ../src/micromod2.c && g++ -O2 -I../src ../src/game.cpp ../src/gfx.cpp sim_main.cpp micromod.o micromod2.o -o sim
+//   ./sim script.txt out/ [elevator.mod [stage1.mod]]
 //
 // Script lines:  hold BUTTONS FRAMES   (BUTTONS: LEFT+JUMP etc, or NONE)
 //                tap BUTTONS           (one frame down, one up)
@@ -56,17 +56,16 @@ static void shot(const char *dir, const char *name) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 3) { fprintf(stderr, "usage: sim script.txt outdir [elevator.mod]\n"); return 2; }
-  if (argc > 3) {   // the music, as the PS5 build loads it
-    FILE *mf = fopen(argv[3], "rb");
-    if (mf) {
-      fseek(mf, 0, SEEK_END);
-      long len = ftell(mf);
-      fseek(mf, 0, SEEK_SET);
-      signed char *data = (signed char *)malloc(len);
-      if (data && fread(data, 1, len, mf) == (size_t)len) gameSetMusic(data, len);
-      fclose(mf);
-    }
+  if (argc < 3) { fprintf(stderr, "usage: sim script.txt outdir [elevator.mod [stage1.mod]]\n"); return 2; }
+  for (int k = 0; k < 2 && argc > 3 + k; k++) {   // the tunes, as the PS5 build loads them: elevator.mod, stage1.mod
+    FILE *mf = fopen(argv[3 + k], "rb");
+    if (!mf) continue;
+    fseek(mf, 0, SEEK_END);
+    long len = ftell(mf);
+    fseek(mf, 0, SEEK_SET);
+    signed char *data = (signed char *)malloc(len);
+    if (data && fread(data, 1, len, mf) == (size_t)len) gameSetTune(k, data, len);
+    fclose(mf);
   }
   FILE *sf = fopen(argv[1], "r");
   if (!sf) return 2;

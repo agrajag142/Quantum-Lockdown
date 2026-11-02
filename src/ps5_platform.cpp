@@ -229,18 +229,18 @@ static void *audioThread(void *) {
   return nullptr;
 }
 
-// elevator.mod from the app's assets (/app0/assets: the build copies mission2/assets
-// in, or copy it over FTP to /data/homebrew/PPSA99903/assets). Straight from
+// The tunes from the app's assets (/app0/assets: the build copies mission2/assets
+// in, or copy them over FTP to /data/homebrew/PPSA99903/assets). Straight from
 // the system with mmap: the app's malloc heap is small (docs/PS5_NOTES.md).
-static void loadMusic() {
-  FILE *f = fopen("/app0/assets/elevator.mod", "rb");
+static void loadTune(int which, const char *path) {
+  FILE *f = fopen(path, "rb");
   if (!f) return;                      // (the title screen says it's missing)
   fseek(f, 0, SEEK_END);
   long len = ftell(f);
   fseek(f, 0, SEEK_SET);
   if (len > 0) {
     void *p = mmap(nullptr, (size_t)len, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
-    if (p != MAP_FAILED && fread(p, 1, (size_t)len, f) == (size_t)len) gameSetMusic((signed char *)p, len);
+    if (p != MAP_FAILED && fread(p, 1, (size_t)len, f) == (size_t)len) gameSetTune(which, (signed char *)p, len);
   }
   fclose(f);
 }
@@ -266,7 +266,8 @@ int main() {
   timespec wall{};
   clock_gettime(CLOCK_REALTIME, &wall);
   gameInit((uint32_t)(wall.tv_sec ^ (wall.tv_nsec >> 10)));
-  loadMusic();
+  loadTune(0, "/app0/assets/elevator.mod");
+  loadTune(1, "/app0/assets/stage1.mod");
   soundInit();
   // the first picture, then the splash screen can go
   gameFrame(1 / 60.0f, 0, 0);

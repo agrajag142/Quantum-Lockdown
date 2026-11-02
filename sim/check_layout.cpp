@@ -1,9 +1,9 @@
 // Lays out 2000 complexes and checks each: 128 pieces of equipment, 4 or 5 in
 // every room, 36 with something in them, 2 to 6 rooms in every column, a room
 // in the top left corner, 5 first aid kits in different rooms, every room's
-// pieces placed and none overlapping.
+// pieces placed, standing on a platform clear of the lifts, none overlapping.
 //
-//   gcc -O2 -c ../src/micromod.c && g++ -std=c++20 -O2 -w -I../src check_layout.cpp ../src/gfx.cpp micromod.o -o check_layout && ./check_layout
+//   gcc -O2 -c ../src/micromod.c ../src/micromod2.c && g++ -std=c++20 -O2 -w -I../src check_layout.cpp ../src/gfx.cpp micromod.o micromod2.o -o check_layout && ./check_layout
 #include "../src/game.cpp"
 
 int main() {
@@ -33,6 +33,20 @@ int main() {
       if (decorCount != rooms[i].decorN + (rooms[i].kit ? 1 : 0)) {
         bad++;
         printf("seed %u room %d: %d of %d pieces placed\n", seed, i + 1, decorCount, rooms[i].decorN);
+      }
+      // each piece stands on a platform, clear of the lift shafts
+      const WideRoom &t = wideRooms[rooms[i].tpl];
+      for (int a = 0; a < decorCount; a++) {
+        int hw = decorW[decor[a].kind] / 2;
+        bool on = false;
+        for (int k = 0; k < t.platCount; k++)
+          if (t.plats[k].y == decor[a].y && decor[a].x - hw >= t.plats[k].x0 - 4 && decor[a].x + hw <= t.plats[k].x1 + 4) on = true;
+        for (int k = 0; k < t.liftCount; k++)
+          if (decor[a].x + hw > t.lifts[k].x0 && decor[a].x - hw < t.lifts[k].x1) on = false;
+        if (!on) {
+          bad++;
+          printf("%s: a piece %d wide at %d,%d hangs off its platform or over a lift\n", t.name, decorW[decor[a].kind], decor[a].x, decor[a].y);
+        }
       }
       for (int a = 0; a < decorCount; a++)
         for (int b = a + 1; b < decorCount; b++)
