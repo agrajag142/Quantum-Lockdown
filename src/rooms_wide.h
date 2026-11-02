@@ -61,7 +61,7 @@ struct WideRoom {
   int16_t pits[MAX_PITS][2];
   int8_t spotCount;
   Spot spots[MAX_SPOTS];
-  int16_t signX, signY;       // radiation sign on the back wall (0 = none)
+  int16_t signX, signY;       // where the room number is stencilled on the back wall
 };
 
 static const WideRoom wideRooms[] = {

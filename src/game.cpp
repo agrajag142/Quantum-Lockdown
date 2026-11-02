@@ -30,7 +30,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "004"
+#define GAME_VERSION      "005"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -45,7 +45,11 @@
 #define JUMP_DISTANCE     150.0f
 #define GRAVITY           1700.0f
 #define FALL_MAX_SPEED    950.0f
-#define FALL_SAFE_PX      200
+#define HEALTH_MAX        50       // the health bar
+#define FALL_HURT_2       5        // a drop of two levels costs this much health...
+#define FALL_HURT_3       15       // ...three or more (top to bottom), or down a pit, this much (one level: nothing)
+#define FIRST_AID_KITS    5        // first aid kits over the whole complex (each in a different room)
+#define GAME_SECONDS      (15 * 60)  // the countdown: 15 minutes
 #define EDGE_GRACE_PX     8
 #define LIFT_SPEED        150.0f   // lift pads in rooms
 #define CAR_SPEED         260.0f   // the lift car in the shafts: its speed to start with...
@@ -62,6 +66,7 @@
 #define FOUND_SCORE       200      // finding something in it
 #define ITEM_SHOW         2.5f     // seconds FOUND OBJECT stays up
 #define MAX_POPS          6        // score numbers floating up at once
+#define HURT_SECONDS      0.8f     // knocked down by a long drop before he gets up
 
 #define HUD_H    40
 #define PLAY_Y1  (SCREEN_H - 1)
@@ -88,6 +93,7 @@ struct RoomInfo {
   uint8_t decorN;                  // its equipment: how many pieces (4 or 5)
   bool searched[MAX_DECOR];        // ...searched yet
   bool holds[MAX_DECOR];           // ...something in it
+  bool kit, kitUsed;               // a first aid kit here, and whether it has been used
 };
 static RoomInfo rooms[ROOM_COUNT];         // numbered 1..30 across the rows, top to bottom
 static int8_t roomAt[ROWS][COLS];          // which room is in each place (-1: none)
@@ -173,6 +179,7 @@ static void layOut(uint32_t seed) {
       ri.visited = false;
       ri.decorN = (uint8_t)(EQUIPMENT_TOTAL / ROOM_COUNT);
       for (int i = 0; i < MAX_DECOR; i++) ri.searched[i] = ri.holds[i] = false;
+      ri.kit = ri.kitUsed = false;
     }
   // the rooms with one more piece of equipment, to make EQUIPMENT_TOTAL
   for (int extra = EQUIPMENT_TOTAL - ROOM_COUNT * (EQUIPMENT_TOTAL / ROOM_COUNT); extra > 0;) {
@@ -187,6 +194,13 @@ static void layOut(uint32_t seed) {
     int i = rnd(ri.decorN);
     if (ri.holds[i]) continue;
     ri.holds[i] = true;
+    k++;
+  }
+  // the first aid kits, in rooms with a spare spot for one
+  for (int k = 0; k < FIRST_AID_KITS;) {
+    RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
+    if (ri.kit || ri.decorN >= wideRooms[ri.tpl].spotCount) continue;
+    ri.kit = true;
     k++;
   }
   memset(shaftSeen, 0, sizeof(shaftSeen));
@@ -223,15 +237,15 @@ static int doorYL = ROOM_FLOOR_Y, doorYR = ROOM_FLOOR_Y;
 static int signX = 0, signY = 0;
 
 // Equipment (searchable)
-enum DecorKind : uint8_t { DEC_CABINET, DEC_SAFE, DEC_PLANT, DEC_RADAR, DEC_PANEL, DEC_KINDS };
-static const int16_t decorW[DEC_KINDS] = { 52, 62, 44, 84, 96 };
-static const int16_t decorH[DEC_KINDS] = { 96, 68, 96, 92, 82 };
+enum DecorKind : uint8_t { DEC_CABINET, DEC_SAFE, DEC_PLANT, DEC_RADAR, DEC_PANEL, DEC_KINDS, DEC_FIRSTAID = DEC_KINDS };
+static const int16_t decorW[DEC_KINDS + 1] = { 52, 62, 44, 84, 96, 48 };
+static const int16_t decorH[DEC_KINDS + 1] = { 96, 68, 96, 92, 82, 100 };
 struct Decor {
   uint8_t kind;
   int16_t x, y;                    // middle, and the top of what it stands on
   uint16_t seed;                   // its blinking lights
 };
-static Decor decor[MAX_DECOR];
+static Decor decor[MAX_DECOR + 1];       // (the equipment, then a first aid kit if the room has one)
 static int decorCount = 0;
 
 // Pictures painted once: the room, and the shaft (all but what scrolls)
@@ -254,6 +268,17 @@ static uint32_t held = 0, pressed = 0;
 static int searchItem = -1;
 static float searchT = 0;
 static float nothingShowT = 0, nothingX = 0, nothingY = 0;
+
+// Health, the clock, the end
+static int health = HEALTH_MAX;
+static float hurtFlashT = 0;           // the health bar flashes after a hurt
+static float timeLeft = GAME_SECONDS;
+static bool koGetUp = false;           // knocked down by a drop: he gets up where he is (else back to the door)
+enum EndReason : uint8_t { END_NONE, END_TIME, END_HEALTH };
+static EndReason gameOver = END_NONE;
+static float gameOverT = 0;
+static char floatText[24] = "";        // a word floating up from the equipment (NOTHING, HEALTH RESTORED...)
+static uint16_t floatColour = 0;
 
 // The score
 static long score = 0;
@@ -287,33 +312,6 @@ static void showMsg(const char *s, float secs) {
 }
 
 // ============================================================ painting: rooms (into roomBg, once per room)
-static void paintRadiationSign(int cx, int cy, int r) {
-  uint16_t yellow = rgb565(236, 196, 40);
-  uint16_t black = rgb565(16, 16, 18);
-  fillCircle(cx, cy, r + 4, black);
-  fillCircle(cx, cy, r, yellow);
-  for (int b = 0; b < 3; b++) {
-    float mid = -HALF_PI + b * TWO_PI / 3.0f;
-    float xs[14], ys[14];
-    int n = 0;
-    float r0 = r * 0.24f, r1 = r * 0.86f;
-    for (int k = 0; k <= 6; k++) {
-      float a = mid - PI / 6 + (PI / 3) * k / 6.0f;
-      xs[n] = cx + 0.5f + cosf(a) * r1;
-      ys[n] = cy + 0.5f + sinf(a) * r1;
-      n++;
-    }
-    for (int k = 6; k >= 0; k--) {
-      float a = mid - PI / 6 + (PI / 3) * k / 6.0f;
-      xs[n] = cx + 0.5f + cosf(a) * r0;
-      ys[n] = cy + 0.5f + sinf(a) * r0;
-      n++;
-    }
-    fillPolygonF(xs, ys, n, black);
-  }
-  fillCircle(cx, cy, (int)(r * 0.17f), black);
-}
-
 static void paintPipe(int y, int h) {
   uint16_t body = rgb565(64, 74, 86), hi = rgb565(104, 116, 130), lo = rgb565(38, 44, 54);
   uint16_t flange = rgb565(50, 58, 70);
@@ -506,6 +504,26 @@ static void paintPanel(int x, int fy) {
   fillCircle(x - 30, fy - 27, 6, rgb565(200, 40, 34));
 }
 
+// A first aid kit on the wall: a white case with a red cross (open and empty once used)
+static void paintFirstAid(int x, int fy, bool used) {
+  int x0 = x - 24, x1 = x + 24, y0 = fy - 100, y1 = fy - 56;
+  fillRect(x - 3, y1 + 1, x + 3, fy - 40, rgb565(70, 76, 88));          // the bracket
+  fillRect(x - 12, fy - 42, x + 12, fy - 38, rgb565(70, 76, 88));
+  fillRect(x0, y0, x1, y1, rgb565(30, 32, 36));
+  if (used) {
+    fillRect(x0 + 3, y0 + 3, x1 - 3, y1 - 3, rgb565(60, 64, 70));        // open, empty
+    int dx[4] = { x0, x0 - 18, x0 - 18, x0 }, dy[4] = { y0, y0 + 6, y1 + 6, y1 };
+    fillPolygon(dx, dy, 4, rgb565(200, 200, 204));                       // the door, swung open
+    fillRect(x0 - 14, y0 + 18, x0 - 6, y0 + 26, rgb565(170, 40, 34));
+  } else {
+    fillRect(x0 + 2, y0 + 2, x1 - 2, y1 - 2, rgb565(236, 236, 240));
+    fillRect(x0 + 2, y0 + 2, x1 - 2, y0 + 5, rgb565(255, 255, 255));
+    fillRect(x - 5, y0 + 9, x + 4, y1 - 9, rgb565(210, 36, 30));        // the cross
+    fillRect(x - 14, y0 + 18, x + 13, y0 + 26, rgb565(210, 36, 30));
+    fillRect(x1 - 6, y0 + 16, x1 - 4, y0 + 28, rgb565(150, 150, 156));  // the catch
+  }
+}
+
 static void paintDecor(const Decor &d) {
   switch (d.kind) {
     case DEC_CABINET: paintCabinet(d.x, d.y); break;
@@ -513,6 +531,7 @@ static void paintDecor(const Decor &d) {
     case DEC_PLANT:   paintPlant(d.x, d.y); break;
     case DEC_RADAR:   paintRadar(d.x, d.y); break;
     case DEC_PANEL:   paintPanel(d.x, d.y); break;
+    case DEC_FIRSTAID: paintFirstAid(d.x, d.y, rooms[curRoom].kitUsed); break;
   }
 }
 
@@ -567,6 +586,15 @@ static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
     d.y = s.y;
     d.seed = (uint16_t)rnd32();
   }
+  // the first aid kit, on the next spot
+  if (ri.kit && ri.decorN < t.spotCount) {
+    const Spot &s = t.spots[order[ri.decorN]];
+    Decor &d = decor[decorCount++];
+    d.kind = DEC_FIRSTAID;
+    d.x = s.x;
+    d.y = s.y;
+    d.seed = 0;
+  }
   rngState = save;
 }
 
@@ -592,11 +620,10 @@ static void paintRoom() {
   fillRect(0, HUD_H, SCREEN_W - 1, CEIL_Y - 1, rgb565(52, 58, 70));
   fillRect(0, CEIL_Y - 3, SCREEN_W - 1, CEIL_Y - 1, rgb565(30, 34, 42));
   paintPipe(CEIL_Y + 4, 14);
-  if (signX > 0) paintRadiationSign(signX, signY, 40);
   // the room's number, stencilled on the back wall
   char b[16];
   snprintf(b, sizeof(b), "%d", curRoom + 1);
-  drawVectorText(b, signX > 0 ? signX : SCREEN_W / 2, signY + 64, 3.5f, rgb565(70, 80, 96), true);
+  drawVectorText(b, signX > 0 ? signX : SCREEN_W / 2, signY, 5.0f, rgb565(70, 80, 96), true);
   for (int i = 0; i < liftCount; i++) paintLiftShaft(lifts[i]);
   for (int i = 0; i < platCount; i++) paintPlatform(plats[i]);
   for (int i = 0; i < liftCount; i++) {
@@ -1027,8 +1054,26 @@ static void startJump() {
   setState(ST_JUMP, 0.08f);
 }
 
-static void knockOut() {
+static void endGame(EndReason why) {
+  if (gameOver == END_NONE) {
+    gameOver = why;
+    gameOverT = 0;
+  }
+}
+
+static void hurt(int amount) {
+  health -= amount;
+  hurtFlashT = 1.0f;
+  if (health <= 0) {
+    health = 0;
+    endGame(END_HEALTH);
+  }
+}
+
+// Down: back to the door he came in by (after a pit), or getting up where he lies (a long drop)
+static void knockOut(bool getUp = false) {
   agLift = -1;
+  koGetUp = getUp;
   setState(ST_KO, 0.10f);
 }
 
@@ -1243,9 +1288,16 @@ static void updateAgent(float dt) {
       if (top >= 0) {
         agY = top;
         agLift = lift;
-        if (agY - fallFromY > FALL_SAFE_PX) knockOut();
-        else setState(ST_LAND, 0.06f);
-      } else if (agY > SCREEN_H + 160) {
+        int levels = (int)lroundf((agY - fallFromY) / 160.0f);   // how many levels he dropped
+        int harm = levels >= 3 ? FALL_HURT_3 : (levels == 2 ? FALL_HURT_2 : 0);
+        if (harm > 0) {
+          hurt(harm);
+          knockOut(true);
+        } else {
+          setState(ST_LAND, 0.06f);
+        }
+      } else if (agY > SCREEN_H + 160) {   // down a pit
+        hurt(FALL_HURT_3);
         knockOut();
       }
       break;
@@ -1273,6 +1325,21 @@ static void updateAgent(float dt) {
         if (searchT >= SEARCH_SECONDS) {
           RoomInfo &ri = rooms[curRoom];
           float px = decor[i].x, py = decor[i].y - decorH[decor[i].kind] - 22;
+          if (decor[i].kind == DEC_FIRSTAID) {   // the first aid kit
+            if (ri.kitUsed) snprintf(floatText, sizeof(floatText), "EMPTY"), floatColour = rgb565(170, 170, 180);
+            else if (health >= HEALTH_MAX) snprintf(floatText, sizeof(floatText), "HEALTH FULL"), floatColour = rgb565(170, 170, 180);
+            else {
+              health = HEALTH_MAX;
+              ri.kitUsed = true;
+              paintRoom();                    // (it hangs open now)
+              snprintf(floatText, sizeof(floatText), "HEALTH RESTORED");
+              floatColour = rgb565(100, 240, 140);
+            }
+            nothingShowT = NOTHING_SHOW;
+            nothingX = px;
+            nothingY = py;
+            break;
+          }
           bool first = !ri.searched[i];
           ri.searched[i] = true;
           if (first) addScore(SEARCH_SCORE, px, py - 26);
@@ -1285,6 +1352,8 @@ static void updateAgent(float dt) {
             nothingShowT = NOTHING_SHOW;
             nothingX = px;
             nothingY = py;
+            snprintf(floatText, sizeof(floatText), "NOTHING");
+            floatColour = rgb565(170, 170, 180);
           }
         }
       }
@@ -1296,7 +1365,9 @@ static void updateAgent(float dt) {
     }
 
     case ST_KO:
-      if (agT >= RESPAWN_SECONDS) respawn();
+      if (gameOver != END_NONE) break;
+      if (koGetUp && agT >= HURT_SECONDS) setState(ST_IDLE, 0.35f);
+      else if (!koGetUp && agT >= RESPAWN_SECONDS) respawn();
       break;
   }
 
@@ -1336,7 +1407,7 @@ static void drawSearchMarks() {
   for (int i = 0; i < decorCount; i++) {
     const Decor &d = decor[i];
     int top = d.y - decorH[d.kind];
-    if (ri.searched[i]) {
+    if (d.kind != DEC_FIRSTAID && ri.searched[i]) {
       uint16_t c = ri.holds[i] ? rgb565(255, 210, 70) : rgb565(80, 230, 120);   // (gold: something was in it)
       int tx = d.x - 6, ty = top - 12;
       drawLine(tx, ty, tx + 4, ty + 5, c, true);
@@ -1350,7 +1421,7 @@ static void drawSearchMarks() {
     fillRect(x0 + 2, y0 + 2, x0 + 2 + (int)(68 * searchT / SEARCH_SECONDS), y0 + 7, rgb565(120, 200, 255));
   }
   if (nothingShowT > 0)
-    drawVectorText("NOTHING", nothingX, nothingY - (NOTHING_SHOW - nothingShowT) * 20, 2.5f, rgb565(170, 170, 180), false);
+    drawVectorText(floatText, nothingX, fmaxf(nothingY, 112.0f) - (NOTHING_SHOW - nothingShowT) * 20, 2.5f, floatColour, false);
 }
 
 static void drawScorePops() {
@@ -1395,16 +1466,48 @@ static void drawHud() {
   else snprintf(b, sizeof(b), "ROOM %d", curRoom + 1);
   float w = vectorTextWidth(b, 2.6f);
   drawVectorText(b, 24 + w / 2, HUD_H / 2, 2.6f, rgb565(255, 190, 70), true);
+  // the clock (red in the last minute, flashing in the last ten seconds)
+  int secs = (int)ceilf(timeLeft > 0 ? timeLeft : 0);
+  snprintf(b, sizeof(b), "TIME %d:%02d", secs / 60, secs % 60);
+  bool lastMin = secs <= 60, flash = secs <= 10 && fmodf(clockT, 0.5f) < 0.25f;
+  drawVectorText(b, 330, HUD_H / 2, 2.6f, flash ? rgb565(120, 30, 24) : (lastMin ? rgb565(255, 70, 50) : rgb565(240, 240, 245)), true);
+  // the health bar
+  drawVectorText("HEALTH", 470, HUD_H / 2, 2.0f, rgb565(170, 178, 196), false);
+  int hx0 = 512, hx1 = 662, hy0 = HUD_H / 2 - 8, hy1 = HUD_H / 2 + 8;
+  drawRectOutline(hx0 - 2, hy0 - 2, hx1 + 2, hy1 + 2, rgb565(90, 100, 120), 1);
+  fillRect(hx0, hy0, hx1, hy1, rgb565(30, 20, 20));
+  int fill = (hx1 - hx0) * health / HEALTH_MAX;
+  uint16_t hc = health > 25 ? rgb565(80, 220, 110) : (health > 10 ? rgb565(240, 190, 60) : rgb565(240, 60, 44));
+  if (hurtFlashT > 0 && fmodf(hurtFlashT, 0.2f) < 0.1f) hc = rgb565(255, 255, 255);
+  if (fill > 0) fillRect(hx0, hy0, hx0 + fill - 1, hy1, hc);
+  for (int k = 1; k < 5; k++) fillRect(hx0 + (hx1 - hx0) * k / 5, hy0, hx0 + (hx1 - hx0) * k / 5, hy1, rgb565(20, 22, 28));   // a mark every 10
+  // the score and the finds
   snprintf(b, sizeof(b), "SCORE %06ld", score);
-  drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 2.8f, rgb565(240, 240, 245), true);
-  int seen = 0;
-  for (int i = 0; i < ROOM_COUNT; i++) seen += rooms[i].visited;
-  snprintf(b, sizeof(b), "ROOMS %d/%d  FOUND %d/%d", seen, ROOM_COUNT, itemsFound, ITEMS_HIDDEN);
-  w = vectorTextWidth(b, 2.0f);
-  drawVectorText(b, SCREEN_W / 2 + 160 + w / 2, HUD_H / 2, 2.0f, rgb565(170, 178, 196), false);
+  drawVectorText(b, 820, HUD_H / 2, 2.6f, rgb565(240, 240, 245), true);
+  snprintf(b, sizeof(b), "FOUND %d/%d", itemsFound, ITEMS_HIDDEN);
+  drawVectorText(b, 1010, HUD_H / 2, 2.0f, rgb565(170, 178, 196), false);
   snprintf(b, sizeof(b), "V%s  FPS %d", GAME_VERSION, (int)lroundf(fpsShown));
   w = vectorTextWidth(b, 2.0f);
   drawVectorText(b, SCREEN_W - 24 - w / 2, HUD_H / 2, 2.0f, rgb565(110, 120, 140), false);
+}
+
+// GAME OVER: why, and the score
+static void drawGameOver() {
+  float k = gameOverT / 1.0f;
+  if (k > 1) k = 1;
+  blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 0.65f * k);
+  if (gameOverT < 0.4f) return;
+  drawVectorTextW("GAME OVER", SCREEN_W / 2, 250, 10.0f, rgb565(120, 20, 14), 8.0f);
+  drawVectorTextW("GAME OVER", SCREEN_W / 2, 250, 10.0f, rgb565(255, 70, 50), 3.0f);
+  drawVectorText(gameOver == END_TIME ? "THE TIME RAN OUT" : "OUT OF HEALTH", SCREEN_W / 2, 350, 4.0f, rgb565(240, 240, 245), true);
+  char b[48];
+  snprintf(b, sizeof(b), "SCORE %ld", score);
+  drawVectorText(b, SCREEN_W / 2, 420, 4.0f, rgb565(255, 190, 70), true);
+  int seen = 0;
+  for (int i = 0; i < ROOM_COUNT; i++) seen += rooms[i].visited;
+  snprintf(b, sizeof(b), "%d OF %d FOUND   %d OF %d ROOMS", itemsFound, ITEMS_HIDDEN, seen, ROOM_COUNT);
+  drawVectorText(b, SCREEN_W / 2, 470, 2.6f, rgb565(170, 178, 196), false);
+  if (gameOverT > 1.5f && fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X", SCREEN_W / 2, 560, 3.6f, rgb565(240, 240, 245), true);
 }
 
 static void drawMessage() {
@@ -1462,6 +1565,11 @@ static void drawMap() {
         uint16_t c = !ri.searched[k] ? rgb565(80, 88, 104) : (ri.holds[k] ? rgb565(255, 210, 70) : rgb565(80, 230, 120));
         fillRect(dx - 4, y0 + RH - 15, dx + 4, y0 + RH - 8, c);
       }
+    if (ri.visited && ri.kit && !ri.kitUsed) {   // a first aid kit still here: a red cross in the corner
+      fillRect(x0 + RW - 20, y0 + 6, x0 + RW - 6, y0 + 20, rgb565(236, 236, 240));
+      fillRect(x0 + RW - 15, y0 + 8, x0 + RW - 11, y0 + 18, rgb565(210, 36, 30));
+      fillRect(x0 + RW - 18, y0 + 11, x0 + RW - 8, y0 + 15, rgb565(210, 36, 30));
+    }
     if (mode == MODE_ROOM && i == curRoom && blink)
       drawRectOutline(x0 - 4, y0 - 4, x0 + RW + 3, y0 + RH + 3, rgb565(255, 190, 70), 3);
   }
@@ -1534,6 +1642,10 @@ static void newGame() {
   onTitle = false;
   score = 0;
   itemsFound = 0;
+  health = HEALTH_MAX;
+  hurtFlashT = 0;
+  timeLeft = GAME_SECONDS;
+  gameOver = END_NONE;
   itemShowT = nothingShowT = 0;
   for (int i = 0; i < MAX_POPS; i++) popT[i] = 0;
   showMsg("OPTIONS: THE MAP", 5.0f);
@@ -1569,11 +1681,30 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     }
   }
 
-  if (pressed & BTN_MAP) mapOn = !mapOn;
+  if (gameOver != END_NONE) {           // the game is over: X (after a moment) back to the title
+    gameOverT += dt;
+    if (gameOverT > 1.5f && (pressed & BTN_JUMP)) {
+      onTitle = true;
+      drawTitle();
+      return;
+    }
+    held = pressed = 0;
+    mapOn = false;
+  }
+
+  if (pressed & BTN_MAP) mapOn = !mapOn;   // (the map pauses everything, the clock too)
   if (mapOn) {
     if (pressed & BTN_NEW) newGame();
     pressed = 0;
   } else {
+    if (gameOver == END_NONE) {
+      timeLeft -= dt;
+      if (timeLeft <= 0) {
+        timeLeft = 0;
+        endGame(END_TIME);
+      }
+    }
+    if (hurtFlashT > 0) hurtFlashT -= dt;
     if (msgT > 0) msgT -= dt;
     if (nothingShowT > 0) nothingShowT -= dt;
     if (itemShowT > 0) itemShowT -= dt;
@@ -1602,6 +1733,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (itemShowT > 0 && mode == MODE_ROOM && !mapOn) drawItemPanel();
   if (mapOn) drawMap();
   else if (itemShowT <= 0) drawMessage();
+  if (gameOver != END_NONE) drawGameOver();
   drawHud();
 }
 

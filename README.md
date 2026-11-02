@@ -1,9 +1,10 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 003: a title screen, the lift shafts, four
-room designs (four levels each), and a new layout of the complex every game.
-No sound yet.
+NUCLEAR MISSION's parts. Version 005: a title screen, the lift shafts, four
+room designs (four levels each), a new layout of the complex every game,
+equipment to search, the score, health, first aid kits and a 15 minute
+countdown. No sound yet.
 
 ## What's different from NUCLEAR MISSION's PS5 port
 
@@ -53,8 +54,22 @@ something in them; the other 92 have nothing.
 - Searched pieces get a tick: green for nothing, gold for a find. On the map
   each room you've been in shows its pieces the same way (grey: not searched).
 
+## Health, first aid and the clock
+
+- **Health:** a bar of 50 points in the top bar. Dropping one level costs
+  nothing; two levels cost 5; three (top to bottom) cost 15, and knock him
+  down for a moment. Falling down a pit costs 15 and puts him back at the door
+  he came in by. At 0 the game is over.
+- **First aid kits:** 5 in the whole complex, each in a different room, on
+  the wall (a white case with a red cross). Search one (hold Square) and the
+  health bar is full again; each kit works once (it hangs open after), and
+  not while the bar is already full. The map marks a room's unused kit.
+- **The clock:** 15 minutes from the start. At 0:00 the game is over. It is
+  red in the last minute. The map (Options) pauses it, and everything else.
+- **Game over:** why, the score, what was found; X goes back to the title.
+
 `sim/check_layout.cpp` lays out 2000 complexes and checks the counts (128
-pieces, 4 or 5 a room, 36 finds, 2-6 rooms a column) and that no two pieces
+pieces, 4 or 5 a room, 36 finds, 5 first aid kits, 2-6 rooms a column) and that no two pieces
 overlap. `sim/check_rooms.cpp` checks that every
 layout can be crossed with every door combination and every spot reached:
 run it after adding or changing a layout.
@@ -67,7 +82,7 @@ run it after adding or changing a layout.
 | D-pad or left stick | run left / right; up / down rides the lift car or a lift pad, or calls a pad to you |
 | Cross | somersault |
 | Square or Circle | hold to search equipment |
-| Options or touchpad | the map (shows every room and where its doors lead) |
+| Options or touchpad | the map (shows every room and where its doors lead), and pauses the game |
 | Triangle, on the map | lay out a new complex |
 
 Lift pads start at the stop nearest the door he came in by. Standing beside a
