@@ -33,7 +33,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "007"
+#define GAME_VERSION      "008"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -280,6 +280,8 @@ static float myScale = AGENT_SCALE;
 static uint32_t held = 0, pressed = 0;
 
 static int searchItem = -1;
+static float searchBeepT = 0;
+#define SEARCH_BEEP_SECONDS 0.18f
 static float searchT = 0;
 static float nothingShowT = 0, nothingX = 0, nothingY = 0;
 
@@ -339,7 +341,7 @@ void micromod2_set_gain(long value);
 void micromod2_get_audio(short *output_buffer, long count);
 }
 
-enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP };
+enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE };
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -390,6 +392,27 @@ static void startEffect(uint8_t sfx) {
     case SFX_STEP:                             // NUCLEAR MISSION's footstep
       startVoice(WAVE_NOISE, 1800, 500, 0, 35, 0.22f);
       startVoice(WAVE_SQUARE, 150, 90, 0, 30, 0.10f);
+      break;
+    case SFX_BEEP: {                           // NUCLEAR MISSION's searching beep: a random note
+      static const float notes[4] = { 880, 1175, 1319, 1568 };
+      noiseState = noiseState * 1664525u + 1013904223u;
+      float f = notes[(noiseState >> 20) & 3];
+      startVoice(WAVE_SQUARE, f, f, 0, 40, 0.10f);
+      break;
+    }
+    case SFX_CLUNK:                            // ...nothing in it
+      startVoice(WAVE_NOISE, 900, 150, 0, 90, 0.30f);
+      startVoice(WAVE_SQUARE, 90, 60, 0, 90, 0.18f);
+      break;
+    case SFX_FOUND:                            // ...something found (its "found" chirp)
+      startVoice(WAVE_SQUARE, 600, 1200, 0, 120, 0.14f);
+      startVoice(WAVE_SQUARE, 900, 1800, 130, 160, 0.12f);
+      break;
+    case SFX_FANFARE:                          // ...and its rising four notes
+      startVoice(WAVE_TRIANGLE, 523, 523, 0, 120, 0.4f);
+      startVoice(WAVE_TRIANGLE, 659, 659, 110, 120, 0.4f);
+      startVoice(WAVE_TRIANGLE, 784, 784, 220, 120, 0.4f);
+      startVoice(WAVE_TRIANGLE, 1047, 1047, 330, 400, 0.4f);
       break;
     case SFX_LIFT_STOP:                        // the lift settling at a stop: a soft low thump
       startVoice(WAVE_TRIANGLE, 90, 45, 0, 140, 0.30f);
@@ -965,18 +988,33 @@ static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
   rngState = save;
 }
 
+// The back wall's colour for each column of rooms (A-B ... I-J), the panels; the wall
+// between them is a little darker. To try out: change these and build again.
+static const uint8_t wallColours[COLS][3] = {
+  {  30,  70,  82 },   // column 1: teal
+  {  86,  40,  44 },   // 2: maroon
+  {  64,  74,  36 },   // 3: olive
+  {  34,  46,  96 },   // 4: navy blue
+  {  70,  44,  88 },   // 5: purple
+  {  96,  62,  34 },   // 6: rust brown
+  {  30,  78,  50 },   // 7: forest green
+  {  90,  78,  44 },   // 8: mustard
+  {  70,  40,  70 },   // 9: plum
+};
+
 static void paintRoom() {
   gfxTarget = roomBg;
   gfxClipAll();
-  // back wall, tinted a little differently in each room
-  int tint = ((rooms[curRoom].row * 5 + rooms[curRoom].col * 3) % 6) * 4;
-  fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(24 + tint, 30, 40 - tint / 2));
-  uint16_t panel = rgb565(32 + tint, 40, 52 - tint / 2), seam = rgb565(14, 18, 24);
+  // the back wall: each column of rooms has its own colour (wallColours, to try out)
+  const uint8_t *wc = wallColours[rooms[curRoom].col % COLS];
+  int wr = wc[0], wg = wc[1], wb = wc[2];
+  fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(wr * 3 / 4, wg * 3 / 4, wb * 3 / 4));
+  uint16_t panel = rgb565(wr, wg, wb), seam = rgb565(wr / 3, wg / 3, wb / 3);
   for (int x = 0; x < SCREEN_W; x += 144) {
     fillRect(x + 6, CEIL_Y + 24, x + 137, ROOM_FLOOR_Y - 8, panel);
     fillRect(x, HUD_H, x + 3, ROOM_FLOOR_Y - 1, seam);
   }
-  uint16_t rib = rgb565(44, 52, 66), rivet = rgb565(80, 92, 108);
+  uint16_t rib = rgb565(wr * 5 / 8, wg * 5 / 8, wb * 5 / 8), rivet = rgb565(wr + 40, wg + 40, wb + 40);
   const int ribs[4] = { LEVEL_TOP - 90, LEVEL_2 - 90, LEVEL_1 - 90, ROOM_FLOOR_Y - 90 };
   for (int k = 0; k < 4; k++) {
     int y = ribs[k];
@@ -1691,6 +1729,11 @@ static void updateAgent(float dt) {
         searchT = 0;
       }
       if (i >= 0 && searchT < SEARCH_SECONDS) {
+        searchBeepT += dt;                   // NUCLEAR MISSION's searching beeps
+        if (searchBeepT >= SEARCH_BEEP_SECONDS) {
+          searchBeepT = 0;
+          sfxPlay(SFX_BEEP);
+        }
         searchT += dt;
         if (searchT >= SEARCH_SECONDS) {
           RoomInfo &ri = rooms[curRoom];
@@ -1703,6 +1746,7 @@ static void updateAgent(float dt) {
               ri.kitUsed = true;
               paintRoom();                    // (it hangs open now)
               snprintf(floatText, sizeof(floatText), "HEALTH RESTORED");
+              sfxPlay(SFX_FANFARE);
               floatColour = rgb565(100, 240, 140);
             }
             nothingShowT = NOTHING_SHOW;
@@ -1714,6 +1758,8 @@ static void updateAgent(float dt) {
           ri.searched[i] = true;
           if (first) addScore(SEARCH_SCORE, px, py - 26);
           if (first && ri.holds[i]) {        // something in it
+            sfxPlay(SFX_FOUND);
+            sfxPlay(SFX_FANFARE);
             itemsFound++;
             addScore(FOUND_SCORE, px, py - 56);
             itemShowT = ITEM_SHOW;
@@ -1723,6 +1769,7 @@ static void updateAgent(float dt) {
             nothingX = px;
             nothingY = py;
             snprintf(floatText, sizeof(floatText), "NOTHING");
+            sfxPlay(SFX_CLUNK);
             floatColour = rgb565(170, 170, 180);
           }
         }
@@ -1872,10 +1919,10 @@ static void drawArrowKey(int cx, int cy, bool up, bool lit) {
 }
 
 static void drawMiniMap(int x0, int y0, int x1, int y1) {
-  // the screen: a black bezel, a hazard-striped frame, green inside
+  // the screen: a black bezel, a striped frame, yellow inside
   fillRect(x0, y0, x1, y1, rgb565(10, 10, 12));
   int fx0 = x0 + 10, fy0 = y0 + 10, fx1 = x1 - 10, fy1 = y1 - 10;
-  fillRect(fx0, fy0, fx1, fy1, rgb565(230, 200, 40));
+  fillRect(fx0, fy0, fx1, fy1, rgb565(210, 40, 32));             // the frame: red and black stripes
   for (int x = fx0 - 40; x < fx1 + 40; x += 16) {   // the black stripes, slanting
     for (int side = 0; side < 4; side++) {
       // top and bottom bands
@@ -1897,12 +1944,12 @@ static void drawMiniMap(int x0, int y0, int x1, int y1) {
       fillPolygon(xs, ys, 4, rgb565(16, 16, 18));
     }
   int gx0 = fx0 + 8, gy0 = fy0 + 8, gx1 = fx1 - 8, gy1 = fy1 - 8;
-  fillRect(gx0, gy0, gx1, gy1, rgb565(132, 210, 76));
+  fillRect(gx0, gy0, gx1, gy1, rgb565(236, 206, 64));            // the screen: yellow
   // the complex, scaled into the screen: the rooms you've been in, the shafts as far as you've seen them
   const int RW = 36, SW = 12, RH = 18, GAP = 7;
   int mw = COLS * RW + SHAFTS * SW, mh = ROWS * RH + (ROWS - 1) * GAP;
   int left = (gx0 + gx1 - mw) / 2, top = (gy0 + gy1 - mh) / 2;
-  uint16_t ink = rgb565(20, 34, 16);
+  uint16_t ink = rgb565(40, 30, 10);
   auto floorY = [&](int f) { int r = f / 2; return top + r * (RH + GAP) + ((f & 1) ? RH - 4 : 4); };
   for (int sh = 0; sh < SHAFTS; sh++) {
     int lo = -1, hi = -1;

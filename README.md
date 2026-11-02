@@ -49,7 +49,10 @@ Every room has 4 or 5 pieces of equipment to search, 128 in the whole complex,
 each a different kind in its room, from twelve: from NUCLEAR MISSION a filing
 cabinet, safe, plant, radar, control panel, wooden desk, water cooler,
 bookshelf and coat stand; new, a desk with a computer (its screen scrolling),
-a steel cupboard and a computer rack (its lamps winking, tapes turning). 36 of them, anywhere, have
+a steel cupboard and a computer rack (its lamps winking, tapes turning).
+
+Each column of rooms has its own wall colour (teal, maroon, olive, navy,
+purple, rust, forest green, mustard, plum - `wallColours` in `src/game.cpp`). 36 of them, anywhere, have
 something in them; the other 92 have nothing.
 
 - Searching a piece (hold Square) scores **50**, the first time.
@@ -63,7 +66,7 @@ something in them; the other 92 have nothing.
   health bar on the right.
 - **The lift area** is laid out like Impossible Mission's: the shaft view
   across the top with the lift in the middle, and a panel under it. In the
-  panel, under the lift, the **mini map** - a green screen in a hazard-striped
+  panel, under the lift, the **mini map** - a yellow screen in a red-striped
   frame showing the rooms you've been in and the shafts as far as you've
   ridden them, your place blinking. On its left: the lift and floor, and the
   car's up / down arrows (lit while it moves). On its right: rooms visited,
@@ -80,6 +83,9 @@ something in them; the other 92 have nothing.
   up as it rises and down as it falls, after Impossible Mission's (room lift
   pads hum a little quieter); a soft thump when it stops.
 - **Running:** NUCLEAR MISSION's footstep, each stride.
+- **Searching:** NUCLEAR MISSION's beeps while searching, its clunk for
+  nothing, and for a find its chirp and rising four notes (those notes too
+  when a first aid kit fills the health bar).
 - The levels are at the top of `src/game.cpp`: `ELEVATOR_MUSIC_VOLUME`,
   `STAGE1_MUSIC_VOLUME`, `SFX_VOLUME`, `LIFT_HUM_VOLUME`.
 
