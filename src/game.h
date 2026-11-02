@@ -25,6 +25,6 @@ void gameSetTune(int which, signed char *data, long len);
 void gameAudio(short *out, int frames);
 const char *gameDebug();   // (the PC test build: where he is)
 void gameDebugPos(float *x, float *y, int *state);
-void gameDebugRoom(int tpl, bool topL, bool topR);   // (the PC test build: straight into a layout)
+void gameDebugRoom(int tpl, bool topL, bool topR, int hazard = 0);   // (the PC test build: straight into a layout; hazard 1 electric, 2 dark)
 
 #endif // GAME_H

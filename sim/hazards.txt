@@ -1,0 +1,48 @@
+# The hazards and the wall ornaments (seed 1): an electrified floor (standing on
+# it until it goes live), then a dark room with night vision, then the ornaments
+# in each layout.
+seed 1
+hold NONE 30
+tap JUMP
+hold NONE 140
+room 3 BB E
+hold NONE 20
+shot 10_electric_room
+hold NONE 250
+shot 11_electric_a
+hold NONE 40
+shot 12_electric_b
+hold NONE 40
+shot 13_electric_c
+hold NONE 40
+shot 14_electric_d
+hold NONE 40
+shot 15_electric_e
+hold NONE 120
+shot 16_electric_after
+room 1 BT D
+hold NONE 18
+shot 20_dark_flicker
+hold NONE 60
+shot 21_dark_out
+walkto 330
+shot 22_dark_walk
+hold LEFT 8
+hold NONE 10
+shot 23_dark_facing_left
+tap MAP
+hold NONE 5
+shot 24_map_marks
+tap MAP
+room 0 TB
+hold NONE 10
+shot 30_four_decks
+room 1 BB
+hold NONE 10
+shot 31_centre_lift
+room 2 TT
+hold NONE 10
+shot 32_twin_towers
+room 3 BT
+hold NONE 10
+shot 33_chasm

@@ -9,7 +9,8 @@
 //                seed N                (before anything else)
 //                walkto X              run left or right until he is at x = X (units)
 //                waitidle              until he stands still (a lift arrived, a landing)
-//                room N DOORS          straight into layout N (DOORS: TT, TB, BT or BB - left, right)
+//                room N DOORS [H]      straight into layout N (DOORS: TT, TB, BT or BB - left, right;
+//                                      H: E an electrified floor, D a dark room)
 //                wav SECONDS NAME      the sound for the next SECONDS (the game running): out/NAME.wav
 //                # comment
 #include "game.h"
@@ -127,9 +128,9 @@ int main(int argc, char **argv) {
       }
       if (wf) fclose(wf);
     } else if (!strcmp(cmd, "room")) {
-      char doors[8] = "BB";
-      sscanf(line, "%*s %*s %7s", doors);
-      gameDebugRoom(atoi(a), doors[0] == 'T', doors[1] == 'T');
+      char doors[8] = "BB", hz[8] = "";
+      sscanf(line, "%*s %*s %7s %7s", doors, hz);
+      gameDebugRoom(atoi(a), doors[0] == 'T', doors[1] == 'T', hz[0] == 'E' ? 1 : (hz[0] == 'D' ? 2 : 0));
       step(0);
     } else if (!strcmp(cmd, "shot")) {
       shot(argv[2], a);

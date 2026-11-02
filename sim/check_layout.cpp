@@ -1,7 +1,9 @@
 // Lays out 2000 complexes and checks each: 128 pieces of equipment, 4 or 5 in
 // every room, 36 with something in them, 2 to 6 rooms in every column, a room
 // in the top left corner, 5 first aid kits in different rooms, every room's
-// pieces placed, standing on a platform clear of the lifts, none overlapping.
+// pieces placed, standing on a platform clear of the lifts, none overlapping;
+// 6 rooms with an electrified floor and 3 dark rooms (none in room 1), every
+// electrified room with its HIGH VOLTAGE sign on the wall.
 //
 //   gcc -O2 -c ../src/micromod.c ../src/micromod2.c && g++ -std=c++20 -O2 -w -I../src check_layout.cpp ../src/gfx.cpp micromod.o micromod2.o -o check_layout && ./check_layout
 #include "../src/game.cpp"
@@ -9,6 +11,7 @@
 int main() {
   gfxInit();
   int bad = 0;
+  long bigFans = 0, ornTotal = 0;
   for (uint32_t seed = 1; seed <= 2000; seed++) {
     layOut(seed);
     int eq = 0, hid = 0, colMin = 99, colMax = 0, kits = 0;
@@ -28,7 +31,25 @@ int main() {
       bad++;
       printf("seed %u: equipment %d, finds %d, rooms a column %d..%d, kits %d\n", seed, eq, hid, colMin, colMax, kits);
     }
+    int elec = 0, dark = 0;
     for (int i = 0; i < ROOM_COUNT; i++) {
+      elec += rooms[i].hazard == HZ_ELECTRIC;
+      dark += rooms[i].hazard == HZ_DARK;
+    }
+    if (elec != ELECTRIC_ROOMS || dark != DARK_ROOMS || rooms[0].hazard != HZ_NONE) {
+      bad++;
+      printf("seed %u: %d electrified, %d dark, room 1 hazard %d\n", seed, elec, dark, rooms[0].hazard);
+    }
+    for (int i = 0; i < ROOM_COUNT; i++) {
+      buildRoom(i, true);
+      int signs = 0;
+      for (int k = 0; k < ornCount; k++) signs += orn[k].kind == ORN_VOLTAGE;
+      if (signs != (rooms[i].hazard == HZ_ELECTRIC ? 1 : 0)) {
+        bad++;
+        printf("seed %u room %d: %d HIGH VOLTAGE signs\n", seed, i + 1, signs);
+      }
+      bigFans += ornCount > 0 && [&] { for (int k = 0; k < ornCount; k++) if (orn[k].kind == ORN_BIGFAN) return true; return false; }();
+      ornTotal += ornCount;
       placeDecor(rooms[i], wideRooms[rooms[i].tpl]);
       if (decorCount != rooms[i].decorN + (rooms[i].kit ? 1 : 0)) {
         bad++;
@@ -56,6 +77,7 @@ int main() {
           }
     }
   }
-  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), 36 finds, 5 first aid kits, 2-6 rooms a column, no overlaps");
+  printf("wall ornaments: %.1f a room on average, a big fan in %.0f%% of rooms\n", ornTotal / 60000.0, bigFans / 600.0);
+  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), 36 finds, 5 first aid kits, 2-6 rooms a column, no overlaps, 6 electrified + 3 dark rooms, signs up");
   return bad != 0;
 }

@@ -33,7 +33,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "009"
+#define GAME_VERSION      "010"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -70,6 +70,23 @@
 #define ITEM_SHOW         2.5f     // seconds FOUND OBJECT stays up
 #define MAX_POPS          6        // score numbers floating up at once
 #define HURT_SECONDS      0.8f     // knocked down by a long drop before he gets up
+// Room hazards (never in room 1, where he starts)
+#define ELECTRIC_ROOMS    6        // 20% of the rooms: an electrified floor (a HIGH VOLTAGE sign on the wall)
+#define DARK_ROOMS        3        // 10%: the lights go out and his night vision comes on
+#define ELEC_SAFE_MIN     4.0f     // electrified floor: safe for this long...
+#define ELEC_SAFE_MAX     7.0f     // ...up to this (random each time)
+#define ELEC_WARN_SECONDS 1.6f     // then the lights flicker and the floor crackles...
+#define ELEC_LIVE_SECONDS 2.6f     // ...then it is live this long: be off the floor (a ledge, a raised lift pad, in the air)
+#define ELEC_AFTER_SHOCK  6.0f     // a shock trips the power: safe this long after
+#define SHOCK_SECONDS     0.9f     // jolting before he drops
+#define ELEC_HURT         10       // health a shock costs (and he wakes at the door he came in by)
+#define NVG_RANGE         400      // night vision: how far the goggles light up ahead...
+#define NVG_HALF_DEG      28.0f    // ...half the width of their view...
+#define NVG_AROUND        56       // ...and the circle round him
+#define MAX_ORNAMENTS     14       // things on a room's walls that are only to look at (lights, fans...)
+#ifndef BIG_FAN_MIN
+#define BIG_FAN_MIN       88       // a big fan goes where there is a space this big (its radius): rooms with big gaps
+#endif
 #define ELEVATOR_MUSIC_VOLUME 0.40f  // elevator.mod, while he stands in the lift car: 0.0 = off ... 1.0 = full
 #define STAGE1_MUSIC_VOLUME   0.25f  // stage1.mod, the rest of the time in stage 1
 #define MUSIC_FADE_SECONDS    0.8f   // fading in and out (the two cross over)
@@ -105,7 +122,9 @@ struct RoomInfo {
   bool holds[MAX_DECOR];           // ...something in it
   bool kit, kitUsed;               // a first aid kit here, and whether it has been used
   float progress[MAX_DECOR + 1];   // how far each piece has been searched (seconds; the kit last)
+  uint8_t hazard;                  // Hazard
 };
+enum Hazard : uint8_t { HZ_NONE, HZ_ELECTRIC, HZ_DARK };
 static RoomInfo rooms[ROOM_COUNT];         // numbered 1..30 across the rows, top to bottom
 static int8_t roomAt[ROWS][COLS];          // which room is in each place (-1: none)
 static bool shaftSeen[SHAFTS][FLOORS];
@@ -192,6 +211,7 @@ static void layOut(uint32_t seed) {
       for (int i = 0; i < MAX_DECOR; i++) ri.searched[i] = ri.holds[i] = false;
       ri.kit = ri.kitUsed = false;
       for (int i = 0; i <= MAX_DECOR; i++) ri.progress[i] = 0;
+      ri.hazard = HZ_NONE;
     }
   // the rooms with one more piece of equipment, to make EQUIPMENT_TOTAL
   for (int extra = EQUIPMENT_TOTAL - ROOM_COUNT * (EQUIPMENT_TOTAL / ROOM_COUNT); extra > 0;) {
@@ -213,6 +233,13 @@ static void layOut(uint32_t seed) {
     RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
     if (ri.kit || ri.decorN >= wideRooms[ri.tpl].spotCount) continue;
     ri.kit = true;
+    k++;
+  }
+  // the hazards: electrified floors, then dark rooms (none in room 1, where he starts)
+  for (int k = 0; k < ELECTRIC_ROOMS + DARK_ROOMS;) {
+    int i = 1 + rnd(ROOM_COUNT - 1);
+    if (rooms[i].hazard != HZ_NONE) continue;
+    rooms[i].hazard = k < ELECTRIC_ROOMS ? HZ_ELECTRIC : HZ_DARK;
     k++;
   }
   memset(shaftSeen, 0, sizeof(shaftSeen));
@@ -264,12 +291,36 @@ struct Decor {
 static Decor decor[MAX_DECOR + 1];       // (the equipment, then a first aid kit if the room has one)
 static int decorCount = 0;
 
+// On the walls, only to look at: red warning lights, fans (a big one where
+// there is a big space), coolant tubes, gauges, notices; and the HIGH VOLTAGE
+// sign in a room with an electrified floor
+enum OrnKind : uint8_t { ORN_REDLIGHT, ORN_FAN, ORN_BIGFAN, ORN_TUBE, ORN_GAUGE, ORN_NOTICE, ORN_VOLTAGE };
+struct Ornament {
+  uint8_t kind;
+  int16_t x, y, r;                 // middle; r: a fan's size, a tube's half height
+  uint16_t seed;
+};
+static Ornament orn[MAX_ORNAMENTS];
+static int ornCount = 0;
+
+// The room's hazard, as it is now
+static uint8_t curHazard = HZ_NONE;
+static uint8_t elecState = 0;          // electrified floor: 0 safe, 1 the warning, 2 live
+static float elecT = 0, elecSafeFor = 5, elecSoundT = 0;
+static float darkT = 0;                // dark room: seconds since coming in
+static bool lightsOut = false;         // ...the lights have gone: night vision
+static uint32_t fxState = 99991;       // (sparks and such: not the layout's numbers)
+static int fxRnd(int lo, int hi) {     // lo..hi-1
+  fxState = fxState * 1664525u + 1013904223u;
+  return hi > lo ? lo + (int)((fxState >> 8) % (uint32_t)(hi - lo)) : lo;
+}
+
 // Pictures painted once: the room, and the shaft (all but what scrolls)
 static uint32_t roomBg[FB_W * FB_H];
 static uint32_t shaftBg[FB_W * FB_H];
 
 // ============================================================ the agent
-enum AgentState : uint8_t { ST_IDLE, ST_RUN, ST_JUMP, ST_USE, ST_FALL, ST_LAND, ST_LIFT, ST_KO };
+enum AgentState : uint8_t { ST_IDLE, ST_RUN, ST_JUMP, ST_USE, ST_FALL, ST_LAND, ST_LIFT, ST_KO, ST_SHOCK };
 static AgentState agState = ST_IDLE;
 static float agX = 640, agY = CAR_FLOOR_Y, agT = 0;
 static int agFacing = 1, agLift = -1;
@@ -347,7 +398,8 @@ void micromod2_set_gain(long value);
 void micromod2_get_audio(short *output_buffer, long count);
 }
 
-enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND };
+enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND,
+                     SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN };
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -423,6 +475,19 @@ static void startEffect(uint8_t sfx) {
     case SFX_LAND:                             // NUCLEAR MISSION's landing
       startVoice(WAVE_NOISE, 1500, 200, 0, 130, 0.30f);
       startVoice(WAVE_SQUARE, 110, 50, 0, 120, 0.18f);
+      break;
+    case SFX_BUZZ:                             // NUCLEAR MISSION's electrified floor: the warning buzz...
+      startVoice(WAVE_SQUARE, 100, 100, 0, 400, 0.10f);
+      startVoice(WAVE_SQUARE, 150, 150, 0, 400, 0.06f);
+      startVoice(WAVE_NOISE, 4000, 4000, 0, 120, 0.06f);
+      break;
+    case SFX_ZAP:                              // ...the crackle while it is live
+      startVoice(WAVE_NOISE, 6000, 2500, 0, 140, 0.22f);
+      startVoice(WAVE_SQUARE, 60, 120, 0, 140, 0.12f);
+      break;
+    case SFX_POWERDOWN:                        // ...and its blackout: the power dying
+      startVoice(WAVE_TRIANGLE, 700, 60, 0, 1000, 0.30f);
+      startVoice(WAVE_SQUARE, 350, 30, 0, 1000, 0.08f);
       break;
     case SFX_LIFT_STOP:                        // the lift settling at a stop: a soft low thump
       startVoice(WAVE_TRIANGLE, 90, 45, 0, 140, 0.30f);
@@ -607,6 +672,15 @@ static void paintPit(int x0, int x1) {
     fillRect(x0 + 4 + i * 6, PLAY_Y1 - 6 + i, x1 - 5 - i * 6, PLAY_Y1 - 6 + i, dimmed(160, 30, 20, 0.5f - i * 0.1f));
 }
 
+// Where a door's EXIT lamp is (its top left corner): over the doorway, or
+// beside it where the ceiling is too close
+static void exitLampAt(bool right, int doorY, int &lx, int &ly) {
+  int top = doorY - DOOR_H;
+  bool above = top - 36 > CEIL_Y + 20;
+  lx = above ? (right ? SCREEN_W - 36 : 6) : (right ? SCREEN_W - 112 : 82);
+  ly = above ? top - 34 : top + 6;
+}
+
 // One side of the room: a bulkhead, with a doorway cut in it at doorY (the
 // top level or the floor) and an EXIT lamp beside it
 static void paintRoomSide(bool right, int doorY) {
@@ -625,9 +699,8 @@ static void paintRoomSide(bool right, int doorY) {
   fillRect(right ? fx0 : fx1 - 2, top - 12, right ? fx0 + 2 : fx1, doorY - 1, frameHi);
   fillRect(x0, top - 12, x1, top - 1, frame);
   // the EXIT lamp: over the doorway, or beside it where the ceiling is too close
-  bool above = top - 36 > CEIL_Y + 20;
-  int lx = above ? (right ? SCREEN_W - 36 : 6) : (right ? SCREEN_W - 112 : 82);
-  int ly = above ? top - 34 : top + 6;
+  int lx, ly;
+  exitLampAt(right, doorY, lx, ly);
   fillRect(lx, ly, lx + 30, ly + 16, rgb565(20, 60, 30));
   fillRect(lx + 3, ly + 3, lx + 27, ly + 13, rgb565(60, 220, 110));
 }
@@ -998,6 +1071,258 @@ static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
   rngState = save;
 }
 
+// ---- the walls' ornaments: where they go
+// Kept clear: the platforms, the lift shafts, the equipment (and the space
+// over it for the search bar), the doorways and their lamps, the room's number
+struct Box { int16_t x0, y0, x1, y1; };
+static Box keepClear[48];
+static int keepClearN = 0;
+static void clearBox(int x0, int y0, int x1, int y1) {
+  if (keepClearN < 48) keepClear[keepClearN++] = { (int16_t)x0, (int16_t)y0, (int16_t)x1, (int16_t)y1 };
+}
+static bool wallFree(int x0, int y0, int x1, int y1) {
+  if (x0 < 26 || x1 > SCREEN_W - 26 || y0 < CEIL_Y + 26 || y1 > ROOM_FLOOR_Y - 6) return false;
+  for (int i = 0; i < keepClearN; i++) {
+    const Box &b = keepClear[i];
+    if (x0 <= b.x1 && x1 >= b.x0 && y0 <= b.y1 && y1 >= b.y0) return false;
+  }
+  return true;
+}
+static void ornHalf(int kind, int r, int &hw, int &hh) {
+  switch (kind) {
+    case ORN_REDLIGHT: hw = hh = 24; break;
+    case ORN_FAN:      hw = hh = 34; break;
+    case ORN_BIGFAN:   hw = hh = r + 16; break;
+    case ORN_TUBE:     hw = 26; hh = r + 18; break;
+    case ORN_GAUGE:    hw = hh = 26; break;
+    case ORN_NOTICE:   hw = 78; hh = 34; break;
+    default:           hw = 60; hh = 66; break;   // ORN_VOLTAGE
+  }
+}
+static bool addOrnament(int kind, int x, int y, int r) {
+  int hw, hh;
+  ornHalf(kind, r, hw, hh);
+  if (ornCount >= MAX_ORNAMENTS || !wallFree(x - hw, y - hh, x + hw, y + hh)) return false;
+  orn[ornCount++] = { (uint8_t)kind, (int16_t)x, (int16_t)y, (int16_t)r, (uint16_t)rnd32() };
+  clearBox(x - hw, y - hh, x + hw, y + hh);
+  return true;
+}
+static void tryOrnament(int kind, int r) {   // a few goes at a random free place
+  for (int k = 0; k < 80; k++)
+    if (addOrnament(kind, 40 + rnd(SCREEN_W - 80), CEIL_Y + 40 + rnd(ROOM_FLOOR_Y - CEIL_Y - 80), r)) return;
+}
+
+static void placeOrnaments(const RoomInfo &ri) {
+  uint32_t save = rngState;
+  rngState = ri.seed * 2246822519u + 777u;
+  ornCount = keepClearN = 0;
+  for (int i = 0; i < platCount; i++) clearBox(plats[i].x0 - 2, plats[i].y - 4, plats[i].x1 + 2, plats[i].y >= ROOM_FLOOR_Y ? SCREEN_H : plats[i].y + PLAT_T + 4);
+  for (int i = 0; i < liftCount; i++) clearBox(lifts[i].x0 - 10, shaftTop(lifts[i]) - 20, lifts[i].x1 + 10, SCREEN_H);
+  for (int i = 0; i < decorCount; i++) {
+    int hw = decorW[decor[i].kind] / 2;
+    clearBox(decor[i].x - hw - 6, decor[i].y - decorH[decor[i].kind] - 44, decor[i].x + hw + 6, decor[i].y);
+  }
+  clearBox(0, doorYL - DOOR_H - 52, 124, doorYL);
+  clearBox(SCREEN_W - 125, doorYR - DOOR_H - 52, SCREEN_W, doorYR);
+  char b[16];
+  snprintf(b, sizeof(b), "%d", (int)(&ri - rooms) % 100 + 1);
+  int tw = (int)(vectorTextWidth(b, 5.0f) / 2) + 16, sx = signX > 0 ? signX : SCREEN_W / 2;
+  clearBox(sx - tw, signY - 26, sx + tw, signY + 26);
+  // HIGH VOLTAGE: where it is seen, high on the wall
+  if (ri.hazard == HZ_ELECTRIC) {
+    bool put = false;
+    for (int k = 0; k < 60 && !put; k++) put = addOrnament(ORN_VOLTAGE, 160 + rnd(SCREEN_W - 320), CEIL_Y + 100 + rnd(300), 0);
+    for (int y = CEIL_Y + 96; y < ROOM_FLOOR_Y - 60 && !put; y += 6)   // (then anywhere it fits)
+      for (int x = 90; x < SCREEN_W - 90 && !put; x += 6) put = addOrnament(ORN_VOLTAGE, x, y, 0);
+  }
+  // a big fan, wherever there is the biggest open space (in some rooms there is none)
+  int bestR = 0, bx = 0, by = 0;
+  for (int r = 104; r >= BIG_FAN_MIN && !bestR; r -= 6)
+    for (int y = CEIL_Y + 26 + r + 16; y <= ROOM_FLOOR_Y - 6 - r - 16 && !bestR; y += 8)
+      for (int x = 26 + r + 16; x <= SCREEN_W - 26 - r - 16; x += 8)
+        if (wallFree(x - r - 16, y - r - 16, x + r + 16, y + r + 16)) {
+          bestR = r; bx = x; by = y;
+          break;
+        }
+  if (bestR) addOrnament(ORN_BIGFAN, bx, by, bestR);
+  // and the rest, a few of each
+  for (int n = 2 + rnd(2); n > 0; n--) tryOrnament(ORN_REDLIGHT, 0);
+  for (int n = 1 + rnd(2); n > 0; n--) tryOrnament(ORN_FAN, 24);
+  for (int n = rnd(3); n > 0; n--) tryOrnament(ORN_TUBE, 52 + rnd(3) * 8);
+  for (int n = rnd(3); n > 0; n--) tryOrnament(ORN_GAUGE, 0);
+  if (rnd(3)) tryOrnament(ORN_NOTICE, 0);
+  rngState = save;
+}
+
+// ---- the walls' ornaments: painted (the parts that stay still)
+static const char *const noticeText[][2] = {
+  { "RESTRICTED", "AREA" }, { "QUANTUM CORE", "LEVEL 4" }, { "AUTHORISED", "STAFF ONLY" },
+  { "WARNING", "TIME FIELD" }, { "SECTOR", "Q-7" }, { "WEAR", "GOGGLES" }, { "NO", "ENTRY" }, { "CAUTION", "COOLANT" },
+};
+
+static void paintVoltageSign(int cx, int cy) {   // NUCLEAR MISSION's HIGH VOLTAGE sign, on a plate
+  fillRect(cx - 56, cy - 62, cx + 56, cy + 62, rgb565(36, 38, 44));
+  fillRect(cx - 52, cy - 58, cx + 52, cy + 58, rgb565(226, 222, 206));
+  for (int k = 0; k < 4; k++) fillCircle(cx + (k & 1 ? 46 : -46), cy + (k & 2 ? 52 : -52), 2, rgb565(120, 120, 120));
+  int ty = cy - 14;
+  int xs[3] = { cx, cx + 48, cx - 48 }, ys[3] = { ty - 44, ty + 38, ty + 38 };
+  fillPolygon(xs, ys, 3, rgb565(16, 16, 18));
+  int xi[3] = { cx, cx + 38, cx - 38 }, yi[3] = { ty - 30, ty + 32, ty + 32 };
+  fillPolygon(xi, yi, 3, rgb565(236, 196, 40));
+  int bx[6] = { cx + 4, cx - 12, cx - 1, cx - 8, cx + 12, cx + 2 };
+  int by[6] = { ty - 18, ty + 6, ty + 6, ty + 26, ty - 2, ty - 2 };
+  fillPolygon(bx, by, 6, rgb565(16, 16, 18));
+  drawVectorText("HIGH", cx, cy + 38, 1.7f, rgb565(190, 30, 24), true);
+  drawVectorText("VOLTAGE", cx, cy + 52, 1.7f, rgb565(190, 30, 24), true);
+}
+
+static void paintOrnament(const Ornament &o) {
+  int x = o.x, y = o.y;
+  uint16_t metal = rgb565(84, 90, 102), metalHi = rgb565(140, 146, 158), metalLo = rgb565(44, 48, 56), bolt = rgb565(160, 166, 176);
+  switch (o.kind) {
+    case ORN_REDLIGHT:               // NUCLEAR MISSION's warning light: the plate and the cage
+      fillRect(x - 20, y - 20, x + 19, y + 19, rgb565(52, 56, 64));
+      fillRect(x - 20, y - 20, x + 19, y - 19, rgb565(150, 156, 164));
+      for (int k = 0; k < 4; k++) fillCircle(x + (k & 1 ? 14 : -15), y + (k & 2 ? 14 : -15), 1, rgb565(150, 156, 164));
+      fillCircle(x, y, 13, rgb565(30, 30, 34));
+      fillCircle(x, y, 10, rgb565(70, 12, 10));
+      break;
+    case ORN_FAN: {                  // a wall fan: a square housing round a round hole
+      fillRect(x - 32, y - 32, x + 31, y + 31, metal);
+      fillRect(x - 32, y - 32, x + 31, y - 30, metalHi);
+      fillRect(x - 32, y + 29, x + 31, y + 31, metalLo);
+      for (int k = 0; k < 4; k++) fillCircle(x + (k & 1 ? 26 : -27), y + (k & 2 ? 26 : -27), 2, bolt);
+      fillCircle(x, y, o.r + 3, metalLo);
+      fillCircle(x, y, o.r, rgb565(10, 12, 16));
+      break;
+    }
+    case ORN_BIGFAN: {               // a big extractor fan: a heavy ring, struts out to the wall
+      int r = o.r;
+      for (int k = 0; k < 4; k++) {
+        float a = k * HALF_PI + 0.785f;
+        drawLineF(x + cosf(a) * (r + 6), y + sinf(a) * (r + 6), x + cosf(a) * (r + 15), y + sinf(a) * (r + 15), metalLo, 6);
+      }
+      fillCircle(x, y, r + 10, metalLo);
+      fillCircle(x, y, r + 8, metal);
+      fillCircle(x - 2, y - 2, r + 3, metalHi);
+      fillCircle(x, y, r + 3, rgb565(64, 70, 80));
+      fillCircle(x, y, r, rgb565(8, 10, 14));
+      for (int k = 0; k < 12; k++) {
+        float a = k * TWO_PI / 12;
+        fillCircle(x + (int)(cosf(a) * (r + 6)), y + (int)(sinf(a) * (r + 6)), 2, bolt);
+      }
+      break;
+    }
+    case ORN_TUBE: {                 // a coolant tube: glass between two steel caps, the liquid glowing
+      int h = o.r;
+      fillRect(x - 6, y - h - 18, x + 5, y + h + 18, metalLo);          // its pipe, in and out
+      fillRect(x - 20, y - h - 10, x + 19, y - h, metal);
+      fillRect(x - 20, y - h - 10, x + 19, y - h - 9, metalHi);
+      fillRect(x - 20, y + h, x + 19, y + h + 10, metal);
+      fillRect(x - 20, y + h + 9, x + 19, y + h + 10, metalLo);
+      for (int yy = y - h + 1; yy < y + h; yy++) {
+        int k = (yy - (y - h)) * 60 / (2 * h);
+        fillRect(x - 15, yy, x + 14, yy, rgb565(20 + k / 3, 120 + k, 170 + k));
+      }
+      fillRect(x - 12, y - h + 3, x - 9, y + h - 3, rgb565(170, 240, 255));   // the glass shines
+      break;
+    }
+    case ORN_GAUGE: {                // a pressure gauge: the dial, its marks, a red part at the top end
+      fillCircle(x, y, 22, metalLo);
+      fillCircle(x, y, 20, metalHi);
+      fillCircle(x, y, 17, rgb565(232, 230, 220));
+      for (int k = 0; k <= 8; k++) {
+        float a = 2.36f + k * 0.589f;   // (from bottom left round to bottom right)
+        uint16_t c = k >= 7 ? rgb565(210, 40, 30) : rgb565(40, 40, 44);
+        drawLineF(x + 0.5f + cosf(a) * 12, y + 0.5f + sinf(a) * 12, x + 0.5f + cosf(a) * 16, y + 0.5f + sinf(a) * 16, c, k >= 7 ? 2.0f : 1.2f);
+      }
+      fillRect(x - 4, y + 22, x + 3, y + 26, metalLo);
+      break;
+    }
+    case ORN_NOTICE: {               // a notice: yellow and black edge, two lines
+      const char *const *t = noticeText[o.seed % (sizeof(noticeText) / sizeof(noticeText[0]))];
+      fillRect(x - 74, y - 30, x + 73, y + 29, rgb565(20, 20, 22));
+      hazardBand(x - 72, x + 71, y - 28, y - 21);
+      hazardBand(x - 72, x + 71, y + 20, y + 27);
+      fillRect(x - 72, y - 20, x + 71, y + 19, rgb565(232, 228, 210));
+      drawVectorText(t[0], x, y - 7, 1.8f, rgb565(20, 20, 24), true);
+      drawVectorText(t[1], x, y + 9, 1.8f, rgb565(180, 30, 24), true);
+      break;
+    }
+    case ORN_VOLTAGE:
+      paintVoltageSign(x, y);
+      break;
+  }
+}
+
+// ---- the walls' ornaments: what moves (each frame)
+static void drawOrnamentsAnim() {
+  for (int i = 0; i < ornCount; i++) {
+    const Ornament &o = orn[i];
+    int x = o.x, y = o.y;
+    switch (o.kind) {
+      case ORN_REDLIGHT: {           // pulsing red (quicker in the last minute)
+        float period = timeLeft < 60 ? 0.8f : 1.6f;
+        float k = 0.5f - 0.5f * cosf(TWO_PI * (clockT + (o.seed % 100) * 0.016f) / period);
+        int r = 80 + (int)(175 * k), g = 10 + (int)(40 * k), b = 8 + (int)(30 * k);
+        glowDisc(x + 0.5f, y + 0.5f, 60, 255, 30, 20, 0.45f * k);
+        fillCircle(x, y, 10, rgb565(r, g, b));
+        fillCircle(x - 3, y - 3, 3, rgb565(r + (255 - r) / 2, g + (255 - g) / 2, b + (255 - b) / 2));
+        drawLine(x - 10, y, x + 10, y, rgb565(30, 30, 34), false);
+        drawLine(x, y - 10, x, y + 10, rgb565(30, 30, 34), false);
+        break;
+      }
+      case ORN_FAN:
+      case ORN_BIGFAN: {             // the blades turning behind a guard
+        bool big = o.kind == ORN_BIGFAN;
+        int r = o.r;
+        int blades = big ? 5 : 4;
+        float spin = clockT * (big ? 2.6f : 9.0f) * ((o.seed & 1) ? 1 : -1) + o.seed;
+        uint16_t blade = big ? rgb565(112, 118, 130) : rgb565(100, 106, 118), edge = rgb565(150, 156, 168);
+        for (int k = 0; k < blades; k++) {
+          float a = spin + k * TWO_PI / blades;
+          float w0 = big ? 0.16f : 0.22f, w1 = big ? 0.42f : 0.5f;   // narrow at the hub, wide at the tip
+          float hub = r * 0.2f, tip = r - 3.0f;
+          float xs[4] = { x + 0.5f + cosf(a - w0) * hub, x + 0.5f + cosf(a - w1) * tip, x + 0.5f + cosf(a + w1 * 0.4f) * tip, x + 0.5f + cosf(a + w0) * hub };
+          float ys[4] = { y + 0.5f + sinf(a - w0) * hub, y + 0.5f + sinf(a - w1) * tip, y + 0.5f + sinf(a + w1 * 0.4f) * tip, y + 0.5f + sinf(a + w0) * hub };
+          fillPolygonF(xs, ys, 4, blade);
+          drawLineF(xs[0], ys[0], xs[1], ys[1], edge, big ? 1.5f : 1.0f);
+        }
+        fillCircle(x, y, (int)(r * 0.24f), rgb565(60, 64, 74));
+        fillCircle(x, y, (int)(r * 0.12f), rgb565(150, 156, 168));
+        uint16_t guard = rgb565(70, 76, 88);   // the guard in front
+        if (big) {
+          drawCircle(x, y, r * 2 / 3, guard);
+          drawCircle(x, y, r / 3, guard);
+          for (int k = 0; k < 4; k++) {
+            float a = k * HALF_PI;
+            drawLineF(x + 0.5f + cosf(a) * r * 0.24f, y + 0.5f + sinf(a) * r * 0.24f, x + 0.5f + cosf(a) * r, y + 0.5f + sinf(a) * r, guard, 2.5f);
+          }
+        } else {
+          for (int k = -2; k <= 2; k++) drawLineF(x - r + 1.0f, y + 0.5f + k * 8, x + r, y + 0.5f + k * 8, guard, 1.0f);
+        }
+        break;
+      }
+      case ORN_TUBE: {               // bubbles rising through the coolant
+        int h = o.r;
+        for (int k = 0; k < 5; k++) {
+          float sp = 30 + (o.seed >> k & 7) * 6;
+          float p = fmodf(clockT * sp + k * 37 + o.seed, (float)(2 * h - 12));
+          int by = y + h - 6 - (int)p, bx = x - 4 + (int)(6 * sinf(clockT * 3 + k * 1.7f)) + (k - 2) * 2;
+          drawCircle(bx, by, 1 + (k & 1) + (p > h ? 1 : 0), rgb565(210, 250, 255));
+        }
+        break;
+      }
+      case ORN_GAUGE: {              // the needle twitching near the top of its range
+        float a = 2.36f + 0.589f * (5.6f + 0.6f * sinf(clockT * 1.3f + o.seed) + 0.25f * sinf(clockT * 11.0f + o.seed * 0.7f));
+        drawLineF(x + 0.5f, y + 0.5f, x + 0.5f + cosf(a) * 14, y + 0.5f + sinf(a) * 14, rgb565(200, 30, 24), 1.6f);
+        fillCircle(x, y, 2, rgb565(40, 40, 44));
+        break;
+      }
+    }
+  }
+}
+
 // The back wall's colour for each column of rooms (A-B ... I-J), the panels; the wall
 // between them is a little darker. To try out: change these and build again.
 static const uint8_t wallColours[COLS][3] = {
@@ -1039,6 +1364,7 @@ static void paintRoom() {
   char b[16];
   snprintf(b, sizeof(b), "%d", curRoom + 1);
   drawVectorText(b, signX > 0 ? signX : SCREEN_W / 2, signY, 5.0f, rgb565(70, 80, 96), true);
+  for (int i = 0; i < ornCount; i++) paintOrnament(orn[i]);
   for (int i = 0; i < liftCount; i++) paintLiftShaft(lifts[i]);
   for (int i = 0; i < platCount; i++) paintPlatform(plats[i]);
   for (int i = 0; i < liftCount; i++) {
@@ -1324,6 +1650,7 @@ static void buildRoom(int idx, bool fromLeft) {
   signX = t.signX;
   signY = t.signY;
   placeDecor(ri, t);
+  placeOrnaments(ri);
 }
 
 static void placeAgent(float x, float y, int facing) {
@@ -1349,6 +1676,12 @@ static void enterRoom(int idx, bool fromLeft) {
   buildRoom(idx, fromLeft);
   paintRoom();
   rooms[idx].visited = true;
+  curHazard = rooms[idx].hazard;
+  elecState = 0;
+  elecT = 0;
+  elecSafeFor = ELEC_SAFE_MIN + fxRnd(0, (int)((ELEC_SAFE_MAX - ELEC_SAFE_MIN) * 100)) / 100.0f;
+  darkT = 0;
+  lightsOut = false;
   int y = fromLeft ? doorYL : doorYR;
   placeAgent(fromLeft ? 36 : SCREEN_W - 36, (float)y, fromLeft ? 1 : -1);
 }
@@ -1360,7 +1693,9 @@ static void enterShaft(int s, int f, bool fromLeft) {
   carWorldY = (float)(f * LEVEL_GAP);
   carMoving = false;
   platCount = liftCount = pitCount = 0;
-  decorCount = 0;
+  decorCount = ornCount = 0;
+  curHazard = HZ_NONE;
+  lightsOut = false;
   shaftSeen[s][f] = true;
   placeAgent(fromLeft ? 30 : SCREEN_W - 30, CAR_FLOOR_Y, fromLeft ? 1 : -1);
 }
@@ -1487,6 +1822,7 @@ static AgentAnim animFor(AgentState s) {
     case ST_USE:  return ANIM_USE;
     case ST_FALL: return ANIM_FALL;
     case ST_KO:   return ANIM_DEAD;
+    case ST_SHOCK: return ANIM_FALL;   // (arms thrown up)
     default:      return ANIM_IDLE;
   }
 }
@@ -1851,6 +2187,21 @@ static void updateAgent(float dt) {
       break;
     }
 
+    case ST_SHOCK:                     // caught on the live floor: jolting, then down
+      elecSoundT -= dt;
+      if (elecSoundT <= 0) {
+        elecSoundT = 0.12f;
+        sfxPlay(SFX_ZAP);
+      }
+      if (agT >= SHOCK_SECONDS) {
+        elecState = 0;                 // the shock trips the power: safe for a while
+        elecT = 0;
+        elecSafeFor = ELEC_AFTER_SHOCK;
+        hurt(ELEC_HURT);
+        knockOut();                    // (he wakes at the door he came in by)
+      }
+      break;
+
     case ST_KO:
       if (gameOver != END_NONE) break;
       if (koGetUp && agT >= HURT_SECONDS) setState(ST_IDLE, 0.35f);
@@ -1864,6 +2215,16 @@ static void updateAgent(float dt) {
   agentSample(animFor(agState), animT, target);
   if (agState == ST_JUMP) target.lift *= jumpLiftScale;
   if (agState == ST_LAND) target.spin = 0;
+  if (agState == ST_SHOCK) {           // stiff and jolting on the spot
+    target.plant = 1;
+    target.torso += fxRnd(-12, 13);
+    target.head += fxRnd(-15, 16);
+    target.armN += fxRnd(-25, 26);
+    target.armF += fxRnd(-25, 26);
+    target.legN += fxRnd(-10, 11);
+    target.legF += fxRnd(-10, 11);
+    target.lift = fxRnd(0, 5);
+  }
   if (blendLen > 0 && blendT < blendLen) {
     float k = blendT / blendLen;
     k = k * k * (3.0f - 2.0f * k);
@@ -1871,6 +2232,255 @@ static void updateAgent(float dt) {
   } else {
     shownPose = target;
   }
+}
+
+// ============================================================ the hazards
+// Electrified floor (NUCLEAR MISSION's): is he on the floor (or a lift pad down at it)?
+static bool onRoomFloor() {
+  if (fabsf(agY - ROOM_FLOOR_Y) > 0.5f) return false;
+  switch (agState) {
+    case ST_IDLE: case ST_RUN: case ST_USE: case ST_LAND: case ST_LIFT:
+      return true;
+    case ST_JUMP:
+      return agT < AG_JUMP_UP || agT >= AG_JUMP_DOWN;   // (not while in the air)
+    default:
+      return false;
+  }
+}
+
+// The lights flickering while the floor's warning runs: dim or not, at time t
+static bool flickerDim(float t) {
+  static const float on[][2] = { { 0.00f, 0.07f }, { 0.18f, 0.24f }, { 0.30f, 0.34f }, { 0.62f, 0.72f },
+                                 { 0.90f, 0.95f }, { 1.02f, 1.10f }, { 1.30f, 1.36f }, { 1.42f, 1.52f } };
+  for (int i = 0; i < 8; i++)
+    if (t >= on[i][0] && t < on[i][1]) return true;
+  return false;
+}
+
+static void updateHazards(float dt) {
+  if (mode != MODE_ROOM || gameOver != END_NONE) return;
+  if (curHazard == HZ_DARK && !lightsOut) {   // a couple of flickers, then out
+    darkT += dt;
+    if (darkT >= 0.75f) {
+      lightsOut = true;
+      sfxPlay(SFX_POWERDOWN);
+      showMsg("NIGHT VISION ON", 2.5f);
+    }
+  }
+  if (curHazard != HZ_ELECTRIC || agState == ST_SHOCK || agState == ST_KO) return;
+  elecT += dt;
+  switch (elecState) {
+    case 0:
+      if (elecT >= elecSafeFor) {
+        elecState = 1;
+        elecT = 0;
+        sfxPlay(SFX_BUZZ);
+      }
+      break;
+    case 1:
+      if (elecT >= ELEC_WARN_SECONDS) {
+        elecState = 2;
+        elecT = 0;
+        elecSoundT = 0;
+      }
+      break;
+    case 2:
+      elecSoundT -= dt;
+      if (elecSoundT <= 0) {
+        elecSoundT = 0.28f;
+        sfxPlay(SFX_ZAP);
+      }
+      if (onRoomFloor()) {             // caught on the live floor
+        if (agState == ST_LIFT && agLift >= 0) lifts[agLift].moving = false;
+        searchItem = -1;
+        elecSoundT = 0;
+        setState(ST_SHOCK, 0.05f);
+        break;
+      }
+      if (elecT >= ELEC_LIVE_SECONDS) {
+        elecState = 0;
+        elecT = 0;
+        elecSafeFor = ELEC_SAFE_MIN + fxRnd(0, (int)((ELEC_SAFE_MAX - ELEC_SAFE_MIN) * 100)) / 100.0f;
+      }
+      break;
+  }
+}
+
+// A jagged arc from (x0, y0) to (x1, y1)
+static void drawArc(int x0, int y0, int x1, int y1, int jag, uint16_t c, bool thick) {
+  const int SEG = 6;
+  int px = x0, py = y0;
+  for (int i = 1; i <= SEG; i++) {
+    int x = x0 + (x1 - x0) * i / SEG, y = y0 + (y1 - y0) * i / SEG;
+    if (i < SEG) {
+      x += fxRnd(-jag, jag + 1);
+      y += fxRnd(-jag, jag + 1);
+    }
+    drawLine(px, py, x, y, c, thick);
+    px = x;
+    py = y;
+  }
+}
+
+// Arcs along every stretch of floor (and the lift shafts' floors); live, or the odd spark of the warning
+static void drawFloorArcs(bool live) {
+  uint16_t glow = rgb565(120, 200, 255), core = rgb565(230, 245, 255);
+  int y = ROOM_FLOOR_Y;
+  for (int i = 0; i < platCount + liftCount; i++) {
+    int x0, x1;
+    if (i < platCount) {
+      if (plats[i].y != ROOM_FLOOR_Y) continue;
+      x0 = plats[i].x0;
+      x1 = plats[i].x1 - 1;
+    } else {
+      const Lift &l = lifts[i - platCount];
+      if (l.stops[l.stopCount - 1] != ROOM_FLOOR_Y) continue;
+      x0 = l.x0;
+      x1 = l.x1 - 1;
+    }
+    if (live) {
+      fillRect(x0, y - 2, x1, y, glow);
+      glowDisc((x0 + x1) * 0.5f, (float)y, (x1 - x0) * 0.35f + 30, 60, 120, 255, 0.18f);
+      for (int x = x0; x < x1 - 20; x += 50) {
+        int len = fxRnd(25, 60);
+        int xe = x + len > x1 ? x1 : x + len;
+        drawArc(x, y - 1, xe, y - 1, 10, fxRnd(0, 3) == 0 ? core : glow, fxRnd(0, 2) == 0);
+        if (fxRnd(0, 4) == 0) drawArc(x + len / 2, y - 1, x + len / 2 + fxRnd(-20, 21), y - fxRnd(20, 45), 6, core, false);
+      }
+    } else if (fxRnd(0, 6) == 0) {
+      int x = fxRnd(x0, x1 + 1);
+      drawArc(x, y - 1, x + fxRnd(-30, 31), y - fxRnd(8, 26), 5, core, false);
+    }
+  }
+}
+
+// Sparks all over him while he is shocked
+static void drawShockSparks() {
+  float h = 100.0f * myScale;
+  int cx = (int)agX, cy = (int)(agY - h * 0.5f);
+  for (int i = 0; i < 7; i++) {
+    float a = fxRnd(0, 628) / 100.0f;
+    int r = fxRnd((int)(h * 0.3f), (int)(h * 0.7f));
+    drawArc(cx, cy, cx + (int)(cosf(a) * r), cy + (int)(sinf(a) * r), 7, (i & 1) ? rgb565(230, 245, 255) : rgb565(120, 200, 255), i < 2);
+  }
+}
+
+// The whole room at half brightness (the lights flickering)
+static void dimRoom() {
+  for (size_t i = (size_t)(HUD_H * UNIT_K) * FB_W; i < (size_t)FB_W * FB_H; i++)
+    g_frame[i] = ((g_frame[i] >> 1) & 0x007f7f7fu) | 0xff000000u;
+}
+
+// Dark room: what his night vision goggles show. Everything is nearly black
+// but a cone ahead of his eyes, a little below level, and a circle round him,
+// shown in bright goggle green with faint scan lines (as NUCLEAR MISSION's)
+static uint32_t nvgTab[2][256];          // brightness -> goggle green (plain, scan line)
+static void eyePos(float &ex, float &ey) {
+  float feet = (agState == ST_JUMP) ? jumpY0 - shownPose.lift * myScale : agY;
+  float eye = 90.0f;
+  if (agState == ST_USE) eye = 62.0f;
+  else if (agState == ST_KO) eye = 30.0f;
+  else if (agState == ST_JUMP || agState == ST_FALL) eye = 70.0f;
+  ex = agX + agFacing * 8 * myScale;
+  ey = feet - eye * myScale;
+}
+static void nightVision() {
+  if (!nvgTab[0][255]) {
+    for (int l = 0; l < 256; l++)
+      for (int s = 0; s < 2; s++) {
+        int v = (l - 6) * 5 / 2 + 8 - (s ? 22 : 0);   // (more contrast than the eye, not so much that it all turns flat green)
+        v = clampv(v, 10, 255);
+        nvgTab[s][l] = rgba(v / 5, v, v / 3);
+      }
+  }
+  float ex, ey;
+  eyePos(ex, ey);
+  // the cone, in pixels
+  const int N = 10;
+  float cx[N + 2], cy[N + 2];
+  cx[0] = ex * UNIT_K;
+  cy[0] = ey * UNIT_K;
+  float mid = agFacing > 0 ? 78.0f : -78.0f;   // degrees from straight down
+  for (int i = 0; i <= N; i++) {
+    float a = (mid - NVG_HALF_DEG + 2 * NVG_HALF_DEG * i / N) * 0.017453293f;
+    cx[i + 1] = (ex + sinf(a) * NVG_RANGE) * UNIT_K;
+    cy[i + 1] = (ey + cosf(a) * NVG_RANGE) * UNIT_K;
+  }
+  float rcx = agX * UNIT_K, rcy = (ey + 44 * myScale) * UNIT_K, rr = NVG_AROUND * myScale * UNIT_K;
+  float ecx = cx[0], ecy = cy[0];
+  float fadeFrom = NVG_RANGE * 0.65f * UNIT_K, fadeLen = NVG_RANGE * 0.35f * UNIT_K;
+  int y0 = (int)(HUD_H * UNIT_K);
+  for (int y = y0; y < FB_H; y++) {
+    uint32_t *row = g_frame + (size_t)y * FB_W;
+    float fy = y + 0.5f;
+    // the cone's span on this row (it is convex)
+    float a0 = 1e9f, a1 = -1e9f;
+    for (int i = 0; i < N + 2; i++) {
+      int j = (i + 1) % (N + 2);
+      float ya = cy[i], yb = cy[j];
+      if ((ya <= fy && yb > fy) || (yb <= fy && ya > fy)) {
+        float x = cx[i] + (fy - ya) * (cx[j] - cx[i]) / (yb - ya);
+        if (x < a0) a0 = x;
+        if (x > a1) a1 = x;
+      }
+    }
+    // the circle's
+    float b0 = 1e9f, b1 = -1e9f, dy = fy - rcy;
+    if (dy * dy < rr * rr) {
+      float h = sqrtf(rr * rr - dy * dy);
+      b0 = rcx - h;
+      b1 = rcx + h;
+    }
+    int la = (int)clampv(a0, 0.0f, (float)FB_W), lb = (int)clampv(a1, 0.0f, (float)FB_W);
+    int ca = (int)clampv(b0, 0.0f, (float)FB_W), cb = (int)clampv(b1, 0.0f, (float)FB_W);
+    const uint32_t *tab = nvgTab[(y % 6) == 0];
+    float edy = fy - ecy;
+    for (int x = 0; x < FB_W; x++) {
+      uint32_t p = row[x];
+      bool inCone = x >= la && x < lb, inRing = x >= ca && x < cb;
+      if (!inCone && !inRing) {
+        row[x] = ((p >> 4) & 0x000f0f0fu) - ((p >> 6) & 0x00030303u) + 0xff000000u;   // almost black
+        continue;
+      }
+      int r = p & 255, g = (p >> 8) & 255, b = (p >> 16) & 255;
+      int lum = (r * 2 + g * 5 + b) >> 3;
+      if (inCone && !inRing) {         // the far end of the cone fades
+        float ddx = x + 0.5f - ecx, d = sqrtf(ddx * ddx + edy * edy);
+        if (d > fadeFrom) lum = (int)(lum * fmaxf(0.25f, 1.0f - (d - fadeFrom) / fadeLen));
+      }
+      row[x] = tab[lum];
+    }
+  }
+}
+
+// What still glows in the dark: the EXIT lamps, the red lights, the lift pads' lamps
+static void drawDarkGlows() {
+  int lx, ly;
+  exitLampAt(false, doorYL, lx, ly);
+  fillRect(lx + 3, ly + 3, lx + 27, ly + 13, rgb565(60, 220, 110));
+  glowDisc(lx + 15.0f, ly + 8.0f, 40, 40, 200, 90, 0.35f);
+  exitLampAt(true, doorYR, lx, ly);
+  fillRect(lx + 3, ly + 3, lx + 27, ly + 13, rgb565(60, 220, 110));
+  glowDisc(lx + 15.0f, ly + 8.0f, 40, 40, 200, 90, 0.35f);
+  for (int i = 0; i < ornCount; i++)
+    if (orn[i].kind == ORN_REDLIGHT) {
+      float k = 0.5f - 0.5f * cosf(TWO_PI * (clockT + (orn[i].seed % 100) * 0.016f) / (timeLeft < 60 ? 0.8f : 1.6f));
+      fillCircle(orn[i].x, orn[i].y, 8, rgb565(80 + (int)(175 * k), 10, 8));
+      glowDisc(orn[i].x + 0.5f, orn[i].y + 0.5f, 50, 255, 30, 20, 0.3f * k);
+    }
+  for (int i = 0; i < liftCount; i++) {
+    int cx = (lifts[i].x0 + lifts[i].x1) / 2, y = (int)lroundf(lifts[i].y);
+    fillRect(cx - 4, y + 4, cx + 3, y + 6, lifts[i].moving ? rgb565(255, 170, 40) : rgb565(80, 230, 120));
+  }
+  // the goggles' read-out
+  drawVectorText("NIGHT VISION", 112, HUD_H + 22, 1.8f, rgb565(120, 255, 150), true);
+  if (fmodf(clockT, 1.0f) < 0.6f) fillCircle(36, HUD_H + 22, 5, rgb565(120, 255, 150));
+  uint16_t gc = rgb565(90, 220, 120);
+  const int m = 14, L = 40, yt = HUD_H + 8, yb = PLAY_Y1 - 8;
+  fillRect(m, yt, m + L, yt + 2, gc); fillRect(m, yt, m + 2, yt + L, gc);
+  fillRect(SCREEN_W - 1 - m - L, yt, SCREEN_W - 1 - m, yt + 2, gc); fillRect(SCREEN_W - 3 - m, yt, SCREEN_W - 1 - m, yt + L, gc);
+  fillRect(m, yb - 2, m + L, yb, gc); fillRect(m, yb - L, m + 2, yb, gc);
+  fillRect(SCREEN_W - 1 - m - L, yb - 2, SCREEN_W - 1 - m, yb, gc); fillRect(SCREEN_W - 3 - m, yb - L, SCREEN_W - 1 - m, yb, gc);
 }
 
 // The opening: the grille rattles and falls, he lowers himself out of the
@@ -2215,6 +2825,15 @@ static void drawMap() {
       fillRect(x0 + RW - 15, y0 + 8, x0 + RW - 11, y0 + 18, rgb565(210, 36, 30));
       fillRect(x0 + RW - 18, y0 + 11, x0 + RW - 8, y0 + 15, rgb565(210, 36, 30));
     }
+    if (ri.visited && ri.hazard == HZ_ELECTRIC) {   // known hazards: a lightning bolt, or an eye for a dark room
+      int bx = x0 + 12, by = y0 + 13;
+      int xs[6] = { bx + 3, bx - 5, bx, bx - 3, bx + 6, bx + 1 }, ys[6] = { by - 9, by + 2, by + 2, by + 10, by - 2, by - 2 };
+      fillPolygon(xs, ys, 6, rgb565(255, 220, 60));
+    } else if (ri.visited && ri.hazard == HZ_DARK) {
+      int ex = x0 + 14, ey = y0 + 13;
+      fillCircle(ex, ey, 7, rgb565(60, 200, 100));
+      fillCircle(ex, ey, 3, rgb565(10, 12, 16));
+    }
     if (mode == MODE_ROOM && i == curRoom && blink)
       drawRectOutline(x0 - 4, y0 - 4, x0 + RW + 3, y0 + RH + 3, rgb565(255, 190, 70), 3);
   }
@@ -2321,7 +2940,7 @@ static void drawTitle() {
   gfxClipAll();
   // the dark of the shaft, lighter in the middle, girders standing in it
   for (int y = 0; y < SCREEN_H; y += 4) {
-    float k = 1.0f - fabsf(y - 300) / 420.0f;
+    float k = 1.0f - fabsf((float)(y - 300)) / 420.0f;
     if (k < 0) k = 0;
     fillRect(0, y, SCREEN_W - 1, y + 3, rgb565(8 + (int)(16 * k), 10 + (int)(20 * k), 16 + (int)(28 * k)));
   }
@@ -2446,6 +3065,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
       if (popT[i] > 0) popT[i] -= dt;
     updateLifts(dt);
     if (introT < 0) updateAgent(dt);
+    if (introT < 0) updateHazards(dt);
   }
 
   // the picture
@@ -2453,9 +3073,13 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mode == MODE_ROOM) {
     memcpy(g_frame, roomBg, sizeof(roomBg));
     gfxClip(HUD_H, PLAY_Y1);
+    drawOrnamentsAnim();
     for (int i = 0; i < liftCount; i++) drawLiftPad(lifts[i]);
     drawDecorAnim();
-    drawSearchMarks();
+    if (curHazard == HZ_ELECTRIC && elecState == 1 && flickerDim(elecT)) dimRoom();
+    if (curHazard == HZ_DARK && !lightsOut && ((darkT > 0.25f && darkT < 0.35f) || (darkT > 0.5f && darkT < 0.56f))) dimRoom();
+    if (curHazard == HZ_ELECTRIC && elecState != 0) drawFloorArcs(elecState == 2);
+    if (!lightsOut) drawSearchMarks();
   } else {
     memcpy(g_frame, shaftBg, sizeof(shaftBg));
     gfxClip(HUD_H, PANEL_Y - 1);
@@ -2464,6 +3088,12 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   gfxClip(introT >= 0 && introT < 1.9f ? CAR_FLOOR_Y - CORR_H + 1 : HUD_H, mode == MODE_SHAFT ? PANEL_Y - 1 : PLAY_Y1);   // (in the duct: hidden)
   drawAgentU(shownPose, agX, agY, agFacing, myScale);
   gfxClip(HUD_H, PLAY_Y1);
+  if (mode == MODE_ROOM && lightsOut) {   // dark: the goggles' view, then what glows, the search bars over it
+    nightVision();
+    drawDarkGlows();
+    drawSearchMarks();
+  }
+  if (mode == MODE_ROOM && agState == ST_SHOCK) drawShockSparks();
   if (mode == MODE_SHAFT) drawPanel();
   if (mode == MODE_ROOM) drawScorePops();
   if (itemShowT > 0 && mode == MODE_ROOM && !mapOn) drawItemPanel();
@@ -2486,7 +3116,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
 // For the PC test build: where he is and what he is doing
 const char *gameDebug() {
   static char b[160];
-  static const char *st[] = { "IDLE", "RUN", "JUMP", "USE", "FALL", "LAND", "LIFT", "KO" };
+  static const char *st[] = { "IDLE", "RUN", "JUMP", "USE", "FALL", "LAND", "LIFT", "KO", "SHOCK" };
   if (mode == MODE_SHAFT)
     snprintf(b, sizeof(b), "shaft %c floor %d%s x=%.0f y=%.0f %s", shaftLetter(curShaft), carFloor + 1, carMoving ? " (moving)" : "", agX, agY, st[agState]);
   else
@@ -2501,11 +3131,12 @@ void gameDebugPos(float *x, float *y, int *state) {
 }
 
 // For the PC test build: straight into room 1, made with layout tpl and the doors given
-void gameDebugRoom(int tpl, bool topL, bool topR) {
+void gameDebugRoom(int tpl, bool topL, bool topR, int hazard) {
   if (onTitle) layOut(layoutSeed);
   onTitle = false;
   rooms[0].tpl = (uint8_t)(tpl % WIDE_ROOM_COUNT);
   rooms[0].topL = topL;
   rooms[0].topR = topR;
+  rooms[0].hazard = (uint8_t)hazard;
   enterRoom(0, true);
 }

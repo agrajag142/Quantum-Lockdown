@@ -1,10 +1,12 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 005: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 010: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
-countdown, the lift area's panel with its mini map, music and sound.
+countdown, the lift area's panel with its mini map, music and sound, things
+on the walls (warning lights, fans, coolant tubes...), and two room hazards:
+electrified floors and dark rooms.
 
 ## What's different from NUCLEAR MISSION's PS5 port
 
@@ -93,6 +95,9 @@ something in them; the other 92 have nothing.
 - **Searching:** NUCLEAR MISSION's beeps while searching, its clunk for
   nothing, and for a find its chirp and rising four notes (those notes too
   when a first aid kit fills the health bar).
+- **Hazards:** NUCLEAR MISSION's electrified floor sounds (the warning buzz,
+  the crackle while it is live and while he is shocked) and its power-down
+  when a dark room's lights go out.
 - The levels are at the top of `src/game.cpp`: `ELEVATOR_MUSIC_VOLUME`,
   `STAGE1_MUSIC_VOLUME`, `SFX_VOLUME`, `LIFT_HUM_VOLUME`.
 
@@ -110,9 +115,41 @@ something in them; the other 92 have nothing.
   red in the last minute. The map (Options) pauses it, and everything else.
 - **Game over:** why, the score, what was found; X goes back to the title.
 
+## On the walls
+
+Each room has a few things on its walls that are only to look at, placed
+where they keep clear of the platforms, lifts, equipment, doors and the room's
+number:
+
+- **Red warning lights** (NUCLEAR MISSION's): pulsing red with a glow, faster
+  in the last minute.
+- **Wall fans**, spinning behind their guards, and a **big extractor fan**
+  wherever a room has a big open space between its floors (always in CENTRE
+  LIFT, usually in TWIN TOWERS, sometimes in THE CHASM).
+- **Coolant tubes** with bubbles rising, **pressure gauges** with twitching
+  needles, and the odd **notice** (RESTRICTED AREA, WARNING TIME FIELD...).
+
+## Room hazards
+
+None in room 1, where he starts. The map marks the ones he has been in.
+
+- **Electrified floor** (6 rooms, 20%; from NUCLEAR MISSION): a HIGH VOLTAGE
+  sign on the wall. Every 4 to 7 seconds the lights flicker and the floor
+  crackles with a buzz (the warning, 1.6 seconds), then the floor is live
+  with blue arcs for 2.6 seconds. Be off it: up on a ledge, on a lift pad
+  above the floor, or in the air (a somersault timed over it). Caught on it,
+  he is shocked: 10 health lost and he wakes at the door he came in by. The
+  shock trips the power, so it stays safe for a while after. The floor's
+  timing settings are at the top of `src/game.cpp` (`ELEC_...`).
+- **Dark room** (3 rooms, 10%; NUCLEAR MISSION's blackout): the lights flicker
+  and die a moment after he comes in, and his night vision comes on. Only what
+  the goggles light up is seen, in green: a cone the way he faces and a little
+  round him. The EXIT lamps, red lights and lift pad lamps still glow.
+
 `sim/check_layout.cpp` lays out 2000 complexes and checks the counts (128
-pieces, 4 or 5 a room, 36 finds, 5 first aid kits, 2-6 rooms a column), that
-every piece stands on its platform clear of the lifts, and that no two overlap. `sim/check_rooms.cpp` checks that every
+pieces, 4 or 5 a room, 36 finds, 5 first aid kits, 2-6 rooms a column, 6
+electrified and 3 dark rooms), that every piece stands on its platform clear
+of the lifts, that no two overlap, and that every electrified room has its sign. `sim/check_rooms.cpp` checks that every
 layout can be crossed with every door combination and every spot reached:
 run it after adding or changing a layout.
 
@@ -154,6 +191,7 @@ it sits beside Hello PS5 and NUCLEAR MISSION.
 ```bash
 mission2/build.sh sim                     # plays sim/tour.txt, screenshots in build/mission2-sim/shots (and elevator.mod, if it's in assets)
 g++ -O2 -Imission2/src mission2/sim/check_rooms.cpp -o check && ./check   # checks the room layouts
+mission2/build.sh sim mission2/sim/hazards.txt   # an electrified floor (and a shock), a dark room, the walls
 mission2/build.sh sim my_script.txt       # your own script (see sim/sim_main.cpp for the commands)
 ```
 
