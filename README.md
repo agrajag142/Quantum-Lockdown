@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 012: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 013: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -161,7 +161,7 @@ None in room 1, where he starts. The map marks the ones he has been in.
   "CAUGHT ON CAMERA! -30 SECONDS", 30 seconds off the clock, hands up, and back
   at the door he came in by. Each camera starts its sweep at the far end, and
   gives him a moment after he comes in.
-- **Drone** (4 rooms): it waits a moment, then flies after him anywhere in
+- **Drone** (3 rooms, 10%): it waits a moment, then flies after him anywhere in
   the room (through anything), slowly - he runs twice as fast. Its light: green
   out of range, yellow getting close, red (blinking) in range, and then it
   fires: a bullet every 0.8 seconds, 5 health each, aimed where he is when it
@@ -169,7 +169,7 @@ None in room 1, where he starts. The map marks the ones he has been in.
   the room. It starts again from the far side whenever he comes in.
 
 The settings for these are at the top of `src/game.cpp` (`CAM_...`, `DRONE_...`,
-`ELEC_...`, the numbers of rooms). One hazard at most in a room.
+`ELEC_...`, the numbers of rooms). One hazard at most in a room; 9 rooms (30%, room 1 among them) have none.
 
 `sim/check_layout.cpp` lays out 2000 complexes and checks the counts (128
 pieces, 4 or 5 a room, 36 finds, 5 first aid kits, 2-6 rooms a column, the

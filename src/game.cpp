@@ -34,7 +34,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "012"
+#define GAME_VERSION      "013"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -91,7 +91,7 @@
 #define CAM_REACT         0.12f    // seconds of moving in the beam before it notices
 #define CAM_ENTRY_GRACE   0.8f     // seconds after coming in before it can notice
 #define CAUGHT_SECONDS    1.6f     // hands up, then back at the door he came in by
-#define DRONE_ROOMS       4        // rooms with a drone hunting him
+#define DRONE_ROOMS       3        // 10%: a drone hunting him (and 30%, 9 rooms with room 1, have nothing)
 #define DRONE_SPEED       115.0f   // its top speed (he runs at about 230)
 #define DRONE_WARN        440.0f   // closer than this: its light goes yellow...
 #define DRONE_RANGE       270.0f   // ...closer than this, red: it fires
