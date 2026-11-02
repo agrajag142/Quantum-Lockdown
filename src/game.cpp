@@ -24,6 +24,7 @@
 #include "gfx.h"
 #include "agent_rig.h"
 #include "rooms_wide.h"
+#include "scream_sound.h"
 
 #include "micromod.h"
 
@@ -33,7 +34,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "010"
+#define GAME_VERSION      "011"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -92,6 +93,7 @@
 #define MUSIC_FADE_SECONDS    0.8f   // fading in and out (the two cross over)
 #define SFX_VOLUME            1.00f  // the sound effects (steps, the lift)
 #define LIFT_HUM_VOLUME       0.30f  // the lift's motor while it moves (room lift pads a little quieter)
+#define SCREAM_VOLUME         0.55f  // his scream, falling down a pit (scream_sound.h)
 #define AUDIO_RATE        48000      // the PS5's output rate
 
 #define HUD_H    40
@@ -399,7 +401,7 @@ void micromod2_get_audio(short *output_buffer, long count);
 }
 
 enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND,
-                     SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN };
+                     SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN, SFX_SCREAM };
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -445,8 +447,13 @@ static void startVoice(Wave wave, float f0, float f1, int delayMs, int lengthMs,
   }
 }
 
+static float screamPos = -1;           // (the sound thread's) where the scream is playing, in its samples; < 0 not playing
+
 static void startEffect(uint8_t sfx) {
   switch (sfx) {
+    case SFX_SCREAM:                           // a recording, not the synthesiser (from the start each time)
+      screamPos = 0;
+      break;
     case SFX_STEP:                             // NUCLEAR MISSION's footstep
       startVoice(WAVE_NOISE, 1800, 500, 0, 35, 0.22f);
       startVoice(WAVE_SQUARE, 150, 90, 0, 30, 0.10f);
@@ -582,6 +589,16 @@ void gameAudio(short *out, int frames) {
       }
       mix += voiceSample(v);
       if (++v.pos >= v.length) v.active = false;
+    }
+    if (screamPos >= 0) {                    // the scream: 24 kHz, stepped through at 48 kHz (in between: blended)
+      int i = (int)screamPos;
+      if (i + 1 >= SCREAM_LEN) {
+        screamPos = -1;
+      } else {
+        float k = screamPos - i;
+        mix += (screamSamples[i] + (screamSamples[i + 1] - screamSamples[i]) * k) * (SCREAM_VOLUME / 32768.0f * 3.6f);
+        screamPos += (float)SCREAM_RATE / AUDIO_RATE;
+      }
     }
     fx[n] = mix * SFX_VOLUME + liftHumSample(hum);
   }
@@ -2109,6 +2126,8 @@ static void updateAgent(float dt) {
         } else {
           setState(ST_LAND, 0.06f);
         }
+      } else if (agY > ROOM_FLOOR_Y + 2 && y0 <= ROOM_FLOOR_Y + 2) {   // below the floor: down a pit (nothing to land on now)
+        sfxPlay(SFX_SCREAM);
       } else if (agY > SCREEN_H + 160) {   // down a pit
         hurt(FALL_HURT_3);
         knockOut();

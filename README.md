@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 010: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 011: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -95,6 +95,9 @@ something in them; the other 92 have nothing.
 - **Searching:** NUCLEAR MISSION's beeps while searching, its clunk for
   nothing, and for a find its chirp and rising four notes (those notes too
   when a first aid kit fills the health bar).
+- **Falling down a pit:** a scream (`src/scream_sound.h`, made from
+  scream.mp3: trimmed to its 2.2 seconds of scream and built into the game, so
+  there is no file to copy). `SCREAM_VOLUME` sets its level.
 - **Hazards:** NUCLEAR MISSION's electrified floor sounds (the warning buzz,
   the crackle while it is live and while he is shocked) and its power-down
   when a dark room's lights go out.
@@ -203,6 +206,7 @@ checked on the PC before it goes on the console.
 | | |
 | --- | --- |
 | `src/game.cpp` | the game: the complex, the shafts, the rooms, the agent, searching, the map (settings at the top: columns, rows, rooms, rooms per column) |
+| `src/scream_sound.h` | the pit scream, as samples (24 kHz mono) |
 | `src/rooms_wide.h` | the room layouts (1280 units wide, four levels) |
 | `src/gfx.cpp`, `gfx.h` | drawing: the 1920x1080 picture, unit-space calls as in the sketch, vector letters |
 | `src/ps5_platform.cpp` | the PS5 side: the TV picture, the DualSense, the sound, the loop |
