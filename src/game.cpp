@@ -34,7 +34,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "011"
+#define GAME_VERSION      "012"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -81,6 +81,24 @@
 #define ELEC_AFTER_SHOCK  6.0f     // a shock trips the power: safe this long after
 #define SHOCK_SECONDS     0.9f     // jolting before he drops
 #define ELEC_HURT         10       // health a shock costs (and he wakes at the door he came in by)
+#define CAMERA_ROOMS      6        // 20% of the rooms: a security camera in a top corner...
+#define DUAL_CAMERA_ROOMS 3        // ...10%: one in each top corner
+#define CAM_PENALTY       30       // seconds off the clock when a camera sees him moving
+#define CAM_PERIOD        6.0f     // seconds for a sweep across and back
+#define CAM_MID_DEG       38.0f    // the sweep: its middle (degrees from straight down, out into the room)...
+#define CAM_SWING_DEG     34.0f    // ...and how far each way
+#define CAM_HALF_DEG      7.0f     // half the width of the beam (it goes through everything)
+#define CAM_REACT         0.12f    // seconds of moving in the beam before it notices
+#define CAM_ENTRY_GRACE   0.8f     // seconds after coming in before it can notice
+#define CAUGHT_SECONDS    1.6f     // hands up, then back at the door he came in by
+#define DRONE_ROOMS       4        // rooms with a drone hunting him
+#define DRONE_SPEED       115.0f   // its top speed (he runs at about 230)
+#define DRONE_WARN        440.0f   // closer than this: its light goes yellow...
+#define DRONE_RANGE       270.0f   // ...closer than this, red: it fires
+#define DRONE_FIRE_EVERY  0.8f     // seconds between shots (the first a little after it goes red)
+#define BULLET_SPEED      650.0f
+#define BULLET_HURT       5        // health a bullet costs
+#define DRONE_GRACE       1.5f     // seconds it waits after he comes in (or back in)
 #define NVG_RANGE         400      // night vision: how far the goggles light up ahead...
 #define NVG_HALF_DEG      28.0f    // ...half the width of their view...
 #define NVG_AROUND        56       // ...and the circle round him
@@ -126,7 +144,7 @@ struct RoomInfo {
   float progress[MAX_DECOR + 1];   // how far each piece has been searched (seconds; the kit last)
   uint8_t hazard;                  // Hazard
 };
-enum Hazard : uint8_t { HZ_NONE, HZ_ELECTRIC, HZ_DARK };
+enum Hazard : uint8_t { HZ_NONE, HZ_ELECTRIC, HZ_DARK, HZ_CAMERA, HZ_CAMERA2, HZ_DRONE };
 static RoomInfo rooms[ROOM_COUNT];         // numbered 1..30 across the rows, top to bottom
 static int8_t roomAt[ROWS][COLS];          // which room is in each place (-1: none)
 static bool shaftSeen[SHAFTS][FLOORS];
@@ -237,13 +255,15 @@ static void layOut(uint32_t seed) {
     ri.kit = true;
     k++;
   }
-  // the hazards: electrified floors, then dark rooms (none in room 1, where he starts)
-  for (int k = 0; k < ELECTRIC_ROOMS + DARK_ROOMS;) {
-    int i = 1 + rnd(ROOM_COUNT - 1);
-    if (rooms[i].hazard != HZ_NONE) continue;
-    rooms[i].hazard = k < ELECTRIC_ROOMS ? HZ_ELECTRIC : HZ_DARK;
-    k++;
-  }
+  // the hazards, one at most in a room (none in room 1, where he starts)
+  const int hzCount[5] = { ELECTRIC_ROOMS, DARK_ROOMS, CAMERA_ROOMS, DUAL_CAMERA_ROOMS, DRONE_ROOMS };
+  for (int h = 0; h < 5; h++)
+    for (int k = 0; k < hzCount[h];) {
+      int i = 1 + rnd(ROOM_COUNT - 1);
+      if (rooms[i].hazard != HZ_NONE) continue;
+      rooms[i].hazard = (uint8_t)(HZ_ELECTRIC + h);
+      k++;
+    }
   memset(shaftSeen, 0, sizeof(shaftSeen));
 }
 
@@ -311,6 +331,24 @@ static uint8_t elecState = 0;          // electrified floor: 0 safe, 1 the warni
 static float elecT = 0, elecSafeFor = 5, elecSoundT = 0;
 static float darkT = 0;                // dark room: seconds since coming in
 static bool lightsOut = false;         // ...the lights have gone: night vision
+// Security cameras (1 or 2), hung from the ceiling in the top corners
+struct Camera {
+  float x, y;                          // the pivot
+  float t, angle;                      // the sweep's clock; where it points (degrees from straight down, + to the right)
+  float mid;                           // the middle of its sweep (out into the room)
+  float movingT;                       // how long he has been moving in its beam
+  uint8_t view;                        // 0 not on him, 1 on him (but he is still), 2 caught him
+};
+static Camera cams[2];
+static int camCount = 0;
+static float camGrace = 0;
+static bool camCaughtPending = false;  // seen in the air: hands up when he lands
+// The drone
+static float drX, drY, drVX, drVY, drGrace, drFireT, drFlashT;
+static uint8_t drLight = 0;            // 0 green (out of range), 1 yellow (getting close), 2 red (firing)
+#define MAX_BULLETS 8
+struct Bullet { float x, y, vx, vy, life; };
+static Bullet bullets[MAX_BULLETS];
 static uint32_t fxState = 99991;       // (sparks and such: not the layout's numbers)
 static int fxRnd(int lo, int hi) {     // lo..hi-1
   fxState = fxState * 1664525u + 1013904223u;
@@ -322,7 +360,7 @@ static uint32_t roomBg[FB_W * FB_H];
 static uint32_t shaftBg[FB_W * FB_H];
 
 // ============================================================ the agent
-enum AgentState : uint8_t { ST_IDLE, ST_RUN, ST_JUMP, ST_USE, ST_FALL, ST_LAND, ST_LIFT, ST_KO, ST_SHOCK };
+enum AgentState : uint8_t { ST_IDLE, ST_RUN, ST_JUMP, ST_USE, ST_FALL, ST_LAND, ST_LIFT, ST_KO, ST_SHOCK, ST_CAUGHT };
 static AgentState agState = ST_IDLE;
 static float agX = 640, agY = CAR_FLOOR_Y, agT = 0;
 static int agFacing = 1, agLift = -1;
@@ -401,7 +439,7 @@ void micromod2_get_audio(short *output_buffer, long count);
 }
 
 enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND,
-                     SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN, SFX_SCREAM };
+                     SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN, SFX_SCREAM, SFX_ALARM, SFX_SHOT, SFX_HIT };
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -415,6 +453,7 @@ static uint32_t noiseState = 22222;
 
 static std::atomic<int> tuneWanted{0};    // 0 none, 1 the lift's (elevator.mod), 2 stage 1's (stage1.mod)
 static std::atomic<int> liftHum{0};       // 0 still, 1 the car going up, 2 down, 3 / 4 a room's lift pad
+static std::atomic<int> droneHum{0};      // a drone in the room: its rotors' whine (0 none)
 static bool tuneReady[2] = { false, false };
 static char tuneProblem[2][48] = { "NO ELEVATOR.MOD IN THE ASSETS", "NO STAGE1.MOD IN THE ASSETS" };
 static float tuneGain[2] = { 0, 0 };       // (the sound thread's)
@@ -451,6 +490,20 @@ static float screamPos = -1;           // (the sound thread's) where the scream 
 
 static void startEffect(uint8_t sfx) {
   switch (sfx) {
+    case SFX_ALARM:                            // caught on camera: NUCLEAR MISSION's alarm, twice over
+      for (int k = 0; k < 3; k++) {
+        startVoice(WAVE_SQUARE, 880, 660, k * 260, 220, 0.14f);
+        startVoice(WAVE_SQUARE, 440, 330, k * 260, 220, 0.06f);
+      }
+      break;
+    case SFX_SHOT:                             // the drone's gun: a sharp crack
+      startVoice(WAVE_NOISE, 7000, 1500, 0, 90, 0.26f);
+      startVoice(WAVE_SQUARE, 900, 200, 0, 60, 0.10f);
+      break;
+    case SFX_HIT:                              // a bullet hits him
+      startVoice(WAVE_NOISE, 1200, 200, 0, 120, 0.32f);
+      startVoice(WAVE_SQUARE, 140, 60, 0, 140, 0.20f);
+      break;
     case SFX_SCREAM:                           // a recording, not the synthesiser (from the start each time)
       screamPos = 0;
       break;
@@ -552,6 +605,22 @@ static inline float liftHumSample(int hum) {
   return (pulse * 0.6f + tri * 0.4f) * throb * humLevel;
 }
 
+// A drone's rotors: a thin whine with a fast flutter, quiet
+static float drPhase = 0, drPhase2 = 0, drWob = 0, drLevel = 0;
+static inline float droneSample(int on) {
+  float target = on ? 0.07f : 0.0f;
+  drLevel += (target - drLevel) * 0.001f;
+  if (drLevel < 0.0005f && !on) return 0;
+  drPhase += 230.0f / AUDIO_RATE;
+  if (drPhase >= 1) drPhase -= 1;
+  drPhase2 += 347.0f / AUDIO_RATE;
+  if (drPhase2 >= 1) drPhase2 -= 1;
+  drWob += 37.0f / AUDIO_RATE;
+  if (drWob >= 1) drWob -= 1;
+  float a = 4.0f * fabsf(drPhase - 0.5f) - 1.0f, b = drPhase2 < 0.5f ? 0.5f : -0.5f;
+  return (a + b * 0.5f) * (0.7f + 0.3f * sinf(drWob * TWO_PI)) * drLevel;
+}
+
 void gameSetTune(int which, signed char *data, long len) {
   if (which < 0 || which > 1 || !data || len < 1084) return;
   const char *name = which ? "STAGE1.MOD" : "ELEVATOR.MOD";
@@ -577,6 +646,7 @@ void gameAudio(short *out, int frames) {
   }
   // the effects and the lift's hum (mono)
   int hum = liftHum.load(std::memory_order_relaxed);
+  int drone = droneHum.load(std::memory_order_relaxed);
   static float fx[2048];
   for (int n = 0; n < frames; n++) {
     float mix = 0;
@@ -600,7 +670,7 @@ void gameAudio(short *out, int frames) {
         screamPos += (float)SCREAM_RATE / AUDIO_RATE;
       }
     }
-    fx[n] = mix * SFX_VOLUME + liftHumSample(hum);
+    fx[n] = mix * SFX_VOLUME + liftHumSample(hum) + droneSample(drone);
   }
   // the two tunes, each fading towards its level (a tune at nothing waits where it was)
   static int32_t acc[2048 * 2];
@@ -1088,6 +1158,33 @@ static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
   rngState = save;
 }
 
+// Where a room's security cameras hang (top left / top right corners)
+static float cameraX(const RoomInfo &ri, bool right) {   // in from the corner, clear of any lift shaft
+  const WideRoom &t = wideRooms[ri.tpl];
+  const int tryAt[3] = { 150, 300, 110 };
+  for (int k = 0; k < 3; k++) {
+    int x = right ? SCREEN_W - tryAt[k] : tryAt[k];
+    bool clear = true;
+    for (int i = 0; i < t.liftCount; i++)
+      if (x > t.lifts[i].x0 - 44 && x < t.lifts[i].x1 + 44) clear = false;
+    if (clear) return (float)x;
+  }
+  return right ? SCREEN_W - 150.0f : 150.0f;
+}
+static int roomCameras(const RoomInfo &ri, float *xs) {
+  if (ri.hazard == HZ_CAMERA2) {
+    xs[0] = cameraX(ri, false);
+    xs[1] = cameraX(ri, true);
+    return 2;
+  }
+  if (ri.hazard == HZ_CAMERA) {
+    xs[0] = cameraX(ri, (ri.seed >> 5) & 1);
+    return 1;
+  }
+  return 0;
+}
+#define CAM_Y (CEIL_Y + 40)
+
 // ---- the walls' ornaments: where they go
 // Kept clear: the platforms, the lift shafts, the equipment (and the space
 // over it for the search bar), the doorways and their lamps, the room's number
@@ -1139,6 +1236,8 @@ static void placeOrnaments(const RoomInfo &ri) {
     int hw = decorW[decor[i].kind] / 2;
     clearBox(decor[i].x - hw - 6, decor[i].y - decorH[decor[i].kind] - 44, decor[i].x + hw + 6, decor[i].y);
   }
+  float cx[2];
+  for (int k = roomCameras(ri, cx) - 1; k >= 0; k--) clearBox((int)cx[k] - 44, CEIL_Y, (int)cx[k] + 44, CAM_Y + 40);
   clearBox(0, doorYL - DOOR_H - 52, 124, doorYL);
   clearBox(SCREEN_W - 125, doorYR - DOOR_H - 52, SCREEN_W, doorYR);
   char b[16];
@@ -1382,6 +1481,14 @@ static void paintRoom() {
   snprintf(b, sizeof(b), "%d", curRoom + 1);
   drawVectorText(b, signX > 0 ? signX : SCREEN_W / 2, signY, 5.0f, rgb565(70, 80, 96), true);
   for (int i = 0; i < ornCount; i++) paintOrnament(orn[i]);
+  float cx[2];
+  for (int k = roomCameras(rooms[curRoom], cx) - 1; k >= 0; k--) {   // the cameras' ceiling mounts and arms
+    int x = (int)cx[k];
+    fillRect(x - 22, CEIL_Y - 4, x + 22, CEIL_Y + 2, rgb565(70, 76, 88));
+    fillRect(x - 22, CEIL_Y - 4, x + 22, CEIL_Y - 3, rgb565(130, 136, 148));
+    fillRect(x - 3, CEIL_Y + 2, x + 3, CAM_Y - 4, rgb565(90, 96, 108));
+    fillCircle(x, CAM_Y, 6, rgb565(50, 54, 64));
+  }
   for (int i = 0; i < liftCount; i++) paintLiftShaft(lifts[i]);
   for (int i = 0; i < platCount; i++) paintPlatform(plats[i]);
   for (int i = 0; i < liftCount; i++) {
@@ -1687,6 +1794,25 @@ static void placeAgent(float x, float y, int facing) {
   searchItem = -1;
 }
 
+// Coming into a room, or back in at its door: the cameras give him a moment,
+// the drone starts again from the far side
+static void resetHazardsForEntry(bool fromLeft) {
+  camGrace = CAM_ENTRY_GRACE;
+  camCaughtPending = false;
+  for (int k = 0; k < camCount; k++) {
+    cams[k].movingT = 0;
+    cams[k].view = 0;
+  }
+  drX = fromLeft ? SCREEN_W - 180.0f : 180.0f;
+  drY = CEIL_Y + 90.0f;
+  drVX = drVY = 0;
+  drGrace = DRONE_GRACE;
+  drFireT = 0.45f;
+  drFlashT = 0;
+  drLight = 0;
+  for (int i = 0; i < MAX_BULLETS; i++) bullets[i].life = 0;
+}
+
 static void enterRoom(int idx, bool fromLeft) {
   mode = MODE_ROOM;
   curRoom = idx;
@@ -1701,6 +1827,20 @@ static void enterRoom(int idx, bool fromLeft) {
   lightsOut = false;
   int y = fromLeft ? doorYL : doorYR;
   placeAgent(fromLeft ? 36 : SCREEN_W - 36, (float)y, fromLeft ? 1 : -1);
+  // the cameras: each starts its sweep at the far end of the room
+  float cx[2];
+  camCount = roomCameras(rooms[idx], cx);
+  for (int k = 0; k < camCount; k++) {
+    Camera &c = cams[k];
+    c.x = cx[k];
+    c.y = CAM_Y;
+    c.mid = c.x < SCREEN_W / 2 ? CAM_MID_DEG : -CAM_MID_DEG;
+    c.t = CAM_PERIOD * (k ? 0.75f : 0.25f);
+    c.angle = c.mid + (c.mid > 0 ? 1 : -1) * CAM_SWING_DEG * sinf(TWO_PI * c.t / CAM_PERIOD);
+    c.movingT = 0;
+    c.view = 0;
+  }
+  resetHazardsForEntry(fromLeft);
 }
 
 static void enterShaft(int s, int f, bool fromLeft) {
@@ -1712,6 +1852,7 @@ static void enterShaft(int s, int f, bool fromLeft) {
   platCount = liftCount = pitCount = 0;
   decorCount = ornCount = 0;
   curHazard = HZ_NONE;
+  camCount = 0;
   lightsOut = false;
   shaftSeen[s][f] = true;
   placeAgent(fromLeft ? 30 : SCREEN_W - 30, CAR_FLOOR_Y, fromLeft ? 1 : -1);
@@ -1890,6 +2031,7 @@ static void respawn() {
   }
   float x = clampv(entryX, edgeMin(), edgeMax());
   placeAgent(x, entryY, entryFacing);
+  if (mode == MODE_ROOM) resetHazardsForEntry(entryFacing > 0);
 }
 
 // UP / DOWN beside a lift shaft, at one of its stops, with the pad somewhere
@@ -2206,6 +2348,10 @@ static void updateAgent(float dt) {
       break;
     }
 
+    case ST_CAUGHT:                    // caught on camera: hands up, then back at the door
+      if (gameOver == END_NONE && agT >= CAUGHT_SECONDS) respawn();
+      break;
+
     case ST_SHOCK:                     // caught on the live floor: jolting, then down
       elecSoundT -= dt;
       if (elecSoundT <= 0) {
@@ -2234,6 +2380,11 @@ static void updateAgent(float dt) {
   agentSample(animFor(agState), animT, target);
   if (agState == ST_JUMP) target.lift *= jumpLiftScale;
   if (agState == ST_LAND) target.spin = 0;
+  if (agState == ST_CAUGHT) {          // hands up
+    target.armF = 168; target.elbowF = 30;
+    target.armN = 162; target.elbowN = 36;
+    target.head += 6;
+  }
   if (agState == ST_SHOCK) {           // stiff and jolting on the spot
     target.plant = 1;
     target.torso += fxRnd(-12, 13);
@@ -2276,8 +2427,143 @@ static bool flickerDim(float t) {
   return false;
 }
 
+// ---- security cameras
+static bool agentMoving() {
+  switch (agState) {
+    case ST_RUN: case ST_JUMP: case ST_FALL: case ST_LAND: case ST_LIFT:
+      return true;
+    default:
+      return false;
+  }
+}
+static float feetY() { return agState == ST_JUMP ? jumpY0 - shownPose.lift * myScale : agY; }
+static bool inBeam(const Camera &c, float px, float py) {
+  float dx = px - c.x, dy = py - c.y;
+  if (dy <= 0) return false;
+  return fabsf(atan2f(dx, dy) * 57.29578f - c.angle) <= CAM_HALF_DEG;
+}
+static void startCaught() {
+  if (agState == ST_LIFT && agLift >= 0) lifts[agLift].moving = false;
+  searchItem = -1;
+  camCaughtPending = false;
+  setState(ST_CAUGHT, 0.15f);
+}
+static void updateCameras(float dt) {
+  bool caught = agState == ST_CAUGHT || camCaughtPending;
+  if (camCaughtPending && agState != ST_JUMP && agState != ST_FALL) {
+    if (agState == ST_KO) camCaughtPending = false;   // (down a pit: back at the door anyway)
+    else startCaught();
+  }
+  if (camGrace > 0) camGrace -= dt;
+  float h = 100.0f * myScale, fy = feetY();
+  for (int k = 0; k < camCount; k++) {
+    Camera &c = cams[k];
+    if (caught) {                      // it follows him
+      if (c.view == 2) {
+        float want = atan2f(agX - c.x, fmaxf(fy - 60 - c.y, 10.0f)) * 57.29578f;
+        c.angle += (want - c.angle) * fminf(1.0f, dt * 6.0f);
+      }
+      continue;
+    }
+    c.t += dt;
+    c.angle = c.mid + (c.mid > 0 ? 1 : -1) * CAM_SWING_DEG * sinf(TWO_PI * c.t / CAM_PERIOD);
+    bool seen = inBeam(c, agX, fy - 8) || inBeam(c, agX, fy - h * 0.5f) || inBeam(c, agX, fy - h * 0.9f);
+    if (camGrace > 0 || agState == ST_KO || agState == ST_SHOCK) seen = false;
+    if (seen && agentMoving()) {
+      c.movingT += dt;
+      c.view = 1;
+      if (c.movingT >= CAM_REACT) {    // CAUGHT
+        c.view = 2;
+        timeLeft -= CAM_PENALTY;
+        if (timeLeft <= 0) {
+          timeLeft = 0;
+          endGame(END_TIME);
+        }
+        sfxPlay(SFX_ALARM);
+        char b[48];
+        snprintf(b, sizeof(b), "CAUGHT ON CAMERA!  -%d SECONDS", CAM_PENALTY);
+        showMsg(b, 2.6f);
+        if (agState == ST_JUMP || agState == ST_FALL) camCaughtPending = true;   // (hands up when he lands)
+        else startCaught();
+        return;
+      }
+    } else {
+      c.movingT = 0;
+      c.view = seen ? 1 : 0;
+    }
+  }
+}
+
+// ---- the drone: it drifts after him, and fires once he is in range
+static float hitFlashT = 0, hitX = 0, hitY = 0;
+static void updateDrone(float dt) {
+  float fy = feetY();
+  float ax = agX, ay = fy - 65 * myScale;           // his chest
+  // where it wants to be: a little above him and off to its side of him
+  float side = drX > agX ? 1.0f : -1.0f;
+  float tx = agX + side * 150, ty = clampv(fy - 230.0f, CEIL_Y + 50.0f, ROOM_FLOOR_Y - 80.0f);
+  if (drGrace > 0) {
+    drGrace -= dt;
+    tx = drX;
+    ty = drY;
+  }
+  float dx = tx - drX, dy = ty - drY, d = sqrtf(dx * dx + dy * dy);
+  float sp = DRONE_SPEED * fminf(1.0f, d / 40.0f);
+  float wx = d > 0.1f ? dx / d * sp : 0, wy = d > 0.1f ? dy / d * sp : 0;
+  float k = fminf(1.0f, dt * 1.5f);
+  drVX += (wx - drVX) * k;
+  drVY += (wy - drVY) * k;
+  drX = clampv(drX + drVX * dt, 40.0f, SCREEN_W - 40.0f);
+  drY = clampv(drY + drVY * dt, CEIL_Y + 30.0f, ROOM_FLOOR_Y - 30.0f);
+  // its light, and its gun
+  float ex = ax - drX, ey = ay - drY, dist = sqrtf(ex * ex + ey * ey);
+  drLight = dist > DRONE_WARN ? 0 : (dist > DRONE_RANGE ? 1 : 2);
+  bool canFire = drLight == 2 && drGrace <= 0 && agState != ST_KO && agState != ST_CAUGHT && agState != ST_SHOCK;
+  if (drFlashT > 0) drFlashT -= dt;
+  if (!canFire) {
+    drFireT = 0.45f;                   // (a moment's warning before the first shot)
+  } else if ((drFireT -= dt) <= 0) {
+    drFireT = DRONE_FIRE_EVERY;
+    for (int i = 0; i < MAX_BULLETS; i++) {
+      Bullet &b = bullets[i];
+      if (b.life > 0) continue;
+      float gx = drX, gy = drY + 17;
+      float bx = ax - gx, by = ay - gy, bl = fmaxf(1.0f, sqrtf(bx * bx + by * by));
+      b.x = gx + bx / bl * 18;
+      b.y = gy + by / bl * 18;
+      b.vx = bx / bl * BULLET_SPEED;
+      b.vy = by / bl * BULLET_SPEED;
+      b.life = 1.6f;
+      break;
+    }
+    drFlashT = 0.07f;
+    sfxPlay(SFX_SHOT);
+  }
+  // the bullets (through anything, like the drone)
+  if (hitFlashT > 0) hitFlashT -= dt;
+  for (int i = 0; i < MAX_BULLETS; i++) {
+    Bullet &b = bullets[i];
+    if (b.life <= 0) continue;
+    b.life -= dt;
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    if (b.x < -20 || b.x > SCREEN_W + 20 || b.y < HUD_H || b.y > SCREEN_H) b.life = 0;
+    bool hittable = agState != ST_KO && agState != ST_CAUGHT;
+    if (b.life > 0 && hittable && fabsf(b.x - agX) < 15 * myScale && b.y > fy - 125 * myScale && b.y < fy) {
+      b.life = 0;
+      hurt(BULLET_HURT);
+      sfxPlay(SFX_HIT);
+      hitFlashT = 0.15f;
+      hitX = b.x;
+      hitY = b.y;
+    }
+  }
+}
+
 static void updateHazards(float dt) {
   if (mode != MODE_ROOM || gameOver != END_NONE) return;
+  if (camCount > 0) updateCameras(dt);
+  if (curHazard == HZ_DRONE) updateDrone(dt);
   if (curHazard == HZ_DARK && !lightsOut) {   // a couple of flickers, then out
     darkT += dt;
     if (darkT >= 0.75f) {
@@ -2500,6 +2786,89 @@ static void drawDarkGlows() {
   fillRect(SCREEN_W - 1 - m - L, yt, SCREEN_W - 1 - m, yt + 2, gc); fillRect(SCREEN_W - 3 - m, yt, SCREEN_W - 1 - m, yt + L, gc);
   fillRect(m, yb - 2, m + L, yb, gc); fillRect(m, yb - L, m + 2, yb, gc);
   fillRect(SCREEN_W - 1 - m - L, yb - 2, SCREEN_W - 1 - m, yb, gc); fillRect(SCREEN_W - 3 - m, yb - L, SCREEN_W - 1 - m, yb, gc);
+}
+
+// The cameras: each beam (see-through, yellow; amber on him; red when it has caught him), then the camera
+static void drawCameras() {
+  for (int k = 0; k < camCount; k++) {
+    const Camera &c = cams[k];
+    const int N = 6;
+    float xs[N + 2], ys[N + 2];
+    xs[0] = c.x;
+    ys[0] = c.y;
+    for (int i = 0; i <= N; i++) {
+      float a = (c.angle - CAM_HALF_DEG + 2 * CAM_HALF_DEG * i / N) * 0.017453293f;
+      xs[i + 1] = c.x + sinf(a) * 1500;
+      ys[i + 1] = c.y + cosf(a) * 1500;
+    }
+    if (c.view == 2) blendPolygonF(xs, ys, N + 2, 255, 40, 30, 0.30f);
+    else if (c.view == 1) blendPolygonF(xs, ys, N + 2, 255, 170, 40, 0.24f);
+    else blendPolygonF(xs, ys, N + 2, 255, 240, 170, 0.15f);
+    uint16_t edge = c.view == 2 ? rgb565(255, 90, 70) : (c.view == 1 ? rgb565(255, 190, 90) : rgb565(170, 160, 110));
+    drawLineF(xs[0], ys[0], xs[1], ys[1], edge, 1.0f);
+    drawLineF(xs[0], ys[0], xs[N + 1], ys[N + 1], edge, 1.0f);
+    // the camera, pointing along its beam
+    float a = c.angle * 0.017453293f, ux = sinf(a), uy = cosf(a), vx = uy, vy = -ux;
+    const float body[6][2] = { { -10, -11 }, { 20, -10 }, { 27, -7 }, { 27, 7 }, { 20, 10 }, { -10, 11 } };
+    float bx[6], by[6];
+    for (int i = 0; i < 6; i++) {
+      bx[i] = c.x + ux * body[i][0] + vx * body[i][1];
+      by[i] = c.y + uy * body[i][0] + vy * body[i][1];
+    }
+    fillPolygonF(bx, by, 6, rgb565(190, 196, 206));
+    drawLineF(bx[0], by[0], bx[1], by[1], rgb565(230, 234, 240), 1.5f);
+    fillCircle((int)lroundf(c.x + ux * 27), (int)lroundf(c.y + uy * 27), 6, rgb565(20, 24, 30));
+    fillCircle((int)lroundf(c.x + ux * 27), (int)lroundf(c.y + uy * 27), 2, rgb565(90, 130, 200));
+    bool led = c.view != 0 || ((int)(clockT * 2) & 1);
+    fillCircle((int)lroundf(c.x - ux * 3 + vx * 6), (int)lroundf(c.y - uy * 3 + vy * 6), 2, led ? rgb565(255, 40, 30) : rgb565(80, 20, 16));
+  }
+}
+
+// The drone: a body, two rotors, its status light, its gun turned on him; and its bullets
+static void drawDrone() {
+  const float S = 1.45f;                 // (its size: the shapes below are at 1)
+  float x = drX, y = drY + sinf(clockT * 3.1f) * 3;
+  uint16_t dark = rgb565(46, 50, 58), body = rgb565(76, 82, 94), hi = rgb565(140, 146, 158);
+  for (int s = -1; s <= 1; s += 2) {   // arms and rotors
+    float rx = x + s * 34 * S, ry = y - 12 * S;
+    drawLineF(x + s * 12 * S, y - 4 * S, rx, ry, dark, 4 * S);
+    fillCircle((int)rx, (int)(ry - 3 * S), (int)(3 * S), dark);
+    for (int k = 0; k < 2; k++) {        // the blades: a blur that flickers in width
+      float w = S * (6 + 14 * fabsf(cosf(clockT * 47.0f + k * 1.7f + s)));
+      drawLineF(rx - w, ry - (5 + k) * S, rx + w, ry - (5 + k) * S, k ? rgb565(170, 176, 186) : rgb565(120, 126, 138), 1.6f);
+    }
+  }
+  const float px[8] = { -22, -14, 14, 22, 18, 8, -8, -18 }, py[8] = { -2, -10, -10, -2, 7, 11, 11, 7 };
+  float xs[8], ys[8];
+  for (int i = 0; i < 8; i++) { xs[i] = x + px[i] * S; ys[i] = y + py[i] * S; }
+  fillPolygonF(xs, ys, 8, body);
+  drawLineF(x - 13 * S, y - 9 * S, x + 13 * S, y - 9 * S, hi, 2.0f);
+  fillRect((int)(x - 17 * S), (int)(y + 2 * S), (int)(x + 17 * S), (int)(y + 3 * S), dark);
+  // the gun, turned towards him
+  float ax = agX - x, ay = feetY() - 65 * myScale - (y + 12 * S), al = fmaxf(1.0f, sqrtf(ax * ax + ay * ay));
+  float gx = x + ax / al * 18 * S, gy = y + 12 * S + ay / al * 18 * S;
+  fillCircle((int)x, (int)(y + 10 * S), (int)(5 * S), dark);
+  drawLineF(x, y + 12 * S, gx, gy, dark, 3.5f * S);
+  if (drFlashT > 0) {
+    fillCircle((int)gx, (int)gy, 6, rgb565(255, 230, 120));
+    glowDisc(gx, gy, 30, 255, 200, 80, 0.6f);
+  }
+  // the status light: green out of range, yellow getting close, red firing (blinking)
+  int r = 40, g = 230, b = 90;
+  if (drLight == 1) { r = 255; g = 210; b = 40; }
+  if (drLight == 2) { r = 255; g = 40; b = 30; }
+  bool on = drLight < 2 || fmodf(clockT, 0.2f) < 0.13f;
+  fillCircle((int)x, (int)(y - 2), 7, on ? rgb565(r, g, b) : rgb565(r / 3, g / 3, b / 3));
+  fillCircle((int)x - 2, (int)(y - 4), 2, rgb565(255, 255, 255));
+  if (on) glowDisc(x, y - 2, 50, r, g, b, 0.5f);
+  // the bullets: short bright tracers
+  for (int i = 0; i < MAX_BULLETS; i++) {
+    const Bullet &bl = bullets[i];
+    if (bl.life <= 0) continue;
+    drawLineF(bl.x - bl.vx * 0.03f, bl.y - bl.vy * 0.03f, bl.x, bl.y, rgb565(255, 220, 120), 2.0f);
+    fillCircle((int)bl.x, (int)bl.y, 1, rgb565(255, 255, 220));
+  }
+  if (hitFlashT > 0) glowDisc(hitX, hitY, 40, 255, 60, 30, hitFlashT * 4);
 }
 
 // The opening: the grille rattles and falls, he lowers himself out of the
@@ -2848,6 +3217,19 @@ static void drawMap() {
       int bx = x0 + 12, by = y0 + 13;
       int xs[6] = { bx + 3, bx - 5, bx, bx - 3, bx + 6, bx + 1 }, ys[6] = { by - 9, by + 2, by + 2, by + 10, by - 2, by - 2 };
       fillPolygon(xs, ys, 6, rgb565(255, 220, 60));
+    } else if (ri.visited && (ri.hazard == HZ_CAMERA || ri.hazard == HZ_CAMERA2)) {   // a camera (two)
+      for (int k = 0; k < (ri.hazard == HZ_CAMERA2 ? 2 : 1); k++) {
+        int cx = x0 + 8 + k * 16, cy = y0 + 9;
+        fillRect(cx, cy, cx + 11, cy + 7, rgb565(190, 196, 206));
+        fillRect(cx + 11, cy + 2, cx + 13, cy + 5, rgb565(190, 196, 206));
+        fillRect(cx + 2, cy + 2, cx + 3, cy + 3, rgb565(255, 40, 30));
+      }
+    } else if (ri.visited && ri.hazard == HZ_DRONE) {   // a drone
+      int cx = x0 + 15, cy = y0 + 13;
+      fillRect(cx - 10, cy - 6, cx - 3, cy - 5, rgb565(170, 176, 186));
+      fillRect(cx + 3, cy - 6, cx + 10, cy - 5, rgb565(170, 176, 186));
+      fillRect(cx - 6, cy - 3, cx + 6, cy + 3, rgb565(110, 116, 128));
+      fillCircle(cx, cy, 1, rgb565(255, 40, 30));
     } else if (ri.visited && ri.hazard == HZ_DARK) {
       int ex = x0 + 14, ey = y0 + 13;
       fillCircle(ex, ey, 7, rgb565(60, 200, 100));
@@ -3113,6 +3495,8 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     drawSearchMarks();
   }
   if (mode == MODE_ROOM && agState == ST_SHOCK) drawShockSparks();
+  if (mode == MODE_ROOM && camCount > 0) drawCameras();
+  if (mode == MODE_ROOM && curHazard == HZ_DRONE) drawDrone();
   if (mode == MODE_SHAFT) drawPanel();
   if (mode == MODE_ROOM) drawScorePops();
   if (itemShowT > 0 && mode == MODE_ROOM && !mapOn) drawItemPanel();
@@ -3127,6 +3511,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     for (int i = 0; i < liftCount && mode == MODE_ROOM; i++)
       if (lifts[i].moving) hum = (lifts[i].stops[lifts[i].at] < lifts[i].y ? 1 : 2) + 2;   // (3, 4: a pad - quieter)
   }
+  droneHum.store(mode == MODE_ROOM && curHazard == HZ_DRONE && !mapOn && gameOver == END_NONE ? 1 : 0, std::memory_order_relaxed);
   int was = liftHum.exchange(hum, std::memory_order_relaxed);
   if (was != 0 && hum == 0 && !mapOn) sfxPlay(SFX_LIFT_STOP);
   drawHud();
@@ -3135,7 +3520,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
 // For the PC test build: where he is and what he is doing
 const char *gameDebug() {
   static char b[160];
-  static const char *st[] = { "IDLE", "RUN", "JUMP", "USE", "FALL", "LAND", "LIFT", "KO", "SHOCK" };
+  static const char *st[] = { "IDLE", "RUN", "JUMP", "USE", "FALL", "LAND", "LIFT", "KO", "SHOCK", "CAUGHT" };
   if (mode == MODE_SHAFT)
     snprintf(b, sizeof(b), "shaft %c floor %d%s x=%.0f y=%.0f %s", shaftLetter(curShaft), carFloor + 1, carMoving ? " (moving)" : "", agX, agY, st[agState]);
   else

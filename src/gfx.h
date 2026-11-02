@@ -78,6 +78,7 @@ void fillRectF(float x0, float y0, float x1, float y1, uint16_t c);     // edges
 void fillPolygon(const int *xs, const int *ys, int n, uint16_t c);
 void fillPolygonF(const float *xs, const float *ys, int n, uint16_t c);
 void fillCircle(int cx, int cy, int r, uint16_t c);
+void blendPolygonF(const float *xs, const float *ys, int n, int r, int g, int b, float a);   // see-through, a: 0..1
 void drawCircle(int cx, int cy, int r, uint16_t c);
 void drawLine(int x0, int y0, int x1, int y1, uint16_t c, bool thick);
 void drawLineF(float x0, float y0, float x1, float y1, uint16_t c, float w);   // w in units

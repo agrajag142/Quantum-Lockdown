@@ -1,12 +1,12 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 011: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 012: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
-on the walls (warning lights, fans, coolant tubes...), and two room hazards:
-electrified floors and dark rooms.
+on the walls (warning lights, fans, coolant tubes...), and room hazards:
+electrified floors, dark rooms, security cameras and drones.
 
 ## What's different from NUCLEAR MISSION's PS5 port
 
@@ -98,6 +98,9 @@ something in them; the other 92 have nothing.
 - **Falling down a pit:** a scream (`src/scream_sound.h`, made from
   scream.mp3: trimmed to its 2.2 seconds of scream and built into the game, so
   there is no file to copy). `SCREAM_VOLUME` sets its level.
+- **Cameras and the drone:** NUCLEAR MISSION's alarm when caught; the
+  drone's rotors whine quietly while it is in the room, its gun cracks, and a
+  hit thuds.
 - **Hazards:** NUCLEAR MISSION's electrified floor sounds (the warning buzz,
   the crackle while it is live and while he is shocked) and its power-down
   when a dark room's lights go out.
@@ -149,9 +152,28 @@ None in room 1, where he starts. The map marks the ones he has been in.
   the goggles light up is seen, in green: a cone the way he faces and a little
   round him. The EXIT lamps, red lights and lift pad lamps still glow.
 
+- **Security cameras** (6 rooms with one, 20%; 3 rooms with two, 10%): hung
+  from the ceiling in a top corner (or both), each sweeping its beam across
+  the room and back every 6 seconds. The beam goes through everything:
+  walls, floors, equipment. Standing still in it is safe (searching too);
+  moving in it (running, jumping, falling, riding a lift pad) is not. The beam
+  goes amber while it is on him, red when it catches him: an alarm,
+  "CAUGHT ON CAMERA! -30 SECONDS", 30 seconds off the clock, hands up, and back
+  at the door he came in by. Each camera starts its sweep at the far end, and
+  gives him a moment after he comes in.
+- **Drone** (4 rooms): it waits a moment, then flies after him anywhere in
+  the room (through anything), slowly - he runs twice as fast. Its light: green
+  out of range, yellow getting close, red (blinking) in range, and then it
+  fires: a bullet every 0.8 seconds, 5 health each, aimed where he is when it
+  fires, so a moving target is hard to hit. Run, put distance between, or leave
+  the room. It starts again from the far side whenever he comes in.
+
+The settings for these are at the top of `src/game.cpp` (`CAM_...`, `DRONE_...`,
+`ELEC_...`, the numbers of rooms). One hazard at most in a room.
+
 `sim/check_layout.cpp` lays out 2000 complexes and checks the counts (128
-pieces, 4 or 5 a room, 36 finds, 5 first aid kits, 2-6 rooms a column, 6
-electrified and 3 dark rooms), that every piece stands on its platform clear
+pieces, 4 or 5 a room, 36 finds, 5 first aid kits, 2-6 rooms a column, the
+hazard rooms), that every piece stands on its platform clear
 of the lifts, that no two overlap, and that every electrified room has its sign. `sim/check_rooms.cpp` checks that every
 layout can be crossed with every door combination and every spot reached:
 run it after adding or changing a layout.
@@ -195,6 +217,7 @@ it sits beside Hello PS5 and NUCLEAR MISSION.
 mission2/build.sh sim                     # plays sim/tour.txt, screenshots in build/mission2-sim/shots (and elevator.mod, if it's in assets)
 g++ -O2 -Imission2/src mission2/sim/check_rooms.cpp -o check && ./check   # checks the room layouts
 mission2/build.sh sim mission2/sim/hazards.txt   # an electrified floor (and a shock), a dark room, the walls
+mission2/build.sh sim mission2/sim/cameras_drone.txt   # caught on camera, two cameras, the drone
 mission2/build.sh sim my_script.txt       # your own script (see sim/sim_main.cpp for the commands)
 ```
 

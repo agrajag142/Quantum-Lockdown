@@ -2,7 +2,8 @@
 // every room, 36 with something in them, 2 to 6 rooms in every column, a room
 // in the top left corner, 5 first aid kits in different rooms, every room's
 // pieces placed, standing on a platform clear of the lifts, none overlapping;
-// 6 rooms with an electrified floor and 3 dark rooms (none in room 1), every
+// the hazard rooms (6 electrified, 3 dark, 6 with a camera, 3 with two, 4
+// with a drone; none in room 1), every
 // electrified room with its HIGH VOLTAGE sign on the wall.
 //
 //   gcc -O2 -c ../src/micromod.c ../src/micromod2.c && g++ -std=c++20 -O2 -w -I../src check_layout.cpp ../src/gfx.cpp micromod.o micromod2.o -o check_layout && ./check_layout
@@ -31,14 +32,12 @@ int main() {
       bad++;
       printf("seed %u: equipment %d, finds %d, rooms a column %d..%d, kits %d\n", seed, eq, hid, colMin, colMax, kits);
     }
-    int elec = 0, dark = 0;
-    for (int i = 0; i < ROOM_COUNT; i++) {
-      elec += rooms[i].hazard == HZ_ELECTRIC;
-      dark += rooms[i].hazard == HZ_DARK;
-    }
-    if (elec != ELECTRIC_ROOMS || dark != DARK_ROOMS || rooms[0].hazard != HZ_NONE) {
+    int hz[6] = {};
+    for (int i = 0; i < ROOM_COUNT; i++) hz[rooms[i].hazard]++;
+    if (hz[HZ_ELECTRIC] != ELECTRIC_ROOMS || hz[HZ_DARK] != DARK_ROOMS || hz[HZ_CAMERA] != CAMERA_ROOMS ||
+        hz[HZ_CAMERA2] != DUAL_CAMERA_ROOMS || hz[HZ_DRONE] != DRONE_ROOMS || rooms[0].hazard != HZ_NONE) {
       bad++;
-      printf("seed %u: %d electrified, %d dark, room 1 hazard %d\n", seed, elec, dark, rooms[0].hazard);
+      printf("seed %u: hazard counts %d %d %d %d %d, room 1 hazard %d\n", seed, hz[1], hz[2], hz[3], hz[4], hz[5], rooms[0].hazard);
     }
     for (int i = 0; i < ROOM_COUNT; i++) {
       buildRoom(i, true);
@@ -78,6 +77,6 @@ int main() {
     }
   }
   printf("wall ornaments: %.1f a room on average, a big fan in %.0f%% of rooms\n", ornTotal / 60000.0, bigFans / 600.0);
-  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), 36 finds, 5 first aid kits, 2-6 rooms a column, no overlaps, 6 electrified + 3 dark rooms, signs up");
+  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), 36 finds, 5 first aid kits, 2-6 rooms a column, no overlaps, 6 electrified, 3 dark, 6 one-camera, 3 two-camera, 4 drone rooms, signs up");
   return bad != 0;
 }

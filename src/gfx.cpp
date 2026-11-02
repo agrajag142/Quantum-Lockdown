@@ -34,12 +34,23 @@ void gfxClipAll() {
 }
 
 // ============================================================ pixel space
+static int spanBlend = 0;   // > 0: spans mix their colour in (out of 256) instead of covering
+
 void pxSpan(int y, int x0, int x1, uint32_t c) {
   if (y < clipY0 || y > clipY1) return;
   if (x0 < 0) x0 = 0;
   if (x1 >= FB_W) x1 = FB_W - 1;
   if (x1 < x0) return;
   uint32_t *row = gfxTarget + (size_t)y * FB_W;
+  if (spanBlend > 0) {
+    int k = spanBlend, r = c & 255, g = (c >> 8) & 255, b = (c >> 16) & 255;
+    for (int x = x0; x <= x1; x++) {
+      uint32_t p = row[x];
+      int pr = p & 255, pg = (p >> 8) & 255, pb = (p >> 16) & 255;
+      row[x] = rgba(pr + (((r - pr) * k) >> 8), pg + (((g - pg) * k) >> 8), pb + (((b - pb) * k) >> 8));
+    }
+    return;
+  }
   for (int x = x0; x <= x1; x++) row[x] = c;
 }
 
@@ -153,6 +164,19 @@ void fillPolygonF(const float *xs, const float *ys, int n, uint16_t c) {
     fy[i] = ys[i] * UNIT_K;
   }
   pxPoly(fx, fy, n, c32(c));
+}
+
+// A see-through polygon: colour (r, g, b) mixed in by a (0..1)
+void blendPolygonF(const float *xs, const float *ys, int n, int r, int g, int b, float a) {
+  float fx[40], fy[40];
+  if (n > 40) n = 40;
+  for (int i = 0; i < n; i++) {
+    fx[i] = xs[i] * UNIT_K;
+    fy[i] = ys[i] * UNIT_K;
+  }
+  spanBlend = (int)(clampv(a, 0.0f, 1.0f) * 256);
+  pxPoly(fx, fy, n, rgba(r, g, b));
+  spanBlend = 0;
 }
 
 void fillCircle(int cx, int cy, int r, uint16_t c) {

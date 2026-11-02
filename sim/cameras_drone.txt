@@ -1,0 +1,34 @@
+# Security cameras and the drone (seed 1): standing still in the beam is safe,
+# running through it is caught; two cameras; the drone closing in, then firing.
+seed 1
+hold NONE 30
+tap JUMP
+hold NONE 140
+room 2 BB C
+hold NONE 20
+shot 40_camera_room
+hold NONE 100
+shot 41_camera_still
+hold RIGHT 120
+shot 42_camera_running
+hold NONE 30
+shot 43_camera_caught
+hold NONE 80
+shot 44_camera_back_at_door
+room 1 BB 2
+hold NONE 40
+shot 45_two_cameras
+room 0 BB R
+hold NONE 60
+shot 50_drone_green
+hold NONE 150
+shot 51_drone_closer
+hold NONE 200
+shot 52_drone_firing
+hold NONE 20
+shot 53_drone_firing_b
+hold RIGHT 150
+shot 54_drone_ran_away
+tap MAP
+hold NONE 4
+shot 55_map
