@@ -26,5 +26,8 @@ void gameAudio(short *out, int frames);
 const char *gameDebug();   // (the PC test build: where he is)
 void gameDebugPos(float *x, float *y, int *state);
 void gameDebugRoom(int tpl, bool topL, bool topR, int hazard = 0);   // (the PC test build: straight into a layout; hazard 1 electric, 2 dark)
+void gameDebugControl(int drives, int gens);   // (the PC test build: QUANTUM CONTROL, with drives in hand and generators on)
+void gameDebugShaft(int s, int f);             // (the PC test build: a lift shaft at a floor; -1s: the sub basement's)
+void gameDebugGenerator(int n);                // (the PC test build: the room with generator n)
 
 #endif // GAME_H

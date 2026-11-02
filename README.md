@@ -1,12 +1,14 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 013: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 014: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
 on the walls (warning lights, fans, coolant tubes...), and room hazards:
-electrified floors, dark rooms, security cameras and drones.
+electrified floors, dark rooms, security cameras and drones; 36 QUANTUM
+DRIVES to find, 3 power generators, QUANTUM CONTROL with its drive bay and
+main computer, and the sub basement it unlocks.
 
 ## What's different from NUCLEAR MISSION's PS5 port
 
@@ -59,13 +61,15 @@ a steel cupboard and a computer rack (its lamps winking, tapes turning).
 
 Each column of rooms has its own wall colour (teal, maroon, olive, navy,
 purple, rust, forest green, mustard, plum - `wallColours` in `src/game.cpp`). 36 of them, anywhere, have
-something in them; the other 92 have nothing.
+a QUANTUM DRIVE in them; the other 92 have nothing.
 
-- Searching a piece (hold Square) scores **50**. A piece is searched once:
+- Searching a piece (hold Square) scores **100**. A piece is searched once:
   after that Square there just says SEARCHED. Each piece remembers how far it
   was searched: let go half way, come back later, and it carries on from
   there (a dim bar over it shows how far).
-- Finding something in it shows **FOUND OBJECT** and scores **200** more.
+- Finding a drive shows **QUANTUM DRIVE FOUND** (a picture of the drive) and
+  scores **200** more. He carries the drives until he loads them into the
+  drive bay in QUANTUM CONTROL.
 - Searched pieces get a tick: green for nothing, gold for a find. On the map
   each room you've been in shows its pieces the same way (grey: not searched).
 
@@ -121,17 +125,57 @@ something in them; the other 92 have nothing.
   red in the last minute. The map (Options) pauses it, and everything else.
 - **Game over:** why, the score, what was found; X goes back to the title.
 
+## Power generators
+
+3 rooms (at random) have a POWER GENERATOR: a yellow generator on a skid with
+a lever on its control box, down (off) and a red lamp. Search it (hold
+Square): the lever goes up, the lamp turns green and its engine fan starts
+turning (100 points). All 3 must be on before the main computer in QUANTUM
+CONTROL will start. The map marks a generator in a room you've been in (its
+lamp red or green), and the lift area's panel counts them.
+
+## QUANTUM CONTROL
+
+A room of its own in the middle column of the map (between lifts E and F), on
+a random row, one level high, with a door at the bottom on each side. Its
+equipment is NUCLEAR MISSION's LCC: computer racks with their lights, reel to
+reel tape units, the fan, a display over the main computer (the countdown,
+once there is power), the main computer and its printer, and new, the
+**QUANTUM DRIVE BAY**: 36 slots and a counter. The map always shows it (in
+purple).
+
+- **The drive bay:** stand at it and press Square: every drive he is carrying
+  goes in, one by one (the slots light up).
+- **The main computer:** stand at it and press Square.
+  - Without all 3 generators on: a NO POWER panel, with a picture of a
+    generator and how many are on.
+  - With power: the close-up of the computer (as NUCLEAR MISSION's launch
+    computer). It boots, checks the drive bay, and with fewer than 36 drives
+    loaded stops at **UNABLE TO BOOT** (X logs off).
+  - With all 36 loaded it boots to a menu: UP / DOWN to choose, X or Square to
+    pick. Most items only show a page (core status, temporal field, personnel
+    files...). **UNLOCK SUB BASEMENT LIFT ACCESS** names a lift shaft, picked
+    at random from those that go down to the bottom floor. LOG OFF to leave.
+    The clock keeps running while he is at the computer.
+
+## The sub basement
+
+Once unlocked, that shaft's car goes one level further down, below the
+complex's bottom floor (the panel says FLOOR SB). The mini map doesn't show
+it; the Options map does, under the bottom row. There the lift area has a
+wall on the left and a door on the right into the sub basement: a bare
+concrete hall with nothing in it yet, and no other way out.
+
 ## On the walls
 
-Each room has a few things on its walls that are only to look at, placed
+Each room has up to 2 things on its walls that are only to look at, placed
 where they keep clear of the platforms, lifts, equipment, doors and the room's
 number:
 
 - **Red warning lights** (NUCLEAR MISSION's): pulsing red with a glow, faster
   in the last minute.
 - **Wall fans**, spinning behind their guards, and a **big extractor fan**
-  wherever a room has a big open space between its floors (always in CENTRE
-  LIFT, usually in TWIN TOWERS, sometimes in THE CHASM).
+  (half the time) where a room has a big open space between its floors.
 - **Coolant tubes** with bubbles rising, **pressure gauges** with twitching
   needles, and the odd **notice** (RESTRICTED AREA, WARNING TIME FIELD...).
 
@@ -218,6 +262,7 @@ mission2/build.sh sim                     # plays sim/tour.txt, screenshots in b
 g++ -O2 -Imission2/src mission2/sim/check_rooms.cpp -o check && ./check   # checks the room layouts
 mission2/build.sh sim mission2/sim/hazards.txt   # an electrified floor (and a shock), a dark room, the walls
 mission2/build.sh sim mission2/sim/cameras_drone.txt   # caught on camera, two cameras, the drone
+mission2/build.sh sim mission2/sim/control.txt         # a generator, QUANTUM CONTROL, the computer, the sub basement
 mission2/build.sh sim my_script.txt       # your own script (see sim/sim_main.cpp for the commands)
 ```
 

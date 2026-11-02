@@ -25,12 +25,24 @@ int main() {
     for (int c = 0; c < COLS; c++) {
       int n = 0;
       for (int r = 0; r < ROWS; r++) n += roomAt[r][c] >= 0;
+      if (c == CONTROL_COL) n -= 1;   // (QUANTUM CONTROL isn't one of the 30)
       if (n < colMin) colMin = n;
       if (n > colMax) colMax = n;
     }
     if (eq != EQUIPMENT_TOTAL || hid != ITEMS_HIDDEN || colMin < MIN_PER_COL || colMax > MAX_PER_COL || roomAt[0][0] != 0 || kits != FIRST_AID_KITS) {
       bad++;
       printf("seed %u: equipment %d, finds %d, rooms a column %d..%d, kits %d\n", seed, eq, hid, colMin, colMax, kits);
+    }
+    int gens = 0;
+    for (int i = 0; i < ROOM_COUNT; i++) gens += rooms[i].gen;
+    if (gens != GENERATORS || roomAt[rooms[CONTROL_ROOM].row][CONTROL_COL] != CONTROL_ROOM || rooms[CONTROL_ROOM].topL || rooms[CONTROL_ROOM].topR) {
+      bad++;
+      printf("seed %u: %d generators, QUANTUM CONTROL at row %d\n", seed, gens, rooms[CONTROL_ROOM].row);
+    }
+    // the lifts stop at QUANTUM CONTROL's two doors
+    if (roomOff(CONTROL_COL, rooms[CONTROL_ROOM].row * 2 + 1, true) != CONTROL_ROOM || roomOff(CONTROL_COL + 1, rooms[CONTROL_ROOM].row * 2 + 1, false) != CONTROL_ROOM) {
+      bad++;
+      printf("seed %u: QUANTUM CONTROL's doors don't meet the lifts\n", seed);
     }
     int hz[6] = {};
     for (int i = 0; i < ROOM_COUNT; i++) hz[rooms[i].hazard]++;
@@ -47,10 +59,16 @@ int main() {
         bad++;
         printf("seed %u room %d: %d HIGH VOLTAGE signs\n", seed, i + 1, signs);
       }
+      int shownOrn = 0;
+      for (int k = 0; k < ornCount; k++) shownOrn += orn[k].kind != ORN_VOLTAGE;
+      if (shownOrn > MAX_ORNAMENTS_SHOWN) {
+        bad++;
+        printf("seed %u room %d: %d decorations\n", seed, i + 1, shownOrn);
+      }
       bigFans += ornCount > 0 && [&] { for (int k = 0; k < ornCount; k++) if (orn[k].kind == ORN_BIGFAN) return true; return false; }();
       ornTotal += ornCount;
       placeDecor(rooms[i], wideRooms[rooms[i].tpl]);
-      if (decorCount != rooms[i].decorN + (rooms[i].kit ? 1 : 0)) {
+      if (decorCount != rooms[i].decorN + (rooms[i].kit ? 1 : 0) + (rooms[i].gen ? 1 : 0)) {
         bad++;
         printf("seed %u room %d: %d of %d pieces placed\n", seed, i + 1, decorCount, rooms[i].decorN);
       }
@@ -77,6 +95,6 @@ int main() {
     }
   }
   printf("wall ornaments: %.1f a room on average, a big fan in %.0f%% of rooms\n", ornTotal / 60000.0, bigFans / 600.0);
-  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), 36 finds, 5 first aid kits, 2-6 rooms a column, no overlaps, 6 electrified, 3 dark, 6 one-camera, 3 two-camera, 3 drone rooms, signs up");
+  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), 36 finds, 5 first aid kits, 2-6 rooms a column, no overlaps, 3 generators, QUANTUM CONTROL in the middle column, at most 2 decorations a room, 6 electrified, 3 dark, 6 one-camera, 3 two-camera, 3 drone rooms, signs up");
   return bad != 0;
 }

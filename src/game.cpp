@@ -34,7 +34,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "013"
+#define GAME_VERSION      "014"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -65,8 +65,15 @@
 #define NOTHING_SHOW      1.2f
 #define MAX_DECOR         5        // equipment in a room: 4 or 5...
 #define EQUIPMENT_TOTAL   128      // ...128 in the whole complex (so 8 rooms have 5)
-#define ITEMS_HIDDEN      36       // pieces of equipment with something in them (the rest: nothing)
-#define SEARCH_SCORE      50       // searching a piece of equipment (the first time)
+#define ITEMS_HIDDEN      36       // pieces of equipment with a QUANTUM DRIVE in them (the rest: nothing)
+#define GENERATORS        3        // power generators (each in a different room): all on to power the main computer
+#define CONTROL_COL       4        // the QUANTUM CONTROL room is in this column (the middle one), on a random row
+#define CONTROL_ROOM      ROOM_COUNT        // (its index in rooms[], after the 30)
+#define SUB_ROOM          (ROOM_COUNT + 1)  // the sub basement's room (under a lift shaft, once unlocked)
+#define ALL_ROOMS         (ROOM_COUNT + 2)
+#define SUB_FLOOR         FLOORS   // the sub basement: a floor under the bottom row of the complex
+#define MAX_ORNAMENTS_SHOWN 2      // decorations on a room's walls (not counting the HIGH VOLTAGE sign)
+#define SEARCH_SCORE      100      // searching a piece of equipment (the first time)
 #define FOUND_SCORE       200      // finding something in it
 #define ITEM_SHOW         2.5f     // seconds FOUND OBJECT stays up
 #define MAX_POPS          6        // score numbers floating up at once
@@ -141,13 +148,24 @@ struct RoomInfo {
   bool searched[MAX_DECOR];        // ...searched yet
   bool holds[MAX_DECOR];           // ...something in it
   bool kit, kitUsed;               // a first aid kit here, and whether it has been used
-  float progress[MAX_DECOR + 1];   // how far each piece has been searched (seconds; the kit last)
+  float progress[MAX_DECOR + 2];   // how far each piece has been searched (seconds; then the kit, the generator)
   uint8_t hazard;                  // Hazard
+  bool gen, genOn;                 // a power generator here, and whether it has been turned on
+  bool noRightDoor;                // (the sub basement's room: a wall on the right)
 };
 enum Hazard : uint8_t { HZ_NONE, HZ_ELECTRIC, HZ_DARK, HZ_CAMERA, HZ_CAMERA2, HZ_DRONE };
-static RoomInfo rooms[ROOM_COUNT];         // numbered 1..30 across the rows, top to bottom
+static RoomInfo rooms[ALL_ROOMS];          // numbered 1..30 across the rows, top to bottom; then QUANTUM CONTROL, the sub basement's
 static int8_t roomAt[ROWS][COLS];          // which room is in each place (-1: none)
-static bool shaftSeen[SHAFTS][FLOORS];
+static bool shaftSeen[SHAFTS][FLOORS + 1];
+// The way down: the main computer unlocks the sub basement under one lift shaft
+static bool subUnlocked = false;
+static int subShaft = -1;
+// Quantum drives: found and carried, and loaded into the drive bay in QUANTUM CONTROL
+static int drivesCarried = 0, drivesLoaded = 0;
+static float leverT = -1;                  // >= 0: the lever of this room's generator going up (seconds)
+static bool bayBusy = false;               // drives going into the bay, one by one
+static float powerPanelT = 0;              // NO POWER: the panel with a generator's picture
+static bool termOn = false;                // the main computer's screen fills the view
 static uint32_t layoutSeed = 1;
 
 static uint32_t rngState = 1;
@@ -163,6 +181,7 @@ static char shaftLetter(int s) { return (char)('A' + s); }
 // -1 (a wall). right: the room to the right of the shaft (through its left
 // door), else the one to the left (through its right door).
 static int roomOff(int s, int f, bool right) {
+  if (f == SUB_FLOOR) return (right && subUnlocked && s == subShaft) ? SUB_ROOM : -1;
   if (f < 0 || f >= FLOORS) return -1;
   int c = right ? s : s - 1, r = f / 2;
   if (c < 0 || c >= COLS) return -1;
@@ -181,7 +200,7 @@ static int topStop(int s) {
   return -1;
 }
 static int bottomStop(int s) {
-  for (int f = FLOORS - 1; f >= 0; f--)
+  for (int f = SUB_FLOOR; f >= 0; f--)
     if (isStop(s, f)) return f;
   return -1;
 }
@@ -198,7 +217,7 @@ static void layOut(uint32_t seed) {
   }
   while (left > 0) {
     int c = rnd(COLS);
-    if (count[c] >= MAX_PER_COL) continue;
+    if (count[c] >= (c == CONTROL_COL ? ROWS - 1 : MAX_PER_COL)) continue;   // (room left in the middle column for QUANTUM CONTROL)
     count[c]++;
     left--;
   }
@@ -213,6 +232,9 @@ static void layOut(uint32_t seed) {
       used[r][c] = true;
       k++;
     }
+  // QUANTUM CONTROL: in the middle column, on a row its rooms leave free
+  int controlRow = rnd(ROWS);
+  while (used[controlRow][CONTROL_COL]) controlRow = (controlRow + 1) % ROWS;
   // number them across the rows, and give each its doors, layout and equipment
   int n = 0;
   for (int r = 0; r < ROWS; r++)
@@ -230,9 +252,24 @@ static void layOut(uint32_t seed) {
       ri.decorN = (uint8_t)(EQUIPMENT_TOTAL / ROOM_COUNT);
       for (int i = 0; i < MAX_DECOR; i++) ri.searched[i] = ri.holds[i] = false;
       ri.kit = ri.kitUsed = false;
-      for (int i = 0; i <= MAX_DECOR; i++) ri.progress[i] = 0;
+      for (int i = 0; i < MAX_DECOR + 2; i++) ri.progress[i] = 0;
       ri.hazard = HZ_NONE;
+      ri.gen = ri.genOn = ri.noRightDoor = false;
     }
+  // the two rooms that aren't in the numbering: QUANTUM CONTROL (one level, a door at the bottom
+  // on each side) and the sub basement's (a door on the left only; it isn't anywhere until unlocked)
+  for (int k = CONTROL_ROOM; k <= SUB_ROOM; k++) {
+    RoomInfo &ri = rooms[k];
+    memset(&ri, 0, sizeof(ri));
+    ri.row = (int8_t)(k == CONTROL_ROOM ? controlRow : ROWS);
+    ri.col = (int8_t)(k == CONTROL_ROOM ? CONTROL_COL : 0);
+    ri.topL = ri.topR = false;
+    ri.seed = (uint16_t)rnd32();
+    ri.noRightDoor = (k == SUB_ROOM);
+  }
+  roomAt[controlRow][CONTROL_COL] = (int8_t)CONTROL_ROOM;
+  subUnlocked = false;
+  subShaft = -1;
   // the rooms with one more piece of equipment, to make EQUIPMENT_TOTAL
   for (int extra = EQUIPMENT_TOTAL - ROOM_COUNT * (EQUIPMENT_TOTAL / ROOM_COUNT); extra > 0;) {
     RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
@@ -253,6 +290,13 @@ static void layOut(uint32_t seed) {
     RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
     if (ri.kit || ri.decorN >= wideRooms[ri.tpl].spotCount) continue;
     ri.kit = true;
+    k++;
+  }
+  // the power generators, each in a different room with a spare spot for it
+  for (int k = 0; k < GENERATORS;) {
+    RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
+    if (ri.gen || ri.decorN + (ri.kit ? 1 : 0) >= wideRooms[ri.tpl].spotCount) continue;
+    ri.gen = true;
     k++;
   }
   // the hazards, one at most in a room (none in room 1, where he starts)
@@ -302,15 +346,15 @@ enum DecorKind : uint8_t {
   DEC_CABINET, DEC_SAFE, DEC_PLANT, DEC_RADAR, DEC_PANEL,       // from NUCLEAR MISSION's silo rooms
   DEC_DESK, DEC_COOLER, DEC_SHELF, DEC_COAT,                    // ...and its offices
   DEC_COMPUTER, DEC_CUPBOARD, DEC_SERVER,                       // new: a desk with a computer, a cupboard, a computer rack
-  DEC_KINDS, DEC_FIRSTAID = DEC_KINDS };
-static const int16_t decorW[DEC_KINDS + 1] = { 52, 62, 44, 84, 96, 104, 34, 70, 56, 104, 72, 58, 48 };
-static const int16_t decorH[DEC_KINDS + 1] = { 96, 68, 96, 92, 82, 98, 96, 110, 132, 108, 118, 120, 100 };
+  DEC_KINDS, DEC_FIRSTAID = DEC_KINDS, DEC_GENERATOR };
+static const int16_t decorW[DEC_KINDS + 2] = { 52, 62, 44, 84, 96, 104, 34, 70, 56, 104, 72, 58, 48, 96 };
+static const int16_t decorH[DEC_KINDS + 2] = { 96, 68, 96, 92, 82, 98, 96, 110, 132, 108, 118, 120, 100, 112 };
 struct Decor {
   uint8_t kind;
   int16_t x, y;                    // middle, and the top of what it stands on
   uint16_t seed;                   // its blinking lights
 };
-static Decor decor[MAX_DECOR + 1];       // (the equipment, then a first aid kit if the room has one)
+static Decor decor[MAX_DECOR + 2];       // (the equipment, then a first aid kit and a power generator if the room has them)
 static int decorCount = 0;
 
 // On the walls, only to look at: red warning lights, fans (a big one where
@@ -439,7 +483,8 @@ void micromod2_get_audio(short *output_buffer, long count);
 }
 
 enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND,
-                     SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN, SFX_SCREAM, SFX_ALARM, SFX_SHOT, SFX_HIT };
+                     SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN, SFX_SCREAM, SFX_ALARM, SFX_SHOT, SFX_HIT,
+                     SFX_POWERUP, SFX_CLICK, SFX_DENIED, SFX_KEY };
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -503,6 +548,23 @@ static void startEffect(uint8_t sfx) {
     case SFX_HIT:                              // a bullet hits him
       startVoice(WAVE_NOISE, 1200, 200, 0, 120, 0.32f);
       startVoice(WAVE_SQUARE, 140, 60, 0, 140, 0.20f);
+      break;
+    case SFX_POWERUP:                          // a generator starting: the lever's clunk, a rising whine, the engine
+      startVoice(WAVE_NOISE, 900, 150, 0, 90, 0.30f);
+      startVoice(WAVE_TRIANGLE, 80, 520, 100, 900, 0.30f);
+      startVoice(WAVE_SQUARE, 40, 90, 100, 900, 0.08f);
+      startVoice(WAVE_TRIANGLE, 520, 520, 1000, 300, 0.18f);
+      break;
+    case SFX_CLICK:                            // a drive sliding into the bay
+      startVoice(WAVE_SQUARE, 1200, 1200, 0, 15, 0.12f);
+      startVoice(WAVE_NOISE, 3000, 1000, 0, 30, 0.10f);
+      break;
+    case SFX_DENIED:                           // no power / no boot: two low buzzes
+      startVoice(WAVE_SQUARE, 140, 130, 0, 180, 0.14f);
+      startVoice(WAVE_SQUARE, 140, 130, 240, 260, 0.14f);
+      break;
+    case SFX_KEY:                              // the terminal's menu: a short tick
+      startVoice(WAVE_SQUARE, 1800, 1800, 0, 12, 0.08f);
       break;
     case SFX_SCREAM:                           // a recording, not the synthesiser (from the start each time)
       screamPos = 0;
@@ -770,13 +832,14 @@ static void exitLampAt(bool right, int doorY, int &lx, int &ly) {
 
 // One side of the room: a bulkhead, with a doorway cut in it at doorY (the
 // top level or the floor) and an EXIT lamp beside it
-static void paintRoomSide(bool right, int doorY) {
+static void paintRoomSide(bool right, int doorY, bool door = true) {
   uint16_t frame = rgb565(96, 104, 118), frameHi = rgb565(150, 158, 172), dark = rgb565(8, 10, 14);
   // the bulkhead
   int bx0 = right ? SCREEN_W - 16 : 0, bx1 = right ? SCREEN_W - 1 : 15;
   fillRect(bx0, HUD_H, bx1, ROOM_FLOOR_Y - 1, frame);
   fillRect(right ? bx0 : bx1 - 2, HUD_H, right ? bx0 + 2 : bx1, ROOM_FLOOR_Y - 1, frameHi);
   for (int y = 70; y < ROOM_FLOOR_Y; y += 40) fillCircle((bx0 + bx1) / 2, y, 2, rgb565(60, 66, 78));
+  if (!door) return;                       // (a plain wall)
   // the doorway
   int x0 = right ? SCREEN_W - 30 : 0, x1 = right ? SCREEN_W - 1 : 29;
   int top = doorY - DOOR_H;
@@ -1053,6 +1116,56 @@ static void paintFirstAid(int x, int fy, bool used) {
   }
 }
 
+// A POWER GENERATOR: a yellow housing on a skid, an engine grille, an exhaust,
+// a control box on its side with the lever and the lamp (those are drawn each
+// frame: drawDecorAnim)
+static void paintGenerator(int x, int fy) {
+  int x0 = x - 48, x1 = x + 47;
+  uint16_t yel = rgb565(214, 168, 40), yelHi = rgb565(246, 206, 90), yelLo = rgb565(150, 112, 24);
+  uint16_t dark = rgb565(34, 36, 40), steel = rgb565(96, 102, 114);
+  fillRect(x0, fy - 10, x1, fy - 1, dark);                                // the skid
+  fillRect(x0 + 6, fy - 12, x1 - 6, fy - 10, steel);
+  fillRect(x0 + 4, fy - 82, x1 - 22, fy - 12, yel);                       // the housing
+  fillRect(x0 + 4, fy - 82, x1 - 22, fy - 79, yelHi);
+  fillRect(x1 - 25, fy - 79, x1 - 22, fy - 12, yelLo);
+  fillRect(x0 + 10, fy - 72, x0 + 46, fy - 22, dark);                     // the engine grille (its fan turns, once on)
+  for (int y = fy - 68; y < fy - 24; y += 6) fillRect(x0 + 12, y, x0 + 44, y + 1, rgb565(60, 64, 72));
+  fillCircle(x0 + 28, fy - 47, 18, rgb565(24, 26, 30));
+  fillRect(x0 + 52, fy - 70, x0 + 66, fy - 64, yelLo);                    // vents
+  fillRect(x0 + 52, fy - 58, x0 + 66, fy - 52, yelLo);
+  hazardBand(x0 + 50, x1 - 26, fy - 30, fy - 22);
+  fillRect(x0 + 14, fy - 98, x0 + 22, fy - 82, steel);                    // the exhaust
+  fillRect(x0 + 12, fy - 100, x0 + 24, fy - 97, rgb565(60, 64, 72));
+  fillRect(x1 - 20, fy - 92, x1, fy - 30, rgb565(70, 76, 88));            // the control box
+  fillRect(x1 - 20, fy - 92, x1, fy - 90, rgb565(130, 136, 148));
+  fillRect(x1 - 14, fy - 72, x1 - 6, fy - 40, rgb565(20, 22, 26));       // the lever's slot
+  drawVectorText("GEN", x0 + 64, fy - 40, 1.4f, rgb565(60, 44, 10), true);
+}
+
+// The generator's lever (k: 0 down, off ... 1 up, on) and its lamp
+static void drawGeneratorLive(int x, int fy, float k, bool on) {
+  int x1 = x + 47;
+  float px = x1 - 10.0f, py = fy - 56.0f;
+  float a = (60.0f - 120.0f * k) * 0.017453293f;                         // 60 degrees down ... 60 up
+  float hx = px + cosf(a) * 4.0f, hy = py + sinf(a) * 24.0f;
+  drawLineF(px, py, hx + 6, hy, rgb565(170, 176, 186), 3.0f);
+  fillCircle((int)(hx + 6), (int)hy, 4, rgb565(200, 40, 30));             // the knob
+  fillCircle((int)px, (int)py, 3, rgb565(60, 64, 72));
+  int lx = x1 - 10, ly = fy - 84;
+  uint16_t lamp = on ? rgb565(80, 255, 120) : rgb565(220, 40, 30);
+  fillCircle(lx, ly, 5, lamp);
+  fillCircle(lx - 1, ly - 2, 1, rgb565(255, 255, 255));
+  if (on) glowDisc(lx + 0.5f, ly + 0.5f, 34, 60, 255, 110, 0.5f);
+  if (on) {                                                               // the engine's fan turning
+    int cx = x - 48 + 28, cy = fy - 47;
+    for (int b = 0; b < 3; b++) {
+      float ang = clockT * 14.0f + b * TWO_PI / 3;
+      drawLineF(cx + 0.5f, cy + 0.5f, cx + 0.5f + cosf(ang) * 15, cy + 0.5f + sinf(ang) * 15, rgb565(110, 116, 128), 4.0f);
+    }
+    fillCircle(cx, cy, 4, rgb565(150, 156, 168));
+  }
+}
+
 static void paintDecor(const Decor &d) {
   switch (d.kind) {
     case DEC_CABINET: paintCabinet(d.x, d.y); break;
@@ -1068,6 +1181,7 @@ static void paintDecor(const Decor &d) {
     case DEC_CUPBOARD: paintCupboard(d.x, d.y); break;
     case DEC_SERVER:  paintServer(d.x, d.y); break;
     case DEC_FIRSTAID: paintFirstAid(d.x, d.y, rooms[curRoom].kitUsed); break;
+    case DEC_GENERATOR: paintGenerator(d.x, d.y); break;
   }
 }
 
@@ -1110,6 +1224,10 @@ static void drawDecorAnim() {
         int cx = d.x - 12 + k * 24, cy = top + 24;
         drawLineF(cx + 0.5f, cy + 0.5f, cx + 0.5f + cosf(a) * 6, cy + 0.5f + sinf(a) * 6, rgb565(150, 154, 164), 1.5f);
       }
+    } else if (d.kind == DEC_GENERATOR) {
+      bool on = rooms[curRoom].genOn;
+      float k = on ? (leverT >= 0 ? fminf(1.0f, leverT / 0.5f) : 1.0f) : 0.0f;
+      drawGeneratorLive(d.x, d.y, k, on && k >= 1.0f);
     } else if (d.kind == DEC_PANEL) {
       for (int row = 0; row < 2; row++)
         for (int k = 0; k < 6; k++) {
@@ -1124,6 +1242,8 @@ static void drawDecorAnim() {
 }
 
 static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
+  decorCount = 0;
+  if (&ri - rooms >= ROOM_COUNT) return;   // (no equipment in QUANTUM CONTROL or the sub basement)
   uint32_t save = rngState;
   rngState = ri.seed * 2654435761u + 12345u;
   decorCount = 0;
@@ -1146,11 +1266,20 @@ static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
     d.y = s.y;
     d.seed = (uint16_t)rnd32();
   }
-  // the first aid kit, on the next spot
-  if (ri.kit && ri.decorN < t.spotCount) {
-    const Spot &s = t.spots[order[ri.decorN]];
+  // the first aid kit, on the next spot, then the power generator
+  int next = ri.decorN;
+  if (ri.kit && next < t.spotCount) {
+    const Spot &s = t.spots[order[next++]];
     Decor &d = decor[decorCount++];
     d.kind = DEC_FIRSTAID;
+    d.x = s.x;
+    d.y = s.y;
+    d.seed = 0;
+  }
+  if (ri.gen && next < t.spotCount) {
+    const Spot &s = t.spots[order[next++]];
+    Decor &d = decor[decorCount++];
+    d.kind = DEC_GENERATOR;
     d.x = s.x;
     d.y = s.y;
     d.seed = 0;
@@ -1227,9 +1356,10 @@ static void tryOrnament(int kind, int r) {   // a few goes at a random free plac
 }
 
 static void placeOrnaments(const RoomInfo &ri) {
+  ornCount = keepClearN = 0;
+  if (&ri - rooms >= ROOM_COUNT) return;   // (QUANTUM CONTROL and the sub basement have their own)
   uint32_t save = rngState;
   rngState = ri.seed * 2246822519u + 777u;
-  ornCount = keepClearN = 0;
   for (int i = 0; i < platCount; i++) clearBox(plats[i].x0 - 2, plats[i].y - 4, plats[i].x1 + 2, plats[i].y >= ROOM_FLOOR_Y ? SCREEN_H : plats[i].y + PLAT_T + 4);
   for (int i = 0; i < liftCount; i++) clearBox(lifts[i].x0 - 10, shaftTop(lifts[i]) - 20, lifts[i].x1 + 10, SCREEN_H);
   for (int i = 0; i < decorCount; i++) {
@@ -1260,13 +1390,17 @@ static void placeOrnaments(const RoomInfo &ri) {
           bestR = r; bx = x; by = y;
           break;
         }
-  if (bestR) addOrnament(ORN_BIGFAN, bx, by, bestR);
-  // and the rest, a few of each
-  for (int n = 2 + rnd(2); n > 0; n--) tryOrnament(ORN_REDLIGHT, 0);
-  for (int n = 1 + rnd(2); n > 0; n--) tryOrnament(ORN_FAN, 24);
-  for (int n = rnd(3); n > 0; n--) tryOrnament(ORN_TUBE, 52 + rnd(3) * 8);
-  for (int n = rnd(3); n > 0; n--) tryOrnament(ORN_GAUGE, 0);
-  if (rnd(3)) tryOrnament(ORN_NOTICE, 0);
+  // at most MAX_ORNAMENTS_SHOWN of them: the big fan (half the time, where it fits) and the rest, different kinds
+  int shown = 0;
+  if (bestR && rnd(2) && addOrnament(ORN_BIGFAN, bx, by, bestR)) shown++;
+  static const uint8_t small[5] = { ORN_REDLIGHT, ORN_FAN, ORN_TUBE, ORN_GAUGE, ORN_NOTICE };
+  int first = rnd(5);
+  for (int k = 0; k < 5 && shown < MAX_ORNAMENTS_SHOWN; k++) {
+    int kind = small[(first + k * 2) % 5];   // (every other one round the list: a mix)
+    int before = ornCount;
+    tryOrnament(kind, kind == ORN_FAN ? 24 : (kind == ORN_TUBE ? 52 + rnd(3) * 8 : 0));
+    if (ornCount > before) shown++;
+  }
   rngState = save;
 }
 
@@ -1453,9 +1587,144 @@ static const uint8_t wallColours[COLS][3] = {
   {  70,  40,  70 },   // 9: plum
 };
 
+// ---- QUANTUM CONTROL: one level, under a false ceiling full of ducts. Its
+// equipment is NUCLEAR MISSION's LCC (computer racks, reel to reel tape units,
+// the fan, the status display over the main computer, the printer) and the
+// QUANTUM DRIVE BAY. What moves is drawn each frame (drawControlRoomAnim).
+#define CC_CEIL_Y     250          // its false ceiling
+#define CONSOLE_X     640          // the main computer
+#define BAY_X         1020         // the QUANTUM DRIVE BAY (200 wide)
+#define BAY_TOP       (ROOM_FLOOR_Y - 262)
+static const int ccRackX[3] = { 60, 126, 1160 };
+static const int ccTapeX[2] = { 200, 268 };
+#define CC_FAN_X 862
+#define CC_FAN_Y 330
+
+static void drawTextLeft(const char *t, float x, float y, float size, uint16_t c, bool thick) {
+  drawVectorText(t, x + vectorTextWidth(t, size) / 2, y, size, c, thick);
+}
+
+static void paintControlRoom() {
+  int fy = ROOM_FLOOR_Y;
+  // the walls: dark steel panels
+  fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(30, 36, 48));
+  for (int x = 0; x < SCREEN_W; x += 160) {
+    fillRect(x + 5, CC_CEIL_Y + 8, x + 154, fy - 8, rgb565(40, 48, 62));
+    fillRect(x, CC_CEIL_Y, x + 2, fy - 1, rgb565(20, 24, 32));
+  }
+  fillRect(0, fy - 96, SCREEN_W - 1, fy - 90, rgb565(26, 30, 40));          // a rail along the wall
+  // the false ceiling: ducts and pipes, a fascia with the room's name, lamps under it
+  fillRect(0, HUD_H, SCREEN_W - 1, CC_CEIL_Y - 1, rgb565(22, 26, 34));
+  for (int x = 40; x < SCREEN_W; x += 210) {                                // ducts going up
+    fillRect(x, HUD_H, x + 70, CC_CEIL_Y - 40, rgb565(70, 78, 92));
+    fillRect(x, HUD_H, x + 4, CC_CEIL_Y - 40, rgb565(110, 118, 132));
+    for (int y = HUD_H + 20; y < CC_CEIL_Y - 50; y += 30) fillRect(x - 3, y, x + 73, y + 4, rgb565(54, 60, 72));
+  }
+  paintPipe(96, 22);
+  paintPipe(150, 14);
+  fillRect(0, CC_CEIL_Y - 44, SCREEN_W - 1, CC_CEIL_Y - 1, rgb565(56, 62, 76));   // the fascia
+  fillRect(0, CC_CEIL_Y - 44, SCREEN_W - 1, CC_CEIL_Y - 42, rgb565(120, 128, 144));
+  hazardBand(0, SCREEN_W - 1, CC_CEIL_Y - 8, CC_CEIL_Y - 1);
+  drawVectorText("QUANTUM CONTROL", SCREEN_W / 2, CC_CEIL_Y - 26, 2.8f, rgb565(255, 190, 70), true);
+  for (int x = 70; x < SCREEN_W; x += 180) fillRect(x, CC_CEIL_Y, x + 40, CC_CEIL_Y + 3, rgb565(255, 230, 170));
+  // cable tray under the ceiling (NUCLEAR MISSION's)
+  fillRect(0, CC_CEIL_Y + 12, SCREEN_W - 1, CC_CEIL_Y + 17, rgb565(60, 64, 72));
+  for (int x = 30; x < SCREEN_W; x += 90) drawLine(x, CC_CEIL_Y + 18, x + 10, CC_CEIL_Y + 50, rgb565(20, 22, 26), false);
+  // computer racks: two on the left, one on the right
+  for (int k = 0; k < 3; k++) {
+    int x0 = ccRackX[k], x1 = x0 + 58;
+    fillRect(x0, fy - 232, x1, fy - 1, rgb565(38, 42, 50));
+    fillRect(x0, fy - 232, x1, fy - 229, rgb565(90, 96, 108));
+    fillRect(x0 + 4, fy - 222, x1 - 4, fy - 90, rgb565(22, 24, 30));      // the light panel
+    for (int r = 0; r < 4; r++) fillRect(x0 + 6, fy - 80 + r * 16, x1 - 6, fy - 72 + r * 16, rgb565(54, 58, 68));   // vents
+    fillRect(x1 - 3, fy - 228, x1, fy - 1, rgb565(26, 28, 34));
+  }
+  // reel to reel tape units
+  for (int k = 0; k < 2; k++) {
+    int x0 = ccTapeX[k], x1 = x0 + 62;
+    fillRect(x0, fy - 228, x1, fy - 1, rgb565(168, 166, 156));
+    fillRect(x0, fy - 228, x1, fy - 225, rgb565(206, 204, 194));
+    fillRect(x1 - 3, fy - 224, x1, fy - 1, rgb565(130, 128, 120));
+    fillRect(x0 + 5, fy - 216, x1 - 5, fy - 104, rgb565(40, 44, 52));      // the window
+    fillRect(x0 + 8, fy - 96, x1 - 8, fy - 84, rgb565(60, 62, 66));        // tape head
+    for (int b = 0; b < 3; b++) fillRect(x0 + 8 + b * 16, fy - 72, x0 + 18 + b * 16, fy - 64, rgb565(90, 92, 100));
+    fillRect(x0 + 6, fy - 50, x1 - 6, fy - 8, rgb565(150, 148, 140));      // lower door
+    drawRectOutline(x0 + 6, fy - 50, x1 - 6, fy - 8, rgb565(120, 118, 112), 1);
+  }
+  // the fan on the wall: housing (the blades turn)
+  fillCircle(CC_FAN_X, CC_FAN_Y, 46, rgb565(50, 54, 62));
+  fillCircle(CC_FAN_X, CC_FAN_Y, 41, rgb565(18, 20, 24));
+  fillRect(CC_FAN_X - 8, CC_FAN_Y + 46, CC_FAN_X + 8, CC_FAN_Y + 62, rgb565(50, 54, 62));
+  // the status display over the main computer
+  fillRect(CONSOLE_X - 140, 290, CONSOLE_X + 140, 372, rgb565(14, 10, 10));
+  drawRectOutline(CONSOLE_X - 140, 290, CONSOLE_X + 140, 372, rgb565(110, 116, 128), 3);
+  // the main computer (NUCLEAR MISSION's launch computer)
+  int x = CONSOLE_X;
+  fillRect(x - 90, fy - 64, x + 90, fy - 1, rgb565(78, 84, 96));
+  fillRect(x - 94, fy - 70, x + 94, fy - 62, rgb565(120, 128, 142));
+  for (int k = 0; k < 8; k++) fillRect(x - 70 + k * 18, fy - 52, x - 58 + k * 18, fy - 44, rgb565(50, 54, 62));   // keys
+  fillRect(x - 74, fy - 196, x + 74, fy - 76, rgb565(40, 44, 52));       // monitor
+  fillRect(x - 8, fy - 76, x + 8, fy - 70, rgb565(40, 44, 52));
+  drawRectOutline(x - 74, fy - 196, x + 74, fy - 76, rgb565(110, 116, 128), 2);
+  fillRect(x + 100, fy - 46, x + 104, fy - 1, rgb565(60, 64, 72));      // a printer by the desk, with paper
+  fillRect(x + 96, fy - 70, x + 112, fy - 46, rgb565(150, 150, 144));
+  fillRect(x + 99, fy - 78, x + 109, fy - 70, rgb565(236, 234, 224));
+  // the QUANTUM DRIVE BAY: a tall cabinet, 36 slots (filled each frame), a counter
+  int b0 = BAY_X - 100, b1 = BAY_X + 99;
+  fillRect(b0, BAY_TOP, b1, fy - 1, rgb565(64, 70, 84));
+  fillRect(b0, BAY_TOP, b1, BAY_TOP + 3, rgb565(130, 138, 156));
+  fillRect(b1 - 4, BAY_TOP + 4, b1, fy - 1, rgb565(40, 44, 54));
+  fillRect(b0 + 8, BAY_TOP + 10, b1 - 8, BAY_TOP + 34, rgb565(20, 24, 32));
+  drawVectorText("QUANTUM DRIVE BAY", BAY_X, BAY_TOP + 22, 1.6f, rgb565(90, 220, 255), true);
+  fillRect(b0 + 8, BAY_TOP + 42, b1 - 8, BAY_TOP + 196, rgb565(24, 28, 36));   // the slots' panel
+  fillRect(BAY_X - 50, BAY_TOP + 206, BAY_X + 50, BAY_TOP + 232, rgb565(10, 14, 12));   // the counter
+  drawRectOutline(BAY_X - 50, BAY_TOP + 206, BAY_X + 50, BAY_TOP + 232, rgb565(110, 116, 128), 1);
+  hazardBand(b0 + 4, b1 - 6, fy - 14, fy - 6);
+}
+
+// ---- the sub basement: a bare concrete hall under a low ceiling, nothing in it (for now)
+static void paintSubRoom() {
+  int fy = ROOM_FLOOR_Y, ceil = 300;
+  fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(52, 54, 56));
+  uint32_t h = 4242;
+  for (int i = 0; i < 900; i++) {                                         // the concrete's speckle
+    h = h * 1664525u + 1013904223u;
+    int x = (h >> 8) % SCREEN_W;
+    h = h * 1664525u + 1013904223u;
+    int y = ceil + (h >> 8) % (fy - ceil);
+    fillRect(x, y, x + 1, y, (h & 0x100) ? rgb565(62, 64, 66) : rgb565(44, 46, 48));
+  }
+  for (int y = ceil + 60; y < fy; y += 70) fillRect(0, y, SCREEN_W - 1, y, rgb565(40, 42, 44));   // the shuttering's lines
+  for (int x = 180; x < SCREEN_W - 100; x += 300) {                        // pillars
+    fillRect(x, ceil, x + 44, fy - 1, rgb565(70, 72, 74));
+    fillRect(x, ceil, x + 4, fy - 1, rgb565(92, 94, 96));
+    fillRect(x + 40, ceil, x + 44, fy - 1, rgb565(46, 48, 50));
+    hazardBand(x, x + 44, fy - 70, fy - 56);
+  }
+  fillRect(0, HUD_H, SCREEN_W - 1, ceil - 1, rgb565(30, 32, 34));          // the low ceiling, pipes along it
+  paintPipe(ceil - 60, 22);
+  paintPipe(ceil - 28, 14);
+  fillRect(0, ceil - 6, SCREEN_W - 1, ceil - 1, rgb565(20, 20, 22));
+  for (int x = 120; x < SCREEN_W; x += 300) {                              // caged lamps
+    fillRect(x, ceil, x + 30, ceil + 8, rgb565(255, 224, 150));
+    fillRect(x - 2, ceil + 8, x + 32, ceil + 10, rgb565(60, 60, 60));
+  }
+  drawVectorText("SUB BASEMENT", SCREEN_W / 2, 420, 5.0f, rgb565(84, 86, 90), true);
+  drawVectorText("LEVEL SB", SCREEN_W / 2, 470, 2.6f, rgb565(84, 86, 90), true);
+}
+
 static void paintRoom() {
   gfxTarget = roomBg;
   gfxClipAll();
+  if (curRoom >= ROOM_COUNT) {               // QUANTUM CONTROL, the sub basement: their own
+    if (curRoom == CONTROL_ROOM) paintControlRoom();
+    else paintSubRoom();
+    for (int i = 0; i < platCount; i++) paintPlatform(plats[i]);
+    paintRoomSide(false, doorYL);
+    paintRoomSide(true, doorYR, !rooms[curRoom].noRightDoor);
+    gfxTarget = g_frame;
+    return;
+  }
   // the back wall: each column of rooms has its own colour (wallColours, to try out)
   const uint8_t *wc = wallColours[rooms[curRoom].col % COLS];
   int wr = wc[0], wg = wc[1], wb = wc[2];
@@ -1611,7 +1880,9 @@ static void drawCatwalkDoor(bool right, int fy, int room) {
   fillRect(lx + 3, top - 17, lx + 27, top - 9, rgb565(60, 220, 110));
   // the room's number beside the door
   char b[24];
-  snprintf(b, sizeof(b), "ROOM %d", room + 1);
+  if (room == CONTROL_ROOM) snprintf(b, sizeof(b), "QUANTUM CONTROL");
+  else if (room == SUB_ROOM) snprintf(b, sizeof(b), "SUB BASEMENT");
+  else snprintf(b, sizeof(b), "ROOM %d", room + 1);
   float w = vectorTextWidth(b, 2.2f);
   drawVectorText(b, right ? x0 - 22 - w / 2 : x1 + 22 + w / 2, top + 14, 2.2f, rgb565(170, 230, 180), false);
   fillRect(fx0, top, fx0 + 9, fy - 1, frame);
@@ -1689,12 +1960,13 @@ static void drawShaftScene() {
     fillRect(SHAFT_X0, pitY, SHAFT_X1 - 1, PLAY_Y1, rgb565(14, 16, 20));
     hazardBand(SHAFT_X0 + 8, SHAFT_X1 - 9, pitY, pitY + 8);
   }
-  for (int L = 0; L < FLOORS; L++) {
+  for (int L = 0; L <= SUB_FLOOR; L++) {
     int fy = screenY(L);
     if (fy < HUD_H - 40 || fy - CORR_H - 20 > PLAY_Y1) continue;
     int cy = fy - CORR_H;
     char name[8];
-    snprintf(name, sizeof(name), "%d", L + 1);
+    if (L == SUB_FLOOR) snprintf(name, sizeof(name), "SB");
+    else snprintf(name, sizeof(name), "%d", L + 1);
     for (int side = 0; side < 2; side++) {
       int room = roomOff(curShaft, L, side == 1);
       if (room < 0) continue;                      // no door: the wall carries on
@@ -1742,9 +2014,18 @@ static void drawShaftScene() {
 }
 
 // ============================================================ rooms and shafts: building and moving between
+// The two rooms that aren't random: one level, just the floor
+static const WideRoom controlRoomT = { "QUANTUM CONTROL", 1, { { 0, SCREEN_W, ROOM_FLOOR_Y } }, 0, {}, 0, {}, 0, {}, 640, 0 };
+static const WideRoom subRoomT = { "SUB BASEMENT", 1, { { 0, SCREEN_W, ROOM_FLOOR_Y } }, 0, {}, 0, {}, 0, {}, 640, 0 };
+static const WideRoom &roomTemplate(int idx) {
+  if (idx == CONTROL_ROOM) return controlRoomT;
+  if (idx == SUB_ROOM) return subRoomT;
+  return wideRooms[rooms[idx].tpl];
+}
+
 static void buildRoom(int idx, bool fromLeft) {
   const RoomInfo &ri = rooms[idx];
-  const WideRoom &t = wideRooms[ri.tpl];
+  const WideRoom &t = roomTemplate(idx);
   platCount = t.platCount;
   for (int i = 0; i < platCount; i++) plats[i] = t.plats[i];
   pitCount = t.pitCount;
@@ -1820,6 +2101,8 @@ static void enterRoom(int idx, bool fromLeft) {
   paintRoom();
   rooms[idx].visited = true;
   curHazard = rooms[idx].hazard;
+  leverT = -1;
+  powerPanelT = 0;
   elecState = 0;
   elecT = 0;
   elecSafeFor = ELEC_SAFE_MIN + fxRnd(0, (int)((ELEC_SAFE_MAX - ELEC_SAFE_MIN) * 100)) / 100.0f;
@@ -1867,6 +2150,10 @@ static void leaveThroughEdge(bool right) {
     return;
   }
   const RoomInfo &ri = rooms[curRoom];
+  if (curRoom == SUB_ROOM) {                // (its only door: back to the lift it is under)
+    enterShaft(subShaft, SUB_FLOOR, false);
+    return;
+  }
   if (right) enterShaft(ri.col + 1, ri.row * 2 + (ri.topR ? 0 : 1), true);
   else enterShaft(ri.col, ri.row * 2 + (ri.topL ? 0 : 1), false);
 }
@@ -1952,6 +2239,7 @@ static bool inCar(float x) { return mode == MODE_SHAFT && x > SHAFT_X0 + 14 && x
 
 static bool exitOpen(bool right) {
   if (mode == MODE_SHAFT) return !carMoving && roomOff(curShaft, carFloor, right) >= 0;
+  if (right && rooms[curRoom].noRightDoor) return false;
   return fabsf(agY - (right ? doorYR : doorYL)) < 0.5f;
 }
 
@@ -2064,8 +2352,8 @@ static bool callLift(int i, int dir) {
 static bool callCar(int dir) {
   if (carMoving) return false;
   int next = carFloor + dir;
-  while (next >= 0 && next < FLOORS && !isStop(curShaft, next)) next += dir;
-  if (next < 0 || next >= FLOORS) return false;
+  while (next >= 0 && next <= SUB_FLOOR && !isStop(curShaft, next)) next += dir;
+  if (next < 0 || next > SUB_FLOOR) return false;
   carFloor = next;
   carMoving = true;
   carSpeed = 0;
@@ -2116,12 +2404,153 @@ static int decorAt() {
 // A piece that can't be searched (any more): searched already, or a used first aid kit
 static bool pieceDone(int i) {
   const RoomInfo &ri = rooms[curRoom];
+  if (decor[i].kind == DEC_GENERATOR) return ri.genOn;
   return decor[i].kind == DEC_FIRSTAID ? ri.kitUsed : ri.searched[i];
 }
-// How far it has been searched (the kit's is kept after the equipment's)
+// How far it has been searched (the kit's and the generator's are kept after the equipment's)
 static float &pieceProgress(int i) {
   RoomInfo &ri = rooms[curRoom];
+  if (decor[i].kind == DEC_GENERATOR) return ri.progress[MAX_DECOR + 1];
   return decor[i].kind == DEC_FIRSTAID ? ri.progress[MAX_DECOR] : ri.progress[i];
+}
+static int generatorsOn() {
+  int n = 0;
+  for (int i = 0; i < ROOM_COUNT; i++) n += rooms[i].gen && rooms[i].genOn;
+  return n;
+}
+
+// ============================================================ QUANTUM CONTROL: the drive bay and the main computer
+static float bayStepT = 0;
+static int bayInserted = 0;
+enum TermPage : uint8_t { TP_BOOT, TP_FAIL, TP_MENU, TP_MSG, TP_UNLOCK };
+static uint8_t termPage = TP_BOOT;
+static int termSel = 0, termMsg = 0;
+static float termT = 0;
+#define TERM_ITEMS 8
+#define TERM_UNLOCK 5                  // (the menu item that matters)
+static const char *const termItems[TERM_ITEMS] = {
+  "QUANTUM CORE STATUS", "TEMPORAL FIELD MONITOR", "PERSONNEL FILES", "SECURITY CAMERA NETWORK",
+  "REACTOR COOLANT", "UNLOCK SUB BASEMENT LIFT ACCESS", "COMMUNICATIONS", "LOG OFF" };
+#define BOOT_CHECK 3.0f                // the boot: the drive bay is checked at this point...
+#define BOOT_DONE  4.4f                // ...and with all 36 loaded, the menu comes up here
+
+static bool onFloorStill() { return mode == MODE_ROOM && fabsf(agY - ROOM_FLOOR_Y) < 0.5f && agState == ST_IDLE; }
+static bool atConsole() { return curRoom == CONTROL_ROOM && onFloorStill() && fabsf(agX - CONSOLE_X) < 80; }
+static bool atBay() { return curRoom == CONTROL_ROOM && onFloorStill() && fabsf(agX - BAY_X) < 90; }
+
+static void useBay() {
+  char b[64];
+  if (drivesLoaded >= ITEMS_HIDDEN) {
+    snprintf(b, sizeof(b), "ALL %d QUANTUM DRIVES LOADED", ITEMS_HIDDEN);
+    showMsg(b, 2.5f);
+    return;
+  }
+  if (drivesCarried <= 0) {
+    snprintf(b, sizeof(b), "NO QUANTUM DRIVES TO INSERT - %d OF %d LOADED", drivesLoaded, ITEMS_HIDDEN);
+    showMsg(b, 2.8f);
+    sfxPlay(SFX_DENIED);
+    return;
+  }
+  bayBusy = true;                      // (he stands at it while they go in)
+  bayStepT = 0;
+  bayInserted = 0;
+  searchItem = -1;
+  setState(ST_USE, 0.18f);
+}
+
+static void updateBay(float dt) {      // (in ST_USE, while bayBusy)
+  bayStepT += dt;
+  while (bayStepT >= 0.12f && drivesCarried > 0) {
+    bayStepT -= 0.12f;
+    drivesCarried--;
+    drivesLoaded++;
+    bayInserted++;
+    sfxPlay(SFX_CLICK);
+  }
+  if (drivesCarried > 0) return;
+  bayBusy = false;
+  char b[64];
+  if (drivesLoaded >= ITEMS_HIDDEN) {
+    snprintf(b, sizeof(b), "ALL %d QUANTUM DRIVES LOADED", ITEMS_HIDDEN);
+    sfxPlay(SFX_FANFARE);
+  } else {
+    snprintf(b, sizeof(b), "%d INSERTED - %d OF %d LOADED", bayInserted, drivesLoaded, ITEMS_HIDDEN);
+  }
+  showMsg(b, 3.0f);
+  setState(ST_IDLE, 0.18f);
+}
+
+static void useConsole() {
+  if (generatorsOn() < GENERATORS) {   // no power: the panel, with a generator's picture
+    powerPanelT = 5.0f;
+    sfxPlay(SFX_DENIED);
+    return;
+  }
+  termOn = true;
+  termPage = TP_BOOT;
+  termT = 0;
+  termSel = 0;
+  sfxPlay(SFX_FOUND);
+}
+
+// UNLOCK SUB BASEMENT LIFT ACCESS: a shaft (A to I) whose bottom stop is the
+// complex's bottom floor, so its car can go one level further down (if no
+// shaft reaches that far, one of those that go deepest)
+static void unlockSubBasement() {
+  if (subUnlocked) return;
+  int best = -1, cand[COLS], n = 0;
+  for (int sh = 0; sh < COLS; sh++) {
+    int b = bottomStop(sh);
+    if (b < 0) continue;
+    if (b > best) { best = b; n = 0; }
+    if (b == best) cand[n++] = sh;
+  }
+  subShaft = n > 0 ? cand[fxRnd(0, n)] : 0;
+  subUnlocked = true;
+  sfxPlay(SFX_FANFARE);
+}
+
+static void termChoose(int i) {
+  sfxPlay(SFX_KEY);
+  termT = 0;
+  if (i == TERM_ITEMS - 1) { termOn = false; return; }   // LOG OFF
+  if (i == TERM_UNLOCK) {
+    unlockSubBasement();
+    termPage = TP_UNLOCK;
+    return;
+  }
+  termPage = TP_MSG;
+  termMsg = i;
+}
+
+static void updateTerminal(float dt) {
+  termT += dt;
+  bool go = (pressed & (BTN_USE | BTN_JUMP)) != 0;
+  switch (termPage) {
+    case TP_BOOT:
+      if (go && termT > 0.3f && termT < BOOT_CHECK) termT = BOOT_CHECK;   // (skip on to the drive check)
+      if (termT >= BOOT_CHECK && drivesLoaded < ITEMS_HIDDEN) {
+        termPage = TP_FAIL;
+        termT = 0;
+        sfxPlay(SFX_DENIED);
+      } else if (termT >= BOOT_DONE) {
+        termPage = TP_MENU;
+        termT = 0;
+        sfxPlay(SFX_KEY);
+      }
+      break;
+    case TP_FAIL:
+      if (go && termT > 0.5f) termOn = false;
+      break;
+    case TP_MENU:
+      if (pressed & BTN_UP) { termSel = (termSel + TERM_ITEMS - 1) % TERM_ITEMS; sfxPlay(SFX_KEY); }
+      if (pressed & BTN_DOWN) { termSel = (termSel + 1) % TERM_ITEMS; sfxPlay(SFX_KEY); }
+      if (go && termT > 0.2f) termChoose(termSel);
+      break;
+    default:                           // a page: back to the menu
+      if (go && termT > 0.4f) { termPage = TP_MENU; termT = 0; sfxPlay(SFX_KEY); }
+      break;
+  }
 }
 
 static void updateAgent(float dt) {
@@ -2153,11 +2582,17 @@ static void updateAgent(float dt) {
       } else if (pressed & BTN_JUMP) {
         if (want) agFacing = want;
         startJump();
+      } else if ((pressed & BTN_USE) && atConsole()) {
+        useConsole();                   // QUANTUM CONTROL: the main computer...
+      } else if ((pressed & BTN_USE) && atBay()) {
+        useBay();                       // ...and the QUANTUM DRIVE BAY
+      } else if ((held & BTN_USE) && mode == MODE_ROOM && curRoom >= ROOM_COUNT) {
+        // (nothing to search in QUANTUM CONTROL or the sub basement)
       } else if ((held & BTN_USE) && mode == MODE_ROOM && decorAt() >= 0 && pieceDone(decorAt())) {
         // searched already: it isn't searched again
         if (pressed & BTN_USE) {
           int i = decorAt();
-          snprintf(floatText, sizeof(floatText), decor[i].kind == DEC_FIRSTAID ? "EMPTY" : "SEARCHED");
+          snprintf(floatText, sizeof(floatText), decor[i].kind == DEC_FIRSTAID ? "EMPTY" : (decor[i].kind == DEC_GENERATOR ? "ALREADY ON" : "SEARCHED"));
           floatColour = rgb565(150, 156, 170);
           nothingShowT = NOTHING_SHOW;
           nothingX = decor[i].x;
@@ -2289,6 +2724,10 @@ static void updateAgent(float dt) {
       break;
 
     case ST_USE: {
+      if (bayBusy) {                   // putting the drives in the bay
+        updateBay(dt);
+        break;
+      }
       int i = decorAt();
       if (i >= 0 && pieceDone(i)) i = -1;
       searchItem = i;
@@ -2303,6 +2742,23 @@ static void updateAgent(float dt) {
         if (searchT >= SEARCH_SECONDS) {
           RoomInfo &ri = rooms[curRoom];
           float px = decor[i].x, py = decor[i].y - decorH[decor[i].kind] - 22;
+          if (decor[i].kind == DEC_GENERATOR) {   // the power generator: the lever goes up, its lamp turns green
+            ri.genOn = true;
+            leverT = 0;
+            addScore(SEARCH_SCORE, px, py - 26);
+            sfxPlay(SFX_POWERUP);
+            snprintf(floatText, sizeof(floatText), "POWER ON");
+            floatColour = rgb565(100, 240, 140);
+            nothingShowT = NOTHING_SHOW;
+            nothingX = px;
+            nothingY = py;
+            char b[48];
+            int n = generatorsOn();
+            if (n >= GENERATORS) snprintf(b, sizeof(b), "ALL %d POWER GENERATORS ON", GENERATORS);
+            else snprintf(b, sizeof(b), "POWER GENERATOR ON - %d OF %d", n, GENERATORS);
+            showMsg(b, 3.0f);
+            break;
+          }
           if (decor[i].kind == DEC_FIRSTAID) {   // the first aid kit
             if (health >= HEALTH_MAX) {
               snprintf(floatText, sizeof(floatText), "HEALTH FULL");
@@ -2328,6 +2784,7 @@ static void updateAgent(float dt) {
             sfxPlay(SFX_FOUND);
             sfxPlay(SFX_FANFARE);
             itemsFound++;
+            drivesCarried++;
             addScore(FOUND_SCORE, px, py - 56);
             itemShowT = ITEM_SHOW;
             nothingShowT = 0;
@@ -2871,6 +3328,237 @@ static void drawDrone() {
   if (hitFlashT > 0) glowDisc(hitX, hitY, 40, 255, 60, 30, hitFlashT * 4);
 }
 
+// ---- QUANTUM CONTROL, each frame: the racks' lights, the tape reels, the
+// fan, the status display, the main computer's screen, the drive bay's slots
+static void drawReel(int cx, int cy, float a) {
+  fillCircle(cx, cy, 22, rgb565(70, 66, 60));          // the tape wound on it
+  fillCircle(cx, cy, 20, rgb565(180, 184, 192));       // the flange
+  for (int k = 0; k < 3; k++) {
+    float b = a + k * TWO_PI / 3;
+    fillCircle(cx + (int)lroundf(cosf(b) * 11), cy + (int)lroundf(sinf(b) * 11), 5, rgb565(40, 44, 52));
+  }
+  fillCircle(cx, cy, 4, rgb565(90, 94, 104));
+}
+
+static void drawControlRoomAnim() {
+  int fy = ROOM_FLOOR_Y;
+  float t = clockT;
+  bool power = generatorsOn() >= GENERATORS;
+  bool blink = fmodf(t, 1.0f) < 0.6f;
+  static const uint8_t ledRGB[4][3] = { { 60, 230, 100 }, { 255, 180, 40 }, { 255, 60, 40 }, { 80, 160, 255 } };
+  for (int k = 0; k < 3; k++)            // rack lights
+    for (int r = 0; r < 14; r++)
+      for (int c = 0; c < 5; c++) {
+        int n = k * 97 + r * 5 + c;
+        float period = 0.18f + (n * 37 % 11) * 0.06f;
+        uint32_t h = (uint32_t)(t / period) * 2654435761u + n * 2246822519u;
+        if (((h >> 15) & 3) == 0) continue;
+        const uint8_t *col = ledRGB[(n * 7 + (h >> 20)) % 4 == 2 ? 2 : (n % 3 == 0 ? 1 : (n % 5 == 0 ? 3 : 0))];
+        int x = ccRackX[k] + 10 + c * 9, y = fy - 216 + r * 9;
+        fillRect(x, y, x + 4, y + 3, rgb565(col[0], col[1], col[2]));
+      }
+  for (int k = 0; k < 2; k++) {          // the tape reels: running, stopping, changing direction
+    float a = 3.2f * t + 2.6f * sinf(t * 0.45f + k * 2.0f) * 3.0f;
+    int x0 = ccTapeX[k];
+    drawReel(x0 + 31, fy - 188, a);
+    drawReel(x0 + 31, fy - 134, -a * 0.8f);
+    drawLine(x0 + 53, fy - 188, x0 + 53, fy - 96, rgb565(70, 66, 60), false);
+    bool lamp = ((int)(t * 3 + k) & 1);
+    fillRect(x0 + 50, fy - 72, x0 + 54, fy - 64, lamp ? rgb565(255, 190, 40) : rgb565(80, 60, 20));
+  }
+  {                                      // the fan
+    float a = t * 14.0f;
+    for (int k = 0; k < 3; k++) {
+      float b = a + k * TWO_PI / 3;
+      float xs[4] = { CC_FAN_X + cosf(b - 0.25f) * 8, CC_FAN_X + cosf(b - 0.35f) * 38, CC_FAN_X + cosf(b + 0.30f) * 38, CC_FAN_X + cosf(b + 0.25f) * 8 };
+      float ys[4] = { CC_FAN_Y + sinf(b - 0.25f) * 8, CC_FAN_Y + sinf(b - 0.35f) * 38, CC_FAN_Y + sinf(b + 0.30f) * 38, CC_FAN_Y + sinf(b + 0.25f) * 8 };
+      fillPolygonF(xs, ys, 4, rgb565(120, 126, 136));
+    }
+    fillCircle(CC_FAN_X, CC_FAN_Y, 8, rgb565(70, 74, 84));
+    for (int k = -36; k <= 36; k += 12)
+      drawLine(CC_FAN_X + k, CC_FAN_Y - 36 + abs(k) / 3, CC_FAN_X + k, CC_FAN_Y + 36 - abs(k) / 3, rgb565(60, 64, 72), false);
+  }
+  // the status display: the countdown once there is power
+  if (power) {
+    drawVectorText("QUANTUM CORE COLLAPSE IN", CONSOLE_X, 306, 1.6f, rgb565(200, 80, 60), false);
+    int sec = (int)ceilf(fmaxf(timeLeft, 0));
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%d:%02d", sec / 60, sec % 60);
+    drawVectorText("88:88", CONSOLE_X, 344, 4.6f, rgb565(44, 12, 10), true);
+    drawVectorText(buf, CONSOLE_X, 344, 4.6f, rgb565(255, 50, 36), true);
+  } else if (blink) {
+    drawVectorText("POWER OFFLINE", CONSOLE_X, 331, 3.0f, rgb565(200, 40, 30), true);
+  }
+  // the main computer's screen
+  int x = CONSOLE_X;
+  fillRect(x - 66, fy - 188, x + 66, fy - 84, power ? rgb565(6, 16, 10) : rgb565(8, 8, 10));
+  uint16_t g = rgb565(100, 255, 140);
+  if (!power) {
+    if (blink) drawVectorText("NO POWER", x, fy - 136, 2.4f, rgb565(200, 40, 30), true);
+  } else if (subUnlocked) {
+    char b[24];
+    snprintf(b, sizeof(b), "LIFT %c", shaftLetter(subShaft));
+    drawVectorText("SUB BASEMENT", x, fy - 164, 1.7f, g, false);
+    drawVectorText(b, x, fy - 132, 3.2f, rgb565(255, 220, 80), true);
+    drawVectorText("UNLOCKED", x, fy - 102, 1.9f, g, true);
+  } else {
+    drawVectorText("QUANTUM OS", x, fy - 156, 1.9f, g, true);
+    if (blink) drawVectorText("READY", x, fy - 120, 2.4f, g, true);
+  }
+  fillCircle(x + 86, fy - 37, 3, power ? rgb565(80, 230, 120) : rgb565(255, 50, 40));
+  // the drive bay: 36 slots, lit as drives are loaded, and the counter
+  for (int i = 0; i < ITEMS_HIDDEN; i++) {
+    int c = i % 6, r = i / 6;
+    int sx = BAY_X - 84 + c * 28, sy = BAY_TOP + 50 + r * 24;
+    bool in = i < drivesLoaded;
+    fillRect(sx, sy, sx + 22, sy + 14, in ? rgb565(44, 50, 62) : rgb565(6, 8, 10));
+    if (in) {
+      fillRect(sx + 2, sy + 5, sx + 16, sy + 8, rgb565(90, 230, 255));
+      fillRect(sx + 18, sy + 2, sx + 20, sy + 4, rgb565(80, 255, 120));
+    } else {
+      fillRect(sx + 18, sy + 2, sx + 20, sy + 4, rgb565(120, 24, 20));
+    }
+  }
+  char cb[16];
+  snprintf(cb, sizeof(cb), "%02d/%02d", drivesLoaded, ITEMS_HIDDEN);
+  drawVectorText(cb, BAY_X, BAY_TOP + 219, 2.0f, drivesLoaded >= ITEMS_HIDDEN ? rgb565(80, 255, 120) : rgb565(255, 190, 70), true);
+  // USE, over what he is standing at
+  if (blink && !termOn) {
+    if (atConsole()) drawVectorText("USE", CONSOLE_X, fy - 216, 3.0f, rgb565(255, 220, 120), true);
+    if (atBay()) drawVectorText("USE", BAY_X, BAY_TOP - 18, 3.0f, rgb565(255, 220, 120), true);
+  }
+}
+
+// NO POWER: the main computer won't start until all the generators are on
+static void drawPowerPanel() {
+  int x0 = 330, y0 = 96, x1 = 950, y1 = 470;
+  fillRect(x0, y0, x1, y1, rgb565(10, 12, 20));
+  drawRectOutline(x0, y0, x1, y1, rgb565(255, 80, 60), 3);
+  drawVectorText("NO POWER", SCREEN_W / 2, y0 + 34, 4.0f, rgb565(255, 80, 60), true);
+  drawVectorText("THE MAIN COMPUTER NEEDS POWER", SCREEN_W / 2, y0 + 76, 2.2f, rgb565(230, 236, 245), false);
+  fillRect(SCREEN_W / 2 - 110, y0 + 100, SCREEN_W / 2 + 110, y0 + 250, rgb565(36, 42, 54));   // the picture
+  drawRectOutline(SCREEN_W / 2 - 110, y0 + 100, SCREEN_W / 2 + 110, y0 + 250, rgb565(90, 100, 120), 2);
+  fillRect(SCREEN_W / 2 - 108, y0 + 232, SCREEN_W / 2 + 108, y0 + 248, rgb565(60, 64, 72));
+  paintGenerator(SCREEN_W / 2, y0 + 232);
+  drawGeneratorLive(SCREEN_W / 2, y0 + 232, 0.0f, false);
+  drawVectorText("POWER GENERATOR", SCREEN_W / 2, y0 + 270, 2.0f, rgb565(255, 220, 80), true);
+  char b[64];
+  snprintf(b, sizeof(b), "FIND THE %d POWER GENERATORS AND TURN THEM ON", GENERATORS);
+  drawVectorText(b, SCREEN_W / 2, y0 + 308, 2.2f, rgb565(230, 236, 245), true);
+  snprintf(b, sizeof(b), "%d OF %d ON", generatorsOn(), GENERATORS);
+  drawVectorText(b, SCREEN_W / 2, y0 + 344, 2.6f, rgb565(100, 240, 140), true);
+}
+
+// The main computer, close up (as NUCLEAR MISSION's launch computer): the
+// monitor fills the view; UP / DOWN to choose, X or SQUARE to pick
+#define TX0 168
+#define TX1 1112
+#define TY0 96
+#define TY1 552
+static void drawTerminal() {
+  gfxClip(HUD_H, PLAY_Y1);
+  fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(22, 24, 28));
+  uint16_t case1 = rgb565(176, 170, 150), case2 = rgb565(146, 140, 122);
+  fillRect(TX0 - 56, TY0 - 44, TX1 + 56, TY1 + 46, case1);                // the monitor
+  fillRect(TX0 - 56, TY0 - 44, TX1 + 56, TY0 - 40, rgb565(206, 200, 182));
+  fillRect(TX1 + 52, TY0 - 40, TX1 + 56, TY1 + 46, case2);
+  fillRect(TX0 - 56, TY1 + 38, TX1 + 56, TY1 + 46, case2);
+  fillRect(TX0 - 22, TY0 - 18, TX1 + 22, TY1 + 18, rgb565(40, 40, 38));  // inner bezel
+  fillRect(TX0, TY0, TX1, TY1, rgb565(4, 18, 9));                         // the screen
+  for (int y = TY0; y <= TY1; y += 3) fillRect(TX0, y, TX1, y, rgb565(2, 10, 5));
+  fillCircle(TX1 + 30, TY1 + 30, 3, rgb565(80, 230, 120));
+  drawVectorText("QC-9 QUANTUM CONTROL", TX0 + 60, TY1 + 30, 1.4f, rgb565(90, 86, 74), false);
+  int kxs[4] = { TX0 - 50, TX1 + 50, TX1 + 80, TX0 - 80 }, kys[4] = { TY1 + 60, TY1 + 60, PLAY_Y1, PLAY_Y1 };   // the keyboard
+  fillPolygon(kxs, kys, 4, rgb565(184, 178, 158));
+  for (int row = 0; row < 3; row++)
+    for (int k = 0; k < 18 - row; k++) {
+      int kx = TX0 - 30 + row * 20 + k * 54, ky = TY1 + 70 + row * 32;
+      if (ky + 24 > PLAY_Y1) continue;
+      fillRect(kx, ky, kx + 46, ky + 24, rgb565(120, 114, 100));
+      fillRect(kx + 3, ky + 2, kx + 43, ky + 18, rgb565(214, 208, 190));
+    }
+  uint16_t g = rgb565(100, 255, 140), gd = rgb565(40, 140, 70), dark = rgb565(4, 18, 9), red = rgb565(255, 90, 70);
+  bool cur = ((int)(termT * 2.5f) & 1);
+  float lx = TX0 + 30;
+  drawTextLeft("QUANTUM OS 7.2   QUANTUM CONTROL QC-9", lx, TY0 + 26, 2.2f, gd, false);
+  fillRect(TX0 + 18, TY0 + 46, TX1 - 18, TY0 + 47, gd);
+  char b[64];
+  switch (termPage) {
+    case TP_BOOT: {
+      float r = termT;
+      drawTextLeft("BOOTING...", lx, TY0 + 90, 2.6f, g, true);
+      if (r > 0.4f) {
+        snprintf(b, sizeof(b), "MEMORY TEST  %dK", (int)(fminf((r - 0.4f) / 1.2f, 1.0f) * 4096) / 64 * 64);
+        drawTextLeft(b, lx, TY0 + 136, 2.4f, g, false);
+      }
+      if (r > 1.6f) drawTextLeft("POWER GRID ......... 3 GENERATORS ONLINE", lx, TY0 + 176, 2.4f, g, false);
+      if (r > 2.2f) drawTextLeft("CHECKING QUANTUM DRIVE BAY...", lx, TY0 + 216, 2.4f, g, false);
+      if (r > BOOT_CHECK) {
+        snprintf(b, sizeof(b), "QUANTUM DRIVES ..... %d OF %d LOADED", drivesLoaded, ITEMS_HIDDEN);
+        drawTextLeft(b, lx, TY0 + 256, 2.4f, g, false);
+        drawTextLeft("LOADING QUANTUM KERNEL", lx, TY0 + 306, 2.4f, g, true);
+        int w = (int)(fminf((r - BOOT_CHECK) / (BOOT_DONE - BOOT_CHECK - 0.2f), 1.0f) * 600);
+        drawRectOutline((int)lx, TY0 + 330, (int)lx + 604, TY0 + 352, g, 1);
+        if (w > 0) fillRect((int)lx + 2, TY0 + 332, (int)lx + 2 + w, TY0 + 350, g);
+      }
+      break;
+    }
+    case TP_FAIL:
+      drawTextLeft("CHECKING QUANTUM DRIVE BAY...", lx, TY0 + 90, 2.4f, g, false);
+      snprintf(b, sizeof(b), "QUANTUM DRIVES ..... %d OF %d LOADED", drivesLoaded, ITEMS_HIDDEN);
+      drawTextLeft(b, lx, TY0 + 130, 2.4f, g, false);
+      drawVectorText("UNABLE TO BOOT", (TX0 + TX1) / 2, TY0 + 210, 5.0f, red, true);
+      snprintf(b, sizeof(b), "ALL %d QUANTUM DRIVES MUST BE LOADED", ITEMS_HIDDEN);
+      drawVectorText(b, (TX0 + TX1) / 2, TY0 + 274, 2.6f, red, true);
+      drawVectorText("INTO THE QUANTUM DRIVE BAY", (TX0 + TX1) / 2, TY0 + 310, 2.6f, red, true);
+      if (cur) drawVectorText("PRESS X TO LOG OFF", (TX0 + TX1) / 2, TY1 - 40, 2.4f, gd, false);
+      break;
+    case TP_MENU:
+      drawTextLeft("WELCOME, OPERATOR. SELECT:", lx, TY0 + 84, 2.4f, g, false);
+      for (int i = 0; i < TERM_ITEMS; i++) {
+        int y = TY0 + 122 + i * 38;
+        snprintf(b, sizeof(b), "%d  %s", i + 1, termItems[i]);
+        if (i == termSel) {
+          fillRect(TX0 + 20, y - 16, TX1 - 20, y + 16, rgb565(70, 220, 120));
+          drawTextLeft(b, lx + 12, y, 2.8f, dark, true);
+        } else {
+          drawTextLeft(b, lx + 12, y, 2.8f, i == TERM_UNLOCK ? rgb565(255, 220, 80) : g, true);
+        }
+      }
+      drawTextLeft("UP / DOWN TO CHOOSE    X TO SELECT", lx, TY1 - 22, 1.8f, gd, false);
+      break;
+    case TP_MSG: {
+      static const char *const msg[TERM_ITEMS][4] = {
+        { "QUANTUM CORE STATUS", "CORE OUTPUT ........ 312%", "CONTAINMENT ........ FAILING", "TIME DILATION ...... 0.94" },
+        { "TEMPORAL FIELD MONITOR", "FIELD RADIUS ....... EXPANDING", "ANOMALIES .......... 17 DETECTED", "LOCAL TIME ......... UNSTABLE" },
+        { "PERSONNEL FILES", "ACCESS DENIED", "DIRECTOR VOSS", "CLEARANCE ONLY" },
+        { "SECURITY CAMERA NETWORK", "ALL FEEDS LOST", "NETWORK OVERRIDDEN", "BY DIRECTOR VOSS" },
+        { "REACTOR COOLANT", "PUMPS 1 TO 3 ....... ONLINE", "PUMP 4 ............. OFFLINE", "CORE TEMPERATURE ... RISING" },
+        { "", "", "", "" },
+        { "COMMUNICATIONS", "SURFACE UPLINK", "JAMMED", "NO CARRIER" },
+        { "", "", "", "" },
+      };
+      int m = termMsg;
+      drawTextLeft(msg[m][0], lx, TY0 + 100, 3.4f, g, true);
+      uint16_t c2 = (m == 2 || m == 3 || m == 6) ? red : g;
+      for (int k = 1; k < 4; k++) drawTextLeft(msg[m][k], lx + 20, TY0 + 140 + k * 56, 2.8f, k == 1 ? c2 : g, true);
+      if (cur) drawTextLeft("PRESS X TO RETURN", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+    }
+    case TP_UNLOCK:
+      drawVectorText("SUB BASEMENT", (TX0 + TX1) / 2, TY0 + 110, 4.0f, g, true);
+      drawVectorText("LIFT ACCESS UNLOCKED", (TX0 + TX1) / 2, TY0 + 160, 4.0f, g, true);
+      drawVectorText("PROCEED TO", (TX0 + TX1) / 2, TY0 + 230, 2.8f, g, false);
+      snprintf(b, sizeof(b), "LIFT %c", shaftLetter(subShaft));
+      drawVectorTextW(b, (TX0 + TX1) / 2, TY0 + 300, 7.0f, rgb565(255, 220, 80), 3.0f);
+      snprintf(b, sizeof(b), "RIDE LIFT %c TO THE BOTTOM AND PRESS DOWN", shaftLetter(subShaft));
+      drawVectorText(b, (TX0 + TX1) / 2, TY0 + 372, 2.4f, g, false);
+      if (cur) drawTextLeft("PRESS X TO RETURN", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+  }
+  if (cur && termPage != TP_UNLOCK) fillRect(TX1 - 44, TY1 - 34, TX1 - 30, TY1 - 22, g);   // the cursor
+}
+
 // The opening: the grille rattles and falls, he lowers himself out of the
 // duct and drops onto the catwalk (X skips it)
 static void updateIntro(float dt) {
@@ -2933,7 +3621,7 @@ static void drawSearchMarks() {
   for (int i = 0; i < decorCount; i++) {
     const Decor &d = decor[i];
     int top = d.y - decorH[d.kind];
-    if (d.kind != DEC_FIRSTAID && ri.searched[i]) {
+    if (d.kind < DEC_KINDS && ri.searched[i]) {
       uint16_t c = ri.holds[i] ? rgb565(255, 210, 70) : rgb565(80, 230, 120);   // (gold: something was in it)
       int tx = d.x - 6, ty = top - 12;
       drawLine(tx, ty, tx + 4, ty + 5, c, true);
@@ -2969,24 +3657,29 @@ static void drawScorePops() {
 }
 
 // FOUND OBJECT, as NUCLEAR MISSION's panel: a box with the find in it
+// A QUANTUM DRIVE, lying flat (cx, cy its middle; s its size: 1 = 120 units long)
+static void drawQuantumDrive(float cx, float cy, float s, bool glow) {
+  float x0 = cx - 60 * s, x1 = cx + 60 * s, y0 = cy - 20 * s, y1 = cy + 20 * s;
+  fillRectF(x0, y0, x1, y1, rgb565(36, 40, 50));                            // the case
+  fillRectF(x0, y0, x1, y0 + 3 * s, rgb565(110, 118, 136));
+  fillRectF(x0, y1 - 3 * s, x1, y1, rgb565(20, 22, 28));
+  for (int k = 0; k < 8; k++) fillRectF(x1, y0 + (6 + k * 4) * s, x1 + 6 * s, y0 + (8 + k * 4) * s, rgb565(220, 180, 70));   // the contacts
+  fillRectF(x0 + 8 * s, cy - 4 * s, x1 - 30 * s, cy + 4 * s, glow ? rgb565(90, 230, 255) : rgb565(40, 90, 110));   // the core's glowing strip
+  if (glow) glowDisc((x0 + x1 - 22 * s) / 2, cy, 70 * s, 60, 200, 255, 0.35f);
+  drawVectorText("Q", x1 - 18 * s, cy, 2.2f * s, rgb565(200, 230, 255), true);
+  fillRectF(x0 + 8 * s, y0 + 8 * s, x0 + 14 * s, y0 + 12 * s, rgb565(80, 255, 120));   // its lamp
+}
+
+// QUANTUM DRIVE FOUND, as NUCLEAR MISSION's panel: a box with the find in it
 static void drawItemPanel() {
-  int x0 = 430, y0 = 120, x1 = 850, y1 = 310;
+  int x0 = 410, y0 = 120, x1 = 870, y1 = 316;
   fillRect(x0, y0, x1, y1, rgb565(10, 12, 20));
-  drawRectOutline(x0, y0, x1, y1, rgb565(255, 210, 70), 3);
-  drawVectorText("FOUND OBJECT", SCREEN_W / 2, y0 + 30, 3.5f, rgb565(255, 210, 70), true);
-  // the object: a sealed case, for now
-  int cx = SCREEN_W / 2, cy = y0 + 96;
-  fillRect(cx - 44, cy - 26, cx + 44, cy + 26, rgb565(90, 96, 108));
-  fillRect(cx - 44, cy - 26, cx + 44, cy - 22, rgb565(150, 156, 168));
-  drawRectOutline(cx - 44, cy - 26, cx + 44, cy + 26, rgb565(40, 44, 52), 2);
-  fillRect(cx - 14, cy - 36, cx + 14, cy - 27, rgb565(40, 44, 52));           // the handle
-  fillRect(cx - 9, cy - 32, cx + 9, cy - 27, rgb565(10, 12, 20));
-  fillRect(cx - 34, cy - 6, cx - 26, cy + 4, rgb565(200, 170, 80));           // the catches
-  fillRect(cx + 26, cy - 6, cx + 34, cy + 4, rgb565(200, 170, 80));
-  drawVectorText("?", cx, cy + 4, 3.4f, rgb565(255, 210, 70), true);
-  char b[32];
+  drawRectOutline(x0, y0, x1, y1, rgb565(90, 220, 255), 3);
+  drawVectorText("QUANTUM DRIVE FOUND", SCREEN_W / 2, y0 + 30, 3.4f, rgb565(90, 220, 255), true);
+  drawQuantumDrive(SCREEN_W / 2, y0 + 96, 1.2f, fmodf(clockT, 0.6f) < 0.45f);
+  char b[48];
   snprintf(b, sizeof(b), "+%d   %d OF %d FOUND", FOUND_SCORE, itemsFound, ITEMS_HIDDEN);
-  drawVectorText(b, SCREEN_W / 2, y1 - 28, 2.6f, rgb565(100, 240, 140), true);
+  drawVectorText(b, SCREEN_W / 2, y1 - 30, 2.6f, rgb565(100, 240, 140), true);
 }
 
 // The top bar: the score on the left, the clock in the middle, health on the right
@@ -3074,18 +3767,23 @@ static void drawMiniMap(int x0, int y0, int x1, int y1) {
     int x = left + sh * (RW + SW) + SW / 2;
     fillRect(x - 1, floorY(lo) - 2, x + 1, floorY(hi) + 2, ink);
   }
-  for (int i = 0; i < ROOM_COUNT; i++) {
+  for (int i = 0; i <= CONTROL_ROOM; i++) {
     const RoomInfo &ri = rooms[i];
-    if (!ri.visited) continue;
     int rx = left + SW + ri.col * (RW + SW), ry = top + ri.row * (RH + GAP);
+    if (i == CONTROL_ROOM && !ri.visited) {   // QUANTUM CONTROL: always marked (an outline till he has been in)
+      drawRectOutline(rx + 2, ry, rx + RW - 3, ry + RH - 1, ink, 2);
+      continue;
+    }
+    if (!ri.visited) continue;
     fillRect(rx + 2, ry, rx + RW - 3, ry + RH - 1, ink);
+    if (i == CONTROL_ROOM) fillRect(rx + 8, ry + 5, rx + RW - 9, ry + RH - 6, rgb565(236, 206, 64));
     int yl = floorY(ri.row * 2 + (ri.topL ? 0 : 1)), yr = floorY(ri.row * 2 + (ri.topR ? 0 : 1));
     fillRect(rx - SW / 2, yl - 1, rx + 2, yl + 1, ink);                // the corridors to the shafts
     fillRect(rx + RW - 3, yr - 1, rx + RW + SW / 2, yr + 1, ink);
   }
   if (fmodf(clockT, 0.6f) < 0.4f) {           // him
     int x = left + curShaft * (RW + SW) + SW / 2;
-    float f = carWorldY / LEVEL_GAP;
+    float f = fminf(carWorldY / LEVEL_GAP, FLOORS - 1.0f);   // (the sub basement isn't on it: he shows at the bottom)
     int f0 = (int)f;
     float k = f - f0;
     float y = floorY(f0) + (f0 + 1 < FLOORS ? (floorY(f0 + 1) - floorY(f0)) * k : 0);
@@ -3106,7 +3804,8 @@ static void drawPanel() {
   char b[40];
   snprintf(b, sizeof(b), "LIFT %c", shaftLetter(curShaft));
   drawVectorText(b, 150, PANEL_Y + 62, 4.2f, rgb565(255, 220, 80), true);
-  snprintf(b, sizeof(b), "FLOOR %d", carFloor + 1);
+  if (carFloor == SUB_FLOOR) snprintf(b, sizeof(b), "FLOOR SB");
+  else snprintf(b, sizeof(b), "FLOOR %d", carFloor + 1);
   drawVectorText(b, 150, PANEL_Y + 112, 3.4f, rgb565(230, 236, 245), true);
   bool movingUp = carMoving && carFloor * LEVEL_GAP < carWorldY, movingDown = carMoving && !movingUp;
   drawArrowKey(310, PANEL_Y + 64, true, movingUp);
@@ -3125,13 +3824,17 @@ static void drawPanel() {
     drawVectorText(value, SCREEN_W - 44 - vectorTextWidth(value, 2.8f) / 2, y, 2.8f, col, true);
   };
   snprintf(b, sizeof(b), "%d/%d", seen, ROOM_COUNT);
-  line("ROOMS", b, PANEL_Y + 46, rgb565(240, 240, 245));
+  line("ROOMS", b, PANEL_Y + 38, rgb565(240, 240, 245));
   snprintf(b, sizeof(b), "%d/%d", itemsFound, ITEMS_HIDDEN);
-  line("FOUND", b, PANEL_Y + 86, rgb565(255, 220, 80));
+  line("DRIVES FOUND", b, PANEL_Y + 68, rgb565(90, 220, 255));
+  snprintf(b, sizeof(b), "%d/%d", drivesLoaded, ITEMS_HIDDEN);
+  line("DRIVES LOADED", b, PANEL_Y + 98, rgb565(90, 220, 255));
+  snprintf(b, sizeof(b), "%d/%d", generatorsOn(), GENERATORS);
+  line("GENERATORS ON", b, PANEL_Y + 128, rgb565(255, 220, 80));
   snprintf(b, sizeof(b), "%d", kitsLeft);
-  line("FIRST AID LEFT", b, PANEL_Y + 126, rgb565(120, 230, 140));
+  line("FIRST AID LEFT", b, PANEL_Y + 158, rgb565(120, 230, 140));
   snprintf(b, sizeof(b), "V%s  FPS %d", GAME_VERSION, (int)lroundf(fpsShown));
-  drawVectorText(b, (lx + SCREEN_W - 44) / 2, PANEL_Y + 170, 1.8f, rgb565(150, 160, 186), false);
+  drawVectorText(b, (lx + SCREEN_W - 44) / 2, PANEL_Y + 184, 1.5f, rgb565(150, 160, 186), false);
 }
 
 // GAME OVER: why, and the score
@@ -3148,7 +3851,7 @@ static void drawGameOver() {
   drawVectorText(b, SCREEN_W / 2, 420, 4.0f, rgb565(255, 190, 70), true);
   int seen = 0;
   for (int i = 0; i < ROOM_COUNT; i++) seen += rooms[i].visited;
-  snprintf(b, sizeof(b), "%d OF %d FOUND   %d OF %d ROOMS", itemsFound, ITEMS_HIDDEN, seen, ROOM_COUNT);
+  snprintf(b, sizeof(b), "%d OF %d QUANTUM DRIVES   %d OF %d ROOMS", itemsFound, ITEMS_HIDDEN, seen, ROOM_COUNT);
   drawVectorText(b, SCREEN_W / 2, 470, 2.6f, rgb565(170, 178, 196), false);
   if (gameOverT > 1.5f && fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X", SCREEN_W / 2, 560, 3.6f, rgb565(240, 240, 245), true);
 }
@@ -3188,9 +3891,21 @@ static void drawMap() {
     }
   }
   // the rooms, and a corridor from each door to its shaft
-  for (int i = 0; i < ROOM_COUNT; i++) {
+  for (int i = 0; i <= CONTROL_ROOM; i++) {
     const RoomInfo &ri = rooms[i];
     int x0 = left + SW + ri.col * (RW + SW), y0 = top + ri.row * (RH + GAP);
+    if (i == CONTROL_ROOM) {                   // QUANTUM CONTROL: always shown, in its own colour
+      fillRect(x0, y0, x0 + RW - 1, y0 + RH - 1, rgb565(60, 36, 96));
+      drawRectOutline(x0, y0, x0 + RW - 1, y0 + RH - 1, rgb565(200, 150, 255), 2);
+      int yd = floorY(ri.row * 2 + 1);
+      fillRect(x0 - SW / 2 + 6, yd - 2, x0 + 8, yd + 3, rgb565(80, 230, 120));
+      fillRect(x0 + RW - 9, yd - 2, x0 + RW + SW / 2 - 6, yd + 3, rgb565(80, 230, 120));
+      drawVectorText("QUANTUM", x0 + RW / 2, y0 + 18, 1.6f, rgb565(230, 210, 255), true);
+      drawVectorText("CONTROL", x0 + RW / 2, y0 + 36, 1.6f, rgb565(230, 210, 255), true);
+      if (mode == MODE_ROOM && i == curRoom && blink)
+        drawRectOutline(x0 - 4, y0 - 4, x0 + RW + 3, y0 + RH + 3, rgb565(255, 190, 70), 3);
+      continue;
+    }
     uint16_t fill = ri.visited ? rgb565(40, 64, 96) : rgb565(22, 26, 34);
     uint16_t edge = ri.visited ? rgb565(110, 160, 220) : rgb565(70, 78, 96);
     fillRect(x0, y0, x0 + RW - 1, y0 + RH - 1, fill);
@@ -3208,6 +3923,11 @@ static void drawMap() {
         uint16_t c = !ri.searched[k] ? rgb565(80, 88, 104) : (ri.holds[k] ? rgb565(255, 210, 70) : rgb565(80, 230, 120));
         fillRect(dx - 4, y0 + RH - 15, dx + 4, y0 + RH - 8, c);
       }
+    if (ri.visited && ri.gen) {   // a power generator: its lamp, red off, green on
+      int gx = x0 + RW - 16, gy = y0 + RH - 18;
+      fillRect(gx - 7, gy - 3, gx + 7, gy + 8, rgb565(214, 168, 40));
+      fillCircle(gx, gy - 6, 3, ri.genOn ? rgb565(80, 255, 120) : rgb565(230, 40, 30));
+    }
     if (ri.visited && ri.kit && !ri.kitUsed) {   // a first aid kit still here: a red cross in the corner
       fillRect(x0 + RW - 20, y0 + 6, x0 + RW - 6, y0 + 20, rgb565(236, 236, 240));
       fillRect(x0 + RW - 15, y0 + 8, x0 + RW - 11, y0 + 18, rgb565(210, 36, 30));
@@ -3238,20 +3958,30 @@ static void drawMap() {
     if (mode == MODE_ROOM && i == curRoom && blink)
       drawRectOutline(x0 - 4, y0 - 4, x0 + RW + 3, y0 + RH + 3, rgb565(255, 190, 70), 3);
   }
+  // the sub basement, once the main computer has unlocked it: under the bottom row
+  if (subUnlocked) {
+    const RoomInfo &ri = rooms[SUB_ROOM];
+    int x0 = left + SW + subShaft * (RW + SW), y0 = top + ROWS * (RH + GAP), yd = floorY(SUB_FLOOR);
+    fillRect(x0, y0, x0 + RW - 1, y0 + 26, ri.visited ? rgb565(70, 70, 74) : rgb565(36, 36, 40));
+    drawRectOutline(x0, y0, x0 + RW - 1, y0 + 26, rgb565(255, 220, 80), 2);
+    fillRect(x0 - SW / 2 + 6, yd - 2, x0 + 8, yd + 3, rgb565(80, 230, 120));
+    drawVectorText("SUB BASEMENT", x0 + RW / 2, y0 + 13, 1.25f, rgb565(255, 220, 80), true);
+    if (mode == MODE_ROOM && curRoom == SUB_ROOM && blink) drawRectOutline(x0 - 4, y0 - 4, x0 + RW + 3, y0 + 30, rgb565(255, 190, 70), 3);
+  }
   // him, in a shaft
   if (mode == MODE_SHAFT) {
     int x = left + curShaft * (RW + SW) + SW / 2;
     float f = carWorldY / LEVEL_GAP;
     int f0 = (int)f;
     float k = f - f0;
-    float y = floorY(f0) + (f0 + 1 < FLOORS ? (floorY(f0 + 1) - floorY(f0)) * k : 0);
+    float y = floorY(f0) + (f0 + 1 <= SUB_FLOOR ? (floorY(f0 + 1) - floorY(f0)) * k : 0);
     fillCircle(x, (int)y, 9, rgb565(10, 12, 16));
     fillCircle(x, (int)y, 7, blink ? rgb565(255, 190, 70) : rgb565(255, 240, 200));
   }
   int bottom = top + ROWS * RH + (ROWS - 1) * GAP;
   drawVectorText("EACH ROOM: A DOOR AT THE TOP OR THE BOTTOM ON EACH SIDE (GREEN) - THE LIFTS STOP ONLY AT DOORS", SCREEN_W / 2,
-                 bottom + 40, 1.8f, rgb565(150, 158, 176), false);
-  drawVectorText("OPTIONS: BACK TO THE GAME     TRIANGLE: LAY OUT A NEW COMPLEX", SCREEN_W / 2, bottom + 70, 2.2f,
+                 bottom + 64, 1.8f, rgb565(150, 158, 176), false);
+  drawVectorText("OPTIONS: BACK TO THE GAME     TRIANGLE: LAY OUT A NEW COMPLEX", SCREEN_W / 2, bottom + 92, 2.2f,
                  rgb565(200, 206, 220), true);
 }
 
@@ -3393,6 +4123,10 @@ static void newGame() {
   timeLeft = GAME_SECONDS;
   gameOver = END_NONE;
   itemShowT = nothingShowT = 0;
+  drivesCarried = drivesLoaded = 0;
+  bayBusy = termOn = false;
+  powerPanelT = 0;
+  leverT = -1;
   for (int i = 0; i < MAX_POPS; i++) popT[i] = 0;
   msgT = 0;
 }
@@ -3446,7 +4180,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     pressed = 0;
   }
 
-  if (pressed & BTN_MAP) mapOn = !mapOn;   // (the map pauses everything, the clock too)
+  if ((pressed & BTN_MAP) && !termOn) mapOn = !mapOn;   // (the map pauses everything, the clock too)
   if (mapOn) {
     if (pressed & BTN_NEW) newGame();
     pressed = 0;
@@ -3464,9 +4198,21 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (itemShowT > 0) itemShowT -= dt;
     for (int i = 0; i < MAX_POPS; i++)
       if (popT[i] > 0) popT[i] -= dt;
+    if (leverT >= 0) leverT += dt;
+    if (powerPanelT > 0) {
+      powerPanelT -= dt;
+      if ((pressed & (BTN_JUMP | BTN_USE)) && powerPanelT < 4.6f) {   // (X or SQUARE puts it away)
+        powerPanelT = 0;
+        pressed = 0;
+      }
+    }
     updateLifts(dt);
-    if (introT < 0) updateAgent(dt);
-    if (introT < 0) updateHazards(dt);
+    if (termOn) {                        // at the main computer: the controller works the menu
+      if (gameOver == END_NONE) updateTerminal(dt);
+    } else {
+      if (introT < 0) updateAgent(dt);
+      if (introT < 0) updateHazards(dt);
+    }
   }
 
   // the picture
@@ -3477,6 +4223,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     drawOrnamentsAnim();
     for (int i = 0; i < liftCount; i++) drawLiftPad(lifts[i]);
     drawDecorAnim();
+    if (curRoom == CONTROL_ROOM) drawControlRoomAnim();
     if (curHazard == HZ_ELECTRIC && elecState == 1 && flickerDim(elecT)) dimRoom();
     if (curHazard == HZ_DARK && !lightsOut && ((darkT > 0.25f && darkT < 0.35f) || (darkT > 0.5f && darkT < 0.56f))) dimRoom();
     if (curHazard == HZ_ELECTRIC && elecState != 0) drawFloorArcs(elecState == 2);
@@ -3497,8 +4244,10 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mode == MODE_ROOM && agState == ST_SHOCK) drawShockSparks();
   if (mode == MODE_ROOM && camCount > 0) drawCameras();
   if (mode == MODE_ROOM && curHazard == HZ_DRONE) drawDrone();
+  if (mode == MODE_ROOM && powerPanelT > 0 && !mapOn) drawPowerPanel();
+  if (termOn && mode == MODE_ROOM) drawTerminal();
   if (mode == MODE_SHAFT) drawPanel();
-  if (mode == MODE_ROOM) drawScorePops();
+  if (mode == MODE_ROOM && !termOn) drawScorePops();
   if (itemShowT > 0 && mode == MODE_ROOM && !mapOn) drawItemPanel();
   if (mapOn) drawMap();
   else if (itemShowT <= 0) drawMessage();
@@ -3522,7 +4271,12 @@ const char *gameDebug() {
   static char b[160];
   static const char *st[] = { "IDLE", "RUN", "JUMP", "USE", "FALL", "LAND", "LIFT", "KO", "SHOCK", "CAUGHT" };
   if (mode == MODE_SHAFT)
-    snprintf(b, sizeof(b), "shaft %c floor %d%s x=%.0f y=%.0f %s", shaftLetter(curShaft), carFloor + 1, carMoving ? " (moving)" : "", agX, agY, st[agState]);
+    snprintf(b, sizeof(b), "shaft %c floor %d%s x=%.0f y=%.0f %s%s", shaftLetter(curShaft), carFloor + 1, carMoving ? " (moving)" : "", agX, agY, st[agState],
+             subUnlocked ? (subShaft == curShaft ? " [sub basement under this lift]" : " [sub basement elsewhere]") : "");
+  else if (curRoom >= ROOM_COUNT)
+    snprintf(b, sizeof(b), "%s x=%.0f y=%.0f %s drives %d carried %d loaded, generators %d, terminal %s page %d, sub %c",
+             curRoom == CONTROL_ROOM ? "QUANTUM CONTROL" : "SUB BASEMENT", agX, agY, st[agState], drivesCarried, drivesLoaded,
+             generatorsOn(), termOn ? "on" : "off", termPage, subUnlocked ? shaftLetter(subShaft) : '-');
   else
     snprintf(b, sizeof(b), "room %d (row %d col %d, doors L:%s R:%s) x=%.0f y=%.0f %s", curRoom + 1, rooms[curRoom].row, rooms[curRoom].col,
              rooms[curRoom].topL ? "top" : "bottom", rooms[curRoom].topR ? "top" : "bottom", agX, agY, st[agState]);
@@ -3543,4 +4297,38 @@ void gameDebugRoom(int tpl, bool topL, bool topR, int hazard) {
   rooms[0].topR = topR;
   rooms[0].hazard = (uint8_t)hazard;
   enterRoom(0, true);
+}
+
+// For the PC test build: drives in hand and generators on, then into QUANTUM CONTROL (by its left door)
+void gameDebugControl(int drives, int gens) {
+  if (onTitle) layOut(layoutSeed);
+  onTitle = false;
+  introT = -1;
+  drivesCarried = drives;
+  drivesLoaded = 0;
+  itemsFound = drives;
+  for (int i = 0; i < ROOM_COUNT; i++)
+    if (rooms[i].gen) rooms[i].genOn = gens-- > 0;
+  enterRoom(CONTROL_ROOM, true);
+}
+// For the PC test build: into a lift shaft (-1: the sub basement's) at a floor (-1: its lowest stop above the sub basement)
+void gameDebugShaft(int s, int f) {
+  if (s < 0) s = subShaft < 0 ? 0 : subShaft;
+  if (f < 0) {
+    f = 0;
+    for (int k = 0; k < FLOORS; k++)
+      if (isStop(s, k)) f = k;
+  }
+  enterShaft(s, f, true);
+}
+// For the PC test build: a generator's room (n: 0, 1, 2), in by its left door
+void gameDebugGenerator(int n) {
+  if (onTitle) layOut(layoutSeed);
+  onTitle = false;
+  introT = -1;
+  for (int i = 0; i < ROOM_COUNT; i++)
+    if (rooms[i].gen && n-- == 0) {
+      enterRoom(i, true);
+      return;
+    }
 }

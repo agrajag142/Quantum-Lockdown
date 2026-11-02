@@ -12,6 +12,9 @@
 //                room N DOORS [H]      straight into layout N (DOORS: TT, TB, BT or BB - left, right;
 //                                      H: E an electrified floor, D a dark room, C a camera,
 //                                      2 two cameras, R a drone)
+//                control D G           into QUANTUM CONTROL with D drives in hand and G generators on
+//                shaft S F             into lift shaft S (0 = A; -1 the sub basement's) at floor F (-1 its lowest)
+//                gen N                 into the room with power generator N (0..2)
 //                wav SECONDS NAME      the sound for the next SECONDS (the game running): out/NAME.wav
 //                # comment
 #include "game.h"
@@ -132,6 +135,15 @@ int main(int argc, char **argv) {
       char doors[8] = "BB", hz[8] = "";
       sscanf(line, "%*s %*s %7s %7s", doors, hz);
       gameDebugRoom(atoi(a), doors[0] == 'T', doors[1] == 'T', hz[0] == 'E' ? 1 : hz[0] == 'D' ? 2 : hz[0] == 'C' ? 3 : hz[0] == '2' ? 4 : hz[0] == 'R' ? 5 : 0);
+      step(0);
+    } else if (!strcmp(cmd, "control")) {   // control DRIVES GENERATORS: into QUANTUM CONTROL with them
+      gameDebugControl(atoi(a), n);
+      step(0);
+    } else if (!strcmp(cmd, "shaft")) {     // shaft S F: into lift shaft S (0 = A; -1 the sub basement's) at floor F (-1 its lowest)
+      gameDebugShaft(atoi(a), n);
+      step(0);
+    } else if (!strcmp(cmd, "gen")) {       // gen N: the room with power generator N (0..2)
+      gameDebugGenerator(atoi(a));
       step(0);
     } else if (!strcmp(cmd, "shot")) {
       shot(argv[2], a);
