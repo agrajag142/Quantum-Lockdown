@@ -30,7 +30,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "003"
+#define GAME_VERSION      "004"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -55,7 +55,13 @@
 #define BLEND_SECONDS     0.12f
 #define SEARCH_SECONDS    1.6f     // hold USE this long to search a piece of equipment
 #define NOTHING_SHOW      1.2f
-#define DECOR_PER_ROOM    3
+#define MAX_DECOR         5        // equipment in a room: 4 or 5...
+#define EQUIPMENT_TOTAL   128      // ...128 in the whole complex (so 8 rooms have 5)
+#define ITEMS_HIDDEN      36       // pieces of equipment with something in them (the rest: nothing)
+#define SEARCH_SCORE      50       // searching a piece of equipment (the first time)
+#define FOUND_SCORE       200      // finding something in it
+#define ITEM_SHOW         2.5f     // seconds FOUND OBJECT stays up
+#define MAX_POPS          6        // score numbers floating up at once
 
 #define HUD_H    40
 #define PLAY_Y1  (SCREEN_H - 1)
@@ -79,7 +85,9 @@ struct RoomInfo {
   uint8_t tpl;                     // its layout (rooms_wide.h)
   uint16_t seed;                   // its equipment
   bool visited;
-  bool searched[DECOR_PER_ROOM];
+  uint8_t decorN;                  // its equipment: how many pieces (4 or 5)
+  bool searched[MAX_DECOR];        // ...searched yet
+  bool holds[MAX_DECOR];           // ...something in it
 };
 static RoomInfo rooms[ROOM_COUNT];         // numbered 1..30 across the rows, top to bottom
 static int8_t roomAt[ROWS][COLS];          // which room is in each place (-1: none)
@@ -163,8 +171,24 @@ static void layOut(uint32_t seed) {
       ri.tpl = (uint8_t)rnd(WIDE_ROOM_COUNT);
       ri.seed = (uint16_t)rnd32();
       ri.visited = false;
-      for (int i = 0; i < DECOR_PER_ROOM; i++) ri.searched[i] = false;
+      ri.decorN = (uint8_t)(EQUIPMENT_TOTAL / ROOM_COUNT);
+      for (int i = 0; i < MAX_DECOR; i++) ri.searched[i] = ri.holds[i] = false;
     }
+  // the rooms with one more piece of equipment, to make EQUIPMENT_TOTAL
+  for (int extra = EQUIPMENT_TOTAL - ROOM_COUNT * (EQUIPMENT_TOTAL / ROOM_COUNT); extra > 0;) {
+    RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
+    if (ri.decorN >= MAX_DECOR || ri.decorN >= wideRooms[ri.tpl].spotCount) continue;
+    ri.decorN++;
+    extra--;
+  }
+  // and the pieces with something in them, ITEMS_HIDDEN of them anywhere
+  for (int k = 0; k < ITEMS_HIDDEN;) {
+    RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
+    int i = rnd(ri.decorN);
+    if (ri.holds[i]) continue;
+    ri.holds[i] = true;
+    k++;
+  }
   memset(shaftSeen, 0, sizeof(shaftSeen));
 }
 
@@ -207,7 +231,7 @@ struct Decor {
   int16_t x, y;                    // middle, and the top of what it stands on
   uint16_t seed;                   // its blinking lights
 };
-static Decor decor[DECOR_PER_ROOM];
+static Decor decor[MAX_DECOR];
 static int decorCount = 0;
 
 // Pictures painted once: the room, and the shaft (all but what scrolls)
@@ -230,6 +254,24 @@ static uint32_t held = 0, pressed = 0;
 static int searchItem = -1;
 static float searchT = 0;
 static float nothingShowT = 0, nothingX = 0, nothingY = 0;
+
+// The score
+static long score = 0;
+static int itemsFound = 0;
+static float itemShowT = 0;            // FOUND OBJECT on screen
+static float popX[MAX_POPS], popY[MAX_POPS], popT[MAX_POPS];
+static long popV[MAX_POPS];
+
+static void addScore(long v, float x, float y) {
+  score += v;
+  int k = 0;
+  for (int i = 1; i < MAX_POPS; i++)
+    if (popT[i] < popT[k]) k = i;      // (the oldest one)
+  popX[k] = x;
+  popY[k] = y;
+  popT[k] = 1.2f;
+  popV[k] = v;
+}
 
 // On screen
 static bool mapOn = false;
@@ -514,7 +556,7 @@ static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
     order[j] = k;
   }
   bool used[DEC_KINDS] = {};
-  for (int i = 0; i < t.spotCount && decorCount < DECOR_PER_ROOM; i++) {
+  for (int i = 0; i < t.spotCount && decorCount < ri.decorN; i++) {
     const Spot &s = t.spots[order[i]];
     int kind = rnd(DEC_KINDS);
     for (int k = 0; k < DEC_KINDS && used[kind]; k++) kind = (kind + 1) % DEC_KINDS;
@@ -676,7 +718,7 @@ static void drawCatwalkDoor(bool right, int fy, int room) {
   fillRect(lx, top - 20, lx + 30, top - 6, rgb565(20, 60, 30));
   fillRect(lx + 3, top - 17, lx + 27, top - 9, rgb565(60, 220, 110));
   // the room's number beside the door
-  char b[16];
+  char b[24];
   snprintf(b, sizeof(b), "ROOM %d", room + 1);
   float w = vectorTextWidth(b, 2.2f);
   drawVectorText(b, right ? x0 - 22 - w / 2 : x1 + 22 + w / 2, top + 14, 2.2f, rgb565(170, 230, 180), false);
@@ -1229,10 +1271,21 @@ static void updateAgent(float dt) {
       if (i >= 0 && searchT < SEARCH_SECONDS) {
         searchT += dt;
         if (searchT >= SEARCH_SECONDS) {
-          rooms[curRoom].searched[i] = true;
-          nothingShowT = NOTHING_SHOW;   // (nothing hidden anywhere yet)
-          nothingX = decor[i].x;
-          nothingY = decor[i].y - decorH[decor[i].kind] - 22;
+          RoomInfo &ri = rooms[curRoom];
+          float px = decor[i].x, py = decor[i].y - decorH[decor[i].kind] - 22;
+          bool first = !ri.searched[i];
+          ri.searched[i] = true;
+          if (first) addScore(SEARCH_SCORE, px, py - 26);
+          if (first && ri.holds[i]) {        // something in it
+            itemsFound++;
+            addScore(FOUND_SCORE, px, py - 56);
+            itemShowT = ITEM_SHOW;
+            nothingShowT = 0;
+          } else {
+            nothingShowT = NOTHING_SHOW;
+            nothingX = px;
+            nothingY = py;
+          }
         }
       }
       if (!(held & BTN_USE)) {
@@ -1284,7 +1337,7 @@ static void drawSearchMarks() {
     const Decor &d = decor[i];
     int top = d.y - decorH[d.kind];
     if (ri.searched[i]) {
-      uint16_t c = rgb565(80, 230, 120);
+      uint16_t c = ri.holds[i] ? rgb565(255, 210, 70) : rgb565(80, 230, 120);   // (gold: something was in it)
       int tx = d.x - 6, ty = top - 12;
       drawLine(tx, ty, tx + 4, ty + 5, c, true);
       drawLine(tx + 4, ty + 5, tx + 13, ty - 6, c, true);
@@ -1300,6 +1353,39 @@ static void drawSearchMarks() {
     drawVectorText("NOTHING", nothingX, nothingY - (NOTHING_SHOW - nothingShowT) * 20, 2.5f, rgb565(170, 170, 180), false);
 }
 
+static void drawScorePops() {
+  for (int i = 0; i < MAX_POPS; i++) {
+    if (popT[i] <= 0) continue;
+    char b[16];
+    snprintf(b, sizeof(b), "+%ld", popV[i]);
+    float y = popY[i] - (1.2f - popT[i]) * 40;
+    if (y < HUD_H + 14) y = HUD_H + 14;
+    float f = popT[i] < 0.3f ? popT[i] / 0.3f : 1.0f;
+    drawVectorText(b, popX[i], y, 2.6f, dimmed(255, 230, 90, f), true);
+  }
+}
+
+// FOUND OBJECT, as NUCLEAR MISSION's panel: a box with the find in it
+static void drawItemPanel() {
+  int x0 = 430, y0 = 120, x1 = 850, y1 = 310;
+  fillRect(x0, y0, x1, y1, rgb565(10, 12, 20));
+  drawRectOutline(x0, y0, x1, y1, rgb565(255, 210, 70), 3);
+  drawVectorText("FOUND OBJECT", SCREEN_W / 2, y0 + 30, 3.5f, rgb565(255, 210, 70), true);
+  // the object: a sealed case, for now
+  int cx = SCREEN_W / 2, cy = y0 + 96;
+  fillRect(cx - 44, cy - 26, cx + 44, cy + 26, rgb565(90, 96, 108));
+  fillRect(cx - 44, cy - 26, cx + 44, cy - 22, rgb565(150, 156, 168));
+  drawRectOutline(cx - 44, cy - 26, cx + 44, cy + 26, rgb565(40, 44, 52), 2);
+  fillRect(cx - 14, cy - 36, cx + 14, cy - 27, rgb565(40, 44, 52));           // the handle
+  fillRect(cx - 9, cy - 32, cx + 9, cy - 27, rgb565(10, 12, 20));
+  fillRect(cx - 34, cy - 6, cx - 26, cy + 4, rgb565(200, 170, 80));           // the catches
+  fillRect(cx + 26, cy - 6, cx + 34, cy + 4, rgb565(200, 170, 80));
+  drawVectorText("?", cx, cy + 4, 3.4f, rgb565(255, 210, 70), true);
+  char b[32];
+  snprintf(b, sizeof(b), "+%d   %d OF %d FOUND", FOUND_SCORE, itemsFound, ITEMS_HIDDEN);
+  drawVectorText(b, SCREEN_W / 2, y1 - 28, 2.6f, rgb565(100, 240, 140), true);
+}
+
 static void drawHud() {
   gfxClipAll();
   fillRect(0, 0, SCREEN_W - 1, HUD_H - 1, rgb565(10, 12, 16));
@@ -1309,10 +1395,13 @@ static void drawHud() {
   else snprintf(b, sizeof(b), "ROOM %d", curRoom + 1);
   float w = vectorTextWidth(b, 2.6f);
   drawVectorText(b, 24 + w / 2, HUD_H / 2, 2.6f, rgb565(255, 190, 70), true);
+  snprintf(b, sizeof(b), "SCORE %06ld", score);
+  drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 2.8f, rgb565(240, 240, 245), true);
   int seen = 0;
   for (int i = 0; i < ROOM_COUNT; i++) seen += rooms[i].visited;
-  snprintf(b, sizeof(b), "ROOMS %d/%d", seen, ROOM_COUNT);
-  drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 2.6f, rgb565(200, 206, 220), true);
+  snprintf(b, sizeof(b), "ROOMS %d/%d  FOUND %d/%d", seen, ROOM_COUNT, itemsFound, ITEMS_HIDDEN);
+  w = vectorTextWidth(b, 2.0f);
+  drawVectorText(b, SCREEN_W / 2 + 160 + w / 2, HUD_H / 2, 2.0f, rgb565(170, 178, 196), false);
   snprintf(b, sizeof(b), "V%s  FPS %d", GAME_VERSION, (int)lroundf(fpsShown));
   w = vectorTextWidth(b, 2.0f);
   drawVectorText(b, SCREEN_W - 24 - w / 2, HUD_H / 2, 2.0f, rgb565(110, 120, 140), false);
@@ -1366,7 +1455,13 @@ static void drawMap() {
     fillRect(x0 + RW - 9, yr - 2, x0 + RW + SW / 2 - 6, yr + 3, door);
     char b[8];
     snprintf(b, sizeof(b), "%d", i + 1);
-    drawVectorText(b, x0 + RW / 2, y0 + RH / 2, 2.4f, ri.visited ? rgb565(230, 236, 245) : rgb565(110, 118, 136), true);
+    drawVectorText(b, x0 + RW / 2, y0 + RH / 2 - (ri.visited ? 6 : 0), 2.4f, ri.visited ? rgb565(230, 236, 245) : rgb565(110, 118, 136), true);
+    if (ri.visited)   // its equipment: grey not searched, green nothing, gold something found
+      for (int k = 0; k < ri.decorN; k++) {
+        int dx = x0 + RW / 2 - (ri.decorN - 1) * 7 + k * 14;
+        uint16_t c = !ri.searched[k] ? rgb565(80, 88, 104) : (ri.holds[k] ? rgb565(255, 210, 70) : rgb565(80, 230, 120));
+        fillRect(dx - 4, y0 + RH - 15, dx + 4, y0 + RH - 8, c);
+      }
     if (mode == MODE_ROOM && i == curRoom && blink)
       drawRectOutline(x0 - 4, y0 - 4, x0 + RW + 3, y0 + RH + 3, rgb565(255, 190, 70), 3);
   }
@@ -1437,6 +1532,10 @@ static void newGame() {
   placeAgent((SHAFT_X0 + SHAFT_X1) / 2, CAR_FLOOR_Y, 1);
   mapOn = false;
   onTitle = false;
+  score = 0;
+  itemsFound = 0;
+  itemShowT = nothingShowT = 0;
+  for (int i = 0; i < MAX_POPS; i++) popT[i] = 0;
   showMsg("OPTIONS: THE MAP", 5.0f);
 }
 
@@ -1477,6 +1576,9 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   } else {
     if (msgT > 0) msgT -= dt;
     if (nothingShowT > 0) nothingShowT -= dt;
+    if (itemShowT > 0) itemShowT -= dt;
+    for (int i = 0; i < MAX_POPS; i++)
+      if (popT[i] > 0) popT[i] -= dt;
     updateLifts(dt);
     updateAgent(dt);
   }
@@ -1496,8 +1598,10 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   }
   gfxClip(HUD_H, PLAY_Y1);
   drawAgentU(shownPose, agX, agY, agFacing, myScale);
+  if (mode == MODE_ROOM) drawScorePops();
+  if (itemShowT > 0 && mode == MODE_ROOM && !mapOn) drawItemPanel();
   if (mapOn) drawMap();
-  else drawMessage();
+  else if (itemShowT <= 0) drawMessage();
   drawHud();
 }
 

@@ -40,8 +40,22 @@ the car of shaft A - the top left corner - at its first floor with a room.
 
 Each room is one of the four layouts in `src/rooms_wide.h` (FOUR DECKS,
 CENTRE LIFT, TWIN TOWERS, THE CHASM), picked at random, each with four levels
-(the floor and three above it) and three pieces of equipment to search,
-picked at random from five kinds. `sim/check_rooms.cpp` checks that every
+(the floor and three above it).
+
+## Equipment and the score
+
+Every room has 4 or 5 pieces of equipment to search (cabinet, safe, plant,
+radar, control panel): 128 in the whole complex. 36 of them, anywhere, have
+something in them; the other 92 have nothing.
+
+- Searching a piece (hold Square) scores **50**, the first time.
+- Finding something in it shows **FOUND OBJECT** and scores **200** more.
+- Searched pieces get a tick: green for nothing, gold for a find. On the map
+  each room you've been in shows its pieces the same way (grey: not searched).
+
+`sim/check_layout.cpp` lays out 2000 complexes and checks the counts (128
+pieces, 4 or 5 a room, 36 finds, 2-6 rooms a column) and that no two pieces
+overlap. `sim/check_rooms.cpp` checks that every
 layout can be crossed with every door combination and every spot reached:
 run it after adding or changing a layout.
 
