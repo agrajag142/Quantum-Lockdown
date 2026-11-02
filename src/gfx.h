@@ -86,6 +86,7 @@ void drawRectOutline(int x0, int y0, int x1, int y1, uint16_t c, int w);
 void hazardBand(int x0, int x1, int y0, int y1);
 void blendRect(int x0, int y0, int x1, int y1, int r, int g, int b, float a);
 void drawVectorText(const char *text, float cx, float cy, float size, uint16_t c, bool thick);
+void drawVectorTextW(const char *text, float cx, float cy, float size, uint16_t c, float width);   // width in units
 float vectorTextWidth(const char *text, float size);
 
 // ---- the agent (and the people) through agent_rig.h, at full resolution

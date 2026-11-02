@@ -1,39 +1,38 @@
-# A short tour with the layout from seed 1: the lift, the map, the car past
-# walled-off floors, into room 2, over the pit, up lift pad B to the top
-# door, out into lift G.
+# A short tour (seed 1): the title, the start in lift A, the map, the four
+# room layouts, a lift pad called across THE CHASM.
 seed 1
 hold NONE 30
-shot 01_lift_start
-tap MAP
-hold NONE 20
-shot 02_map
-tap MAP
-tap DOWN
-hold NONE 40
-shot 03_lift_moving
-waitidle
-tap UP
-waitidle
-hold RIGHT 175
-walkto 300
-shot 04_room2
-walkto 540
+shot 01_title
 tap JUMP
 hold NONE 30
-shot 05_somersault
-waitidle
-walkto 1000
-tap UP
-waitidle
-tap UP
-hold NONE 30
-shot 06_riding_up
-waitidle
-tap UP
-waitidle
-hold RIGHT 100
-hold NONE 30
-shot 07_lift_G
+shot 02_lift_A_start
 tap MAP
 hold NONE 30
-shot 08_map_after
+shot 03_map
+tap MAP
+room 0 BT
+hold NONE 20
+shot 04_four_decks
+room 1 TB
+hold NONE 20
+shot 05_centre_lift
+room 2 BT
+hold NONE 20
+shot 06_twin_towers
+room 3 TT
+walkto 380
+tap DOWN
+waitidle
+tap DOWN
+waitidle
+walkto 845
+tap UP
+hold NONE 30
+shot 07_chasm_calling_pad_B
+hold NONE 60
+walkto 900
+tap UP
+waitidle
+tap UP
+waitidle
+shot 08_chasm_up_pad_B

@@ -122,15 +122,15 @@ static void flushRange(void *address, size_t length) {
 
 static void videoInit() {
   video = sceVideoOutOpen(0xff, 0, 0, nullptr);
-  if (video < 0) halt("Mission 2: sceVideoOutOpen failed");
+  if (video < 0) halt("Quantum Lockdown: sceVideoOutOpen failed");
   size_t pool = sceKernelGetDirectMemorySize();
-  if (pool < kMemBytes) halt("Mission 2: not enough direct memory");
+  if (pool < kMemBytes) halt("Quantum Lockdown: not enough direct memory");
   int64_t phys = 0;
   if (sceKernelAllocateDirectMemory(0, (int64_t)pool, kMemBytes, kMemAlign, 3 /* wc garlic */, &phys) < 0)
-    halt("Mission 2: direct-memory allocation failed");
+    halt("Quantum Lockdown: direct-memory allocation failed");
   void *mapped = nullptr;
   if (sceKernelMapDirectMemory(&mapped, kMemBytes, 0x33, 0, phys, kMemAlign) < 0)
-    halt("Mission 2: direct-memory mapping failed");
+    halt("Quantum Lockdown: direct-memory mapping failed");
   scanout[0] = mapped;
   scanout[1] = (uint8_t *)mapped + kFrameBytes;
   struct { void *data, *metadata, *r0, *r1; } bufs[2] = { { scanout[0], nullptr, nullptr, nullptr },
@@ -139,7 +139,7 @@ static void videoInit() {
   sceVideoOutSetFlipRate(video, 0);
   sceVideoOutSetBufferAttribute2(attribute, UINT64_C(0x8000000022000000) /* rgba8 srgb */, 0, kW, kH, 0, 0, 0);
   if (sceVideoOutRegisterBuffers2(video, 0, 0, bufs, 2, attribute, 0, nullptr) < 0)
-    halt("Mission 2: buffer registration failed");
+    halt("Quantum Lockdown: buffer registration failed");
   makeBlockOrder();
 }
 

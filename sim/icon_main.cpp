@@ -13,15 +13,15 @@ int main(int argc, char **argv) {
     float k = 1.0f - fabsf(y - 150) / 200.0f;
     fillRect(0, y, 341, y, rgb565(10 + (int)(22 * k), 13 + (int)(26 * k), 20 + (int)(34 * k)));
   }
-  fillRect(0, 238, 341, 251, rgb565(80, 86, 98));        // a catwalk
-  fillRect(0, 238, 341, 240, rgb565(150, 156, 168));
-  hazardBand(0, 341, 252, 259);
+  fillRect(0, 226, 341, 239, rgb565(80, 86, 98));        // a catwalk
+  fillRect(0, 226, 341, 228, rgb565(150, 156, 168));
+  hazardBand(0, 341, 240, 247);
   AgentPose p;
   agentSample(ANIM_JUMP, 0.42f, p);                    // tucked, turning over
   p.lift = 6;
-  drawAgentU(p, 150, 226, 1, 2.0f);
-  drawVectorText("MISSION", S / 2, 292, 6.2f, rgb565(255, 190, 70), true);
-  drawVectorText("2", 292, 66, 9.0f, rgb565(255, 190, 70), true);
+  drawAgentU(p, 170, 214, 1, 2.0f);
+  drawVectorTextW("QUANTUM", S / 2, 276, 6.0f, rgb565(255, 190, 70), 2.2f);
+  drawVectorTextW("LOCKDOWN", S / 2, 316, 5.6f, rgb565(255, 190, 70), 2.2f);
   FILE *f = fopen(argc > 1 ? argv[1] : "icon.ppm", "wb");
   if (!f) return 1;
   fprintf(f, "P6\n512 512\n255\n");

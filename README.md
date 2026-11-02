@@ -1,8 +1,9 @@
-# Mission 2 (working title) for the PS5
+# QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 002: the lift shafts, one room design with
-four levels, and the layout of the complex. No sound yet.
+NUCLEAR MISSION's parts. Version 003: a title screen, the lift shafts, four
+room designs (four levels each), and a new layout of the complex every game.
+No sound yet.
 
 ## What's different from NUCLEAR MISSION's PS5 port
 
@@ -34,24 +35,29 @@ The lift car only stops at floors with a door. Everywhere else the shaft is
 wall, and the car runs past it (picking up speed on a long run). A catwalk
 leads off the car only on the side the door is.
 
-You start in the car of shaft F, at its top stop.
+Each new game (X on the title screen) lays out a new complex. You start in
+the car of shaft A - the top left corner - at its first floor with a room.
 
-Each room is one of the layouts in `src/rooms_wide.h` (one so far: FOUR
-DECKS, with four levels - the floor and three above it) with three pieces of
-equipment to search, picked at random from five kinds.
+Each room is one of the four layouts in `src/rooms_wide.h` (FOUR DECKS,
+CENTRE LIFT, TWIN TOWERS, THE CHASM), picked at random, each with four levels
+(the floor and three above it) and three pieces of equipment to search,
+picked at random from five kinds. `sim/check_rooms.cpp` checks that every
+layout can be crossed with every door combination and every spot reached:
+run it after adding or changing a layout.
 
 ## Controls
 
 | DualSense | |
 | --- | --- |
-| D-pad or left stick | run left / right; up / down rides the lift car or a lift pad |
+| X (Cross), on the title | start a new game |
+| D-pad or left stick | run left / right; up / down rides the lift car or a lift pad, or calls a pad to you |
 | Cross | somersault |
 | Square or Circle | hold to search equipment |
 | Options or touchpad | the map (shows every room and where its doors lead) |
 | Triangle, on the map | lay out a new complex |
 
-A lift pad only moves while he rides it, so the way across a room depends on
-where the pads were left: they start at the stop nearest the door he came in by.
+Lift pads start at the stop nearest the door he came in by. Standing beside a
+pad's shaft at one of its stops, UP or DOWN calls the pad to him.
 
 ## Build and install
 
@@ -76,6 +82,7 @@ it sits beside Hello PS5 and NUCLEAR MISSION.
 
 ```bash
 mission2/build.sh sim                     # plays sim/tour.txt, screenshots in build/mission2-sim/shots
+g++ -O2 -Imission2/src mission2/sim/check_rooms.cpp -o check && ./check   # checks the room layouts
 mission2/build.sh sim my_script.txt       # your own script (see sim/sim_main.cpp for the commands)
 ```
 
@@ -87,11 +94,11 @@ checked on the PC before it goes on the console.
 | | |
 | --- | --- |
 | `src/game.cpp` | the game: the complex, the shafts, the rooms, the agent, searching, the map (settings at the top: columns, rows, rooms, rooms per column) |
-| `src/rooms_wide.h` | the room layouts (1280 units wide) |
+| `src/rooms_wide.h` | the room layouts (1280 units wide, four levels) |
 | `src/gfx.cpp`, `gfx.h` | drawing: the 1920x1080 picture, unit-space calls as in the sketch, vector letters |
 | `src/ps5_platform.cpp` | the PS5 side: the TV picture, the DualSense, the loop |
 | `src/agent_rig.h`, `people.h` | NUCLEAR MISSION's agent and people, unchanged |
-| `sim/` | the PC test build and the icon maker (not compiled into the app) |
+| `sim/` | the PC test build, the room layout checker and the icon maker (not compiled into the app) |
 | `sce_sys/` | `param.json` (PPSA99903) and the home-screen icon |
 | `assets/` | files to copy into the app (none yet) |
 | `docs/PS5_NOTES.md` | what we learned getting NUCLEAR MISSION running on a real PS5 |

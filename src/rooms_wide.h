@@ -14,7 +14,10 @@
 //     a drop of more than 200 units knocks him out)
 // The side without a door at a level is a wall there.
 //
-// Lift pads start at the stop nearest the door he came in by.
+// Lift pads start at the stop nearest the door he came in by, move while he
+// rides them, and come to him when he presses UP or DOWN beside the shaft at
+// one of its stops. sim/check_rooms.cpp checks every layout: run it after
+// adding or changing one.
 //
 // spots: places a piece of equipment can stand (x its middle, y the top of the
 // platform under it). Each room uses a few of them, picked at random.
@@ -82,6 +85,63 @@ static const WideRoom wideRooms[] = {
     8, { { 120, 360 }, { 400, 360 }, { 640, 520 }, { 880, 360 },
          { 440, 200 }, { 840, 200 }, { 160, 680 }, { 820, 680 } },
     640, 280 },
+
+  // 1: one lift in the middle, ledges dropping out to either side, two pits
+  //
+  //   200  =======    =====[C]=====    =======
+  //   360       ==========[C]==========
+  //   520  =====          [C]          =====
+  //   680  ========  ======[C]======  ========
+  { "CENTRE LIFT",
+    11, { { 0, 380, 680 }, { 500, 780, 680 }, { 900, 1280, 680 },  // floor: two pits
+          { 100, 300, 520 }, { 980, 1180, 520 },                   // level 1: a ledge each side
+          { 260, 600, 360 }, { 680, 1020, 360 },                   // level 2, off the lift
+          { 0, 300, 200 }, { 420, 600, 200 },                      // the top: two gaps to somersault
+          { 680, 860, 200 }, { 980, 1280, 200 } },
+    1, { { 600, 680, { 200, 360, 520, 680 }, 4 } },
+    2, { { 380, 500 }, { 780, 900 } },
+    8, { { 200, 520 }, { 1080, 520 }, { 440, 360 }, { 840, 360 },
+         { 180, 200 }, { 780, 200 }, { 240, 680 }, { 1040, 680 } },
+    360, 275 },
+
+  // 2: a lift at each side, the middle reached across gaps and by dropping
+  //
+  //   200  ====[A]=======    =======[B]====
+  //   360  ====[A]=========  ========[B]===
+  //   520      [A]       ======      [B]
+  //   680  ====[A]===  ======== ====[B]====
+  { "TWIN TOWERS",
+    12, { { 0, 360, 680 }, { 460, 820, 680 }, { 920, 1280, 680 },  // floor: two pits
+          { 560, 720, 520 },                                       // level 1: the middle, dropped down to
+          { 0, 160, 360 }, { 240, 600, 360 },                      // level 2
+          { 680, 1040, 360 }, { 1120, 1280, 360 },
+          { 0, 160, 200 }, { 240, 560, 200 },                      // the top: a gap in the middle
+          { 720, 1040, 200 }, { 1120, 1280, 200 } },
+    2, { { 160, 240, { 200, 360, 520, 680 }, 4 },
+         { 1040, 1120, { 200, 360, 520, 680 }, 4 } },
+    2, { { 360, 460 }, { 820, 920 } },
+    8, { { 80, 360 }, { 400, 360 }, { 880, 360 }, { 640, 520 },
+         { 400, 200 }, { 880, 200 }, { 280, 680 }, { 1000, 680 } },
+    640, 275 },
+
+  // 3: a chasm across the middle of the floor: over it by the bridge, or the
+  //    island at the top
+  //
+  //   200  ======[A]   ======   [B]======
+  //   360  ======[A]            [B]======
+  //   520        [A]============[B]
+  //   680  ======[A]   chasm    [B]======
+  { "THE CHASM",
+    8, { { 0, 420, 680 }, { 860, 1280, 680 },                      // floor, the chasm between
+         { 420, 860, 520 },                                        // level 1: the bridge
+         { 0, 340, 360 }, { 940, 1280, 360 },                      // level 2
+         { 0, 340, 200 }, { 520, 760, 200 }, { 940, 1280, 200 } }, // the top, an island in the middle
+    2, { { 340, 420, { 200, 360, 520, 680 }, 4 },
+         { 860, 940, { 200, 360, 520, 680 }, 4 } },
+    1, { { 420, 860 } },
+    8, { { 170, 360 }, { 1110, 360 }, { 640, 520 }, { 640, 200 },
+         { 170, 200 }, { 1110, 200 }, { 200, 680 }, { 1080, 680 } },
+    640, 300 },
 };
 #define WIDE_ROOM_COUNT (int)(sizeof(wideRooms) / sizeof(wideRooms[0]))
 

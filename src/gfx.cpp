@@ -269,10 +269,15 @@ float vectorTextWidth(const char *text, float size) {
 
 // Centred on (cx, cy), cy the middle of the capitals. size: units per glyph step.
 void drawVectorText(const char *text, float cx, float cy, float size, uint16_t c, bool thick) {
-  int n = (int)strlen(text);
-  int units = n > 0 ? n * 6 - 2 : 0;
   float w = thick ? 2.0f : 1.0f;
   if (size < 2.0f) w = thick ? 1.4f : 0.9f;
+  drawVectorTextW(text, cx, cy, size, c, w);
+}
+
+// The same with a chosen stroke width (units); wide strokes get round joints
+void drawVectorTextW(const char *text, float cx, float cy, float size, uint16_t c, float w) {
+  int n = (int)strlen(text);
+  int units = n > 0 ? n * 6 - 2 : 0;
   for (int i = 0; i < n; i++) {
     const char *g = vectorGlyph(text[i]);
     float left = cx + (i * 6 - units * 0.5f) * size;
@@ -289,6 +294,7 @@ void drawVectorText(const char *text, float cx, float cy, float size, uint16_t c
       k += 2;
       if (penDown) drawLineF(px, py, sx, sy, c, w);
       else if (g[k] == 0 || g[k] == '|') drawLineF(sx, sy, sx, sy, c, w);   // (a dot)
+      if (w >= 3.0f) pxCircle(sx * UNIT_K, sy * UNIT_K, w * 0.5f * UNIT_K, c32(c));
       px = sx;
       py = sy;
       penDown = true;

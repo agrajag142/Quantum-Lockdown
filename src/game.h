@@ -20,5 +20,6 @@ void gameInit(uint32_t seed);
 void gameFrame(float dt, uint32_t held, uint32_t pressed);
 const char *gameDebug();   // (the PC test build: where he is)
 void gameDebugPos(float *x, float *y, int *state);
+void gameDebugRoom(int tpl, bool topL, bool topR);   // (the PC test build: straight into a layout)
 
 #endif // GAME_H

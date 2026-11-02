@@ -1,6 +1,6 @@
 // game.cpp - the full-screen game: the lift shafts and the rooms
 //
-// The complex, Impossible Mission style: 30 rooms in COLS (9) columns, each
+// QUANTUM LOCKDOWN. The complex, Impossible Mission style: 30 rooms in COLS (9) columns, each
 // column holding MIN_PER_COL..MAX_PER_COL (2..6) of them on any of ROWS (6)
 // rows, laid out afresh each game. A lift shaft runs down each side of every
 // column (SHAFTS: 10, A to J). Every room has a door on its left and one on its
@@ -30,7 +30,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "002"
+#define GAME_VERSION      "003"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -38,7 +38,7 @@
 #define MAX_PER_COL       6        // ...and at most this many
 #define SHAFTS            (COLS + 1)
 #define FLOORS            (ROWS * 2)
-#define START_SHAFT       (SHAFTS / 2)   // he starts in this shaft's car (one of the middle two), at its top stop
+#define START_SHAFT       0        // he starts in this shaft's car (A: the top left corner), at its top stop
 
 #define AGENT_SCALE       1.3f
 #define RUN_SPEED         175.0f
@@ -141,8 +141,9 @@ static void layOut(uint32_t seed) {
   // which rows they are on
   memset(roomAt, -1, sizeof(roomAt));
   bool used[ROWS][COLS] = {};
+  used[0][0] = true;                   // (always a room in the top left corner: he starts beside it, in lift A)
   for (int c = 0; c < COLS; c++)
-    for (int k = 0; k < count[c];) {
+    for (int k = (c == 0 ? 1 : 0); k < count[c];) {
       int r = rnd(ROWS);
       if (used[r][c]) continue;
       used[r][c] = true;
@@ -997,6 +998,22 @@ static void respawn() {
   placeAgent(x, entryY, entryFacing);
 }
 
+// UP / DOWN beside a lift shaft, at one of its stops, with the pad somewhere
+// else: the pad comes to him
+static bool summonLift() {
+  for (int i = 0; i < liftCount; i++) {
+    Lift &l = lifts[i];
+    if (agX < l.x0 - 40 || agX > l.x1 + 40) continue;   // (an empty pad on its way can be sent somewhere else)
+    for (int k = 0; k < l.stopCount; k++) {
+      if (fabsf(l.stops[k] - agY) > 0.5f || k == l.at) continue;
+      l.at = (int8_t)k;
+      l.moving = true;
+      return true;
+    }
+  }
+  return false;
+}
+
 static bool callLift(int i, int dir) {
   Lift &l = lifts[i];
   if (l.moving) return false;
@@ -1024,7 +1041,8 @@ static void updateLifts(float dt) {
     Lift &l = lifts[i];
     if (!l.moving) continue;
     float target = l.stops[l.at];
-    float step = LIFT_SPEED * dt;
+    bool carrying = (agLift == i && agState == ST_LIFT);
+    float step = LIFT_SPEED * (carrying ? 1.0f : 2.0f) * dt;   // (an empty pad comes twice as fast)
     if (fabsf(target - l.y) <= step) {
       l.y = target;
       l.moving = false;
@@ -1083,6 +1101,8 @@ static void updateAgent(float dt) {
         setState(ST_LIFT, 0.1f);
       } else if (upDown != 0 && inCar(agX) && callCar(upDown)) {
         setState(ST_LIFT, 0.1f);
+      } else if (upDown != 0 && agLift < 0 && mode == MODE_ROOM && summonLift()) {
+        // (the pad is on its way: he waits)
       } else if (pressed & BTN_JUMP) {
         if (want) agFacing = want;
         startJump();
@@ -1368,19 +1388,63 @@ static void drawMap() {
 }
 
 // ============================================================ the game
-void gameInit(uint32_t seed) {
-  gfxInit();
-  layOut(seed);
-  paintShaftPicture();
+// ============================================================ the title
+static bool onTitle = true;
+
+static void drawTitle() {
+  gfxTarget = g_frame;
+  gfxClipAll();
+  // the dark of the shaft, lighter in the middle, girders standing in it
+  for (int y = 0; y < SCREEN_H; y += 4) {
+    float k = 1.0f - fabsf(y - 300) / 420.0f;
+    if (k < 0) k = 0;
+    fillRect(0, y, SCREEN_W - 1, y + 3, rgb565(8 + (int)(16 * k), 10 + (int)(20 * k), 16 + (int)(28 * k)));
+  }
+  float off = fmodf(clockT * 40.0f, 60.0f);    // rungs drifting down: a lift on its way
+  static const int girders[4] = { 150, 380, 900, 1130 };
+  for (int x : girders) {
+    fillRect(x, 0, x + 15, SCREEN_H - 1, rgb565(26, 32, 44));
+    fillRect(x, 0, x + 2, SCREEN_H - 1, rgb565(44, 52, 66));
+  }
+  for (int k = -1; k < 13; k++) {
+    int y = (int)(k * 60 + off);
+    drawLine(560, y, 720, y, rgb565(24, 28, 38), false);
+  }
+  // the name, in big vector letters with a glow behind
+  const char *w1 = "QUANTUM", *w2 = "LOCKDOWN";
+  float pulse = 0.5f + 0.5f * sinf(clockT * 2.0f);
+  uint16_t glow = rgb565(60 + (int)(40 * pulse), 34, 12), main = rgb565(255, 190, 70);
+  drawVectorTextW(w1, SCREEN_W / 2, 150, 14.0f, glow, 11.0f);
+  drawVectorTextW(w2, SCREEN_W / 2, 280, 14.0f, glow, 11.0f);
+  drawVectorTextW(w1, SCREEN_W / 2, 150, 14.0f, main, 4.0f);
+  drawVectorTextW(w2, SCREEN_W / 2, 280, 14.0f, main, 4.0f);
+  fillRect(260, 362, 1020, 365, rgb565(90, 70, 40));
+  // him, standing by
+  AgentPose p;
+  agentSample(ANIM_IDLE, clockT, p);
+  drawAgentU(p, SCREEN_W / 2, 650, 1, 1.3f);
+  fillRect(SCREEN_W / 2 - 90, 650, SCREEN_W / 2 + 90, 656, rgb565(80, 86, 98));
+  if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 425, 4.0f, rgb565(240, 240, 245), true);
+  char b[24];
+  snprintf(b, sizeof(b), "VERSION %s", GAME_VERSION);
+  drawVectorText(b, SCREEN_W / 2, 698, 1.8f, rgb565(100, 110, 130), false);
+}
+
+// A new game: a new complex, him in the car of shaft A at its top stop
+static void newGame() {
+  layOut(layoutSeed * 7919u + 13u + (uint32_t)(clockT * 1000.0f));
   enterShaft(START_SHAFT, topStop(START_SHAFT), true);
   placeAgent((SHAFT_X0 + SHAFT_X1) / 2, CAR_FLOOR_Y, 1);
+  mapOn = false;
+  onTitle = false;
   showMsg("OPTIONS: THE MAP", 5.0f);
 }
 
-static void newComplex() {
-  layOut(layoutSeed * 7919u + 13u);
-  enterShaft(START_SHAFT, topStop(START_SHAFT), true);
-  placeAgent((SHAFT_X0 + SHAFT_X1) / 2, CAR_FLOOR_Y, 1);
+void gameInit(uint32_t seed) {
+  gfxInit();
+  layoutSeed = seed;
+  paintShaftPicture();
+  onTitle = true;
 }
 
 void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
@@ -1396,9 +1460,19 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     fpsFrames = 0;
   }
 
+  if (onTitle) {
+    if (pressed & BTN_JUMP) {
+      newGame();
+      pressed = 0;                     // (that X starts the game; it isn't a somersault)
+    } else {
+      drawTitle();
+      return;
+    }
+  }
+
   if (pressed & BTN_MAP) mapOn = !mapOn;
   if (mapOn) {
-    if (pressed & BTN_NEW) newComplex();
+    if (pressed & BTN_NEW) newGame();
     pressed = 0;
   } else {
     if (msgT > 0) msgT -= dt;
@@ -1442,4 +1516,14 @@ void gameDebugPos(float *x, float *y, int *state) {
   *x = agX;
   *y = agY;
   *state = (int)agState;
+}
+
+// For the PC test build: straight into room 1, made with layout tpl and the doors given
+void gameDebugRoom(int tpl, bool topL, bool topR) {
+  if (onTitle) layOut(layoutSeed);
+  onTitle = false;
+  rooms[0].tpl = (uint8_t)(tpl % WIDE_ROOM_COUNT);
+  rooms[0].topL = topL;
+  rooms[0].topR = topR;
+  enterRoom(0, true);
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds Mission 2 (the full-screen game) as a PS5 app folder and ZIP, the same
+# Builds QUANTUM LOCKDOWN (the full-screen game) as a PS5 app folder and ZIP, the same
 # way app/build.sh builds Hello PS5 and silo/build.sh NUCLEAR MISSION (same
 # kit, same SDK: run tools/setup.sh once first).
 #
