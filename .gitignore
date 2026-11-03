@@ -3,3 +3,4 @@ build/
 *.ppm
 *.mod
 *.wav
+ql_data/

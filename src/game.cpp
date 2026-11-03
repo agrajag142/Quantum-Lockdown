@@ -25,6 +25,7 @@
 #include "agent_rig.h"
 #include "rooms_wide.h"
 #include "scream_sound.h"
+#include <sys/stat.h>
 
 #include "micromod.h"
 
@@ -34,7 +35,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "014"
+#define GAME_VERSION      "015"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -67,6 +68,9 @@
 #define EQUIPMENT_TOTAL   128      // ...128 in the whole complex (so 8 rooms have 5)
 #define ITEMS_HIDDEN      36       // pieces of equipment with a QUANTUM DRIVE in them (the rest: nothing)
 #define GENERATORS        3        // power generators (each in a different room): all on to power the main computer
+#define GENERATOR_BONUS   (5 * 60) // seconds added to the countdown when a generator is turned on
+#define HEALTH_DRAIN_SECONDS 60.0f // every minute of play costs 1 health
+#define HI_COUNT          5        // the high score table
 #define CONTROL_COL       4        // the QUANTUM CONTROL room is in this column (the middle one), on a random row
 #define CONTROL_ROOM      ROOM_COUNT        // (its index in rooms[], after the 30)
 #define SUB_ROOM          (ROOM_COUNT + 1)  // the sub basement's room (under a lift shaft, once unlocked)
@@ -106,6 +110,8 @@
 #define BULLET_SPEED      650.0f
 #define BULLET_HURT       5        // health a bullet costs
 #define DRONE_GRACE       1.5f     // seconds it waits after he comes in (or back in)
+#define DRONE_SCAN_DEG_S  42.0f    // before it hunts: its red scanning beam sweeps the room, this many degrees a second...
+#define DRONE_SCAN_HALF   3.0f     // ...half its width (it sees him through anything, moving or not)
 #define NVG_RANGE         400      // night vision: how far the goggles light up ahead...
 #define NVG_HALF_DEG      28.0f    // ...half the width of their view...
 #define NVG_AROUND        56       // ...and the circle round him
@@ -390,6 +396,9 @@ static bool camCaughtPending = false;  // seen in the air: hands up when he land
 // The drone
 static float drX, drY, drVX, drVY, drGrace, drFireT, drFlashT;
 static uint8_t drLight = 0;            // 0 green (out of range), 1 yellow (getting close), 2 red (firing)
+static bool drScan = true;             // still scanning the room with its beam (it hunts once the beam finds him)
+static float drScanAng = 0, drScanDir = 1, drScanMin = 0, drScanMax = 0;   // the beam (degrees from straight down, + to the right)
+static void endGame(int why);
 #define MAX_BULLETS 8
 struct Bullet { float x, y, vx, vy, life; };
 static Bullet bullets[MAX_BULLETS];
@@ -431,9 +440,19 @@ static int health = HEALTH_MAX;
 static float hurtFlashT = 0;           // the health bar flashes after a hurt
 static float timeLeft = GAME_SECONDS;
 static bool koGetUp = false;           // knocked down by a drop: he gets up where he is (else back to the door)
-enum EndReason : uint8_t { END_NONE, END_TIME, END_HEALTH };
+enum EndReason : uint8_t { END_NONE, END_TIME, END_HEALTH, END_WIN };
 static EndReason gameOver = END_NONE;
 static float gameOverT = 0;
+static float playT = 0;                // time played (seconds of play: not the map, not the opening)
+static float drainT = 0;               // towards the next minute's health
+// The high scores
+struct HiEntry { char name[4]; int32_t score; int32_t secs; };
+static HiEntry hiTable[HI_COUNT] = { { "ACE", 25000, 850 }, { "VOS", 20000, 785 }, { "MAX", 15000, 700 },
+                                     { "ZED", 10000, 560 }, { "KAT", 5000, 405 } };
+static bool entryOn = false;           // entering initials for the table
+static int entryPos = 0, entrySlot = -1;
+static char entryName[4] = "AAA";
+static float entryT = 0;
 static char floatText[24] = "";        // a word floating up from the equipment (NOTHING, HEALTH RESTORED...)
 static uint16_t floatColour = 0;
 
@@ -1593,10 +1612,10 @@ static const uint8_t wallColours[COLS][3] = {
 // QUANTUM DRIVE BAY. What moves is drawn each frame (drawControlRoomAnim).
 #define CC_CEIL_Y     250          // its false ceiling
 #define CONSOLE_X     640          // the main computer
-#define BAY_X         1020         // the QUANTUM DRIVE BAY (200 wide)
+#define BAY_X         160          // the QUANTUM DRIVE BAY (200 wide), on the left
 #define BAY_TOP       (ROOM_FLOOR_Y - 262)
-static const int ccRackX[3] = { 60, 126, 1160 };
-static const int ccTapeX[2] = { 200, 268 };
+static const int ccRackX[3] = { 1000, 1066, 1160 };   // (the racks and tape units: on the right)
+static const int ccTapeX[2] = { 804, 872 };
 #define CC_FAN_X 862
 #define CC_FAN_Y 330
 
@@ -1630,7 +1649,7 @@ static void paintControlRoom() {
   // cable tray under the ceiling (NUCLEAR MISSION's)
   fillRect(0, CC_CEIL_Y + 12, SCREEN_W - 1, CC_CEIL_Y + 17, rgb565(60, 64, 72));
   for (int x = 30; x < SCREEN_W; x += 90) drawLine(x, CC_CEIL_Y + 18, x + 10, CC_CEIL_Y + 50, rgb565(20, 22, 26), false);
-  // computer racks: two on the left, one on the right
+  // computer racks: three on the right
   for (int k = 0; k < 3; k++) {
     int x0 = ccRackX[k], x1 = x0 + 58;
     fillRect(x0, fy - 232, x1, fy - 1, rgb565(38, 42, 50));
@@ -2091,6 +2110,13 @@ static void resetHazardsForEntry(bool fromLeft) {
   drFireT = 0.45f;
   drFlashT = 0;
   drLight = 0;
+  // its scan: from pointing down beside it, across the room to the far side (and back), until it finds him
+  drScan = true;
+  bool onRight = drX > SCREEN_W / 2;
+  drScanMin = onRight ? -88.0f : -60.0f;
+  drScanMax = onRight ? 60.0f : 88.0f;
+  drScanAng = onRight ? drScanMax : drScanMin;
+  drScanDir = onRight ? -1.0f : 1.0f;
   for (int i = 0; i < MAX_BULLETS; i++) bullets[i].life = 0;
 }
 
@@ -2100,6 +2126,7 @@ static void enterRoom(int idx, bool fromLeft) {
   buildRoom(idx, fromLeft);
   paintRoom();
   rooms[idx].visited = true;
+  if (idx == SUB_ROOM) endGame(END_WIN);   // (for now: reaching the sub basement wins the game)
   curHazard = rooms[idx].hazard;
   leverT = -1;
   powerPanelT = 0;
@@ -2290,9 +2317,9 @@ static void startJump() {
   setState(ST_JUMP, 0.08f);
 }
 
-static void endGame(EndReason why) {
+static void endGame(int why) {
   if (gameOver == END_NONE) {
-    gameOver = why;
+    gameOver = (EndReason)why;
     gameOverT = 0;
   }
 }
@@ -2745,6 +2772,7 @@ static void updateAgent(float dt) {
           if (decor[i].kind == DEC_GENERATOR) {   // the power generator: the lever goes up, its lamp turns green
             ri.genOn = true;
             leverT = 0;
+            timeLeft += GENERATOR_BONUS;      // (5 more minutes on the clock)
             addScore(SEARCH_SCORE, px, py - 26);
             sfxPlay(SFX_POWERUP);
             snprintf(floatText, sizeof(floatText), "POWER ON");
@@ -2752,11 +2780,11 @@ static void updateAgent(float dt) {
             nothingShowT = NOTHING_SHOW;
             nothingX = px;
             nothingY = py;
-            char b[48];
+            char b[64];
             int n = generatorsOn();
-            if (n >= GENERATORS) snprintf(b, sizeof(b), "ALL %d POWER GENERATORS ON", GENERATORS);
-            else snprintf(b, sizeof(b), "POWER GENERATOR ON - %d OF %d", n, GENERATORS);
-            showMsg(b, 3.0f);
+            if (n >= GENERATORS) snprintf(b, sizeof(b), "ALL %d POWER GENERATORS ON   +%d MINUTES", GENERATORS, GENERATOR_BONUS / 60);
+            else snprintf(b, sizeof(b), "POWER GENERATOR ON - %d OF %d   +%d MINUTES", n, GENERATORS, GENERATOR_BONUS / 60);
+            showMsg(b, 3.5f);
             break;
           }
           if (decor[i].kind == DEC_FIRSTAID) {   // the first aid kit
@@ -2956,6 +2984,28 @@ static float hitFlashT = 0, hitX = 0, hitY = 0;
 static void updateDrone(float dt) {
   float fy = feetY();
   float ax = agX, ay = fy - 65 * myScale;           // his chest
+  if (drScan) {                        // the red beam sweeping the room: it sees him through anything, still or not
+    drScanAng += drScanDir * DRONE_SCAN_DEG_S * dt;
+    if (drScanAng > drScanMax) { drScanAng = drScanMax; drScanDir = -1; }
+    if (drScanAng < drScanMin) { drScanAng = drScanMin; drScanDir = 1; }
+    float h = 100.0f * myScale;
+    const float ys[3] = { fy - 8, fy - h * 0.5f, fy - h * 0.9f };
+    bool seen = false;
+    for (int k = 0; k < 3 && !seen && agState != ST_KO; k++) {
+      float dx = agX - drX, dy = ys[k] - drY;
+      if (dy <= 0) continue;
+      seen = fabsf(atan2f(dx, dy) * 57.29578f - drScanAng) <= DRONE_SCAN_HALF;
+    }
+    drLight = 0;
+    if (seen) {                        // found him: the beam goes off, and it comes after him
+      drScan = false;
+      drGrace = 0.6f;
+      sfxPlay(SFX_ALARM);
+      showMsg("THE DRONE HAS SEEN YOU", 2.2f);
+    }
+    if (hitFlashT > 0) hitFlashT -= dt;
+    return;
+  }
   // where it wants to be: a little above him and off to its side of him
   float side = drX > agX ? 1.0f : -1.0f;
   float tx = agX + side * 150, ty = clampv(fy - 230.0f, CEIL_Y + 50.0f, ROOM_FLOOR_Y - 80.0f);
@@ -3285,6 +3335,12 @@ static void drawCameras() {
 static void drawDrone() {
   const float S = 1.45f;                 // (its size: the shapes below are at 1)
   float x = drX, y = drY + sinf(clockT * 3.1f) * 3;
+  if (drScan) {                          // the scanning beam: narrow, red, right across the room
+    float a0 = (drScanAng - DRONE_SCAN_HALF) * 0.017453293f, a1 = (drScanAng + DRONE_SCAN_HALF) * 0.017453293f, am = drScanAng * 0.017453293f;
+    float xs[3] = { x, x + sinf(a0) * 1600, x + sinf(a1) * 1600 }, ys[3] = { y + 8, y + 8 + cosf(a0) * 1600, y + 8 + cosf(a1) * 1600 };
+    blendPolygonF(xs, ys, 3, 255, 30, 20, 0.28f);
+    drawLineF(x, y + 8, x + sinf(am) * 1600, y + 8 + cosf(am) * 1600, rgb565(255, 90, 70), 1.5f);
+  }
   uint16_t dark = rgb565(46, 50, 58), body = rgb565(76, 82, 94), hi = rgb565(140, 146, 158);
   for (int s = -1; s <= 1; s += 2) {   // arms and rotors
     float rx = x + s * 34 * S, ry = y - 12 * S;
@@ -3843,11 +3899,18 @@ static void drawGameOver() {
   if (k > 1) k = 1;
   blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 0.65f * k);
   if (gameOverT < 0.4f) return;
-  drawVectorTextW("GAME OVER", SCREEN_W / 2, 250, 10.0f, rgb565(120, 20, 14), 8.0f);
-  drawVectorTextW("GAME OVER", SCREEN_W / 2, 250, 10.0f, rgb565(255, 70, 50), 3.0f);
-  drawVectorText(gameOver == END_TIME ? "THE TIME RAN OUT" : "OUT OF HEALTH", SCREEN_W / 2, 350, 4.0f, rgb565(240, 240, 245), true);
-  char b[48];
-  snprintf(b, sizeof(b), "SCORE %ld", score);
+  if (gameOver == END_WIN) {
+    drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 250, 8.0f, rgb565(20, 90, 40), 8.0f);
+    drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 250, 8.0f, rgb565(100, 255, 140), 3.0f);
+    drawVectorText("YOU REACHED THE SUB BASEMENT", SCREEN_W / 2, 350, 4.0f, rgb565(240, 240, 245), true);
+  } else {
+    drawVectorTextW("GAME OVER", SCREEN_W / 2, 250, 10.0f, rgb565(120, 20, 14), 8.0f);
+    drawVectorTextW("GAME OVER", SCREEN_W / 2, 250, 10.0f, rgb565(255, 70, 50), 3.0f);
+    drawVectorText(gameOver == END_TIME ? "THE TIME RAN OUT" : "OUT OF HEALTH", SCREEN_W / 2, 350, 4.0f, rgb565(240, 240, 245), true);
+  }
+  char b[64];
+  int ps = (int)playT;
+  snprintf(b, sizeof(b), "SCORE %ld     TIME PLAYED %d:%02d", score, ps / 60, ps % 60);
   drawVectorText(b, SCREEN_W / 2, 420, 4.0f, rgb565(255, 190, 70), true);
   int seen = 0;
   for (int i = 0; i < ROOM_COUNT; i++) seen += rooms[i].visited;
@@ -3985,6 +4048,128 @@ static void drawMap() {
                  rgb565(200, 206, 220), true);
 }
 
+// ============================================================ the high scores (as NUCLEAR MISSION's)
+// Saved in the title's own storage on the PS5 (the rest of /data can't be written)
+#if defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
+#ifndef QL_DATA_DIR
+#define QL_DATA_DIR "ql_data"             // (the PC test build: a folder where it runs)
+#endif
+#else
+#ifndef QL_DATA_DIR
+#define QL_DATA_DIR "/download0/quantum-lockdown"
+#endif
+#endif
+#define HI_FILE QL_DATA_DIR "/hiscores.bin"
+
+static void loadHiScores() {
+  FILE *f = fopen(HI_FILE, "rb");
+  if (!f) return;
+  HiEntry t[HI_COUNT];
+  size_t got = fread(t, 1, sizeof(t), f);
+  fclose(f);
+  if (got != sizeof(t)) return;
+  for (int i = 0; i < HI_COUNT; i++)
+    if (t[i].score < 0 || t[i].secs < 0 || t[i].name[3] != 0) return;   // (not ours: keep the defaults)
+  memcpy(hiTable, t, sizeof(t));
+}
+
+static void saveHiScores() {
+  mkdir(QL_DATA_DIR, 0777);
+  FILE *f = fopen(HI_FILE, "wb");
+  if (!f) return;
+  fwrite(hiTable, 1, sizeof(hiTable), f);
+  fclose(f);
+}
+
+static void hiLine(char *b, int n, const HiEntry &e, int rank) {
+  snprintf(b, n, "%d.   %.3s   %07ld   %3d:%02d", rank, e.name, (long)(e.score % 10000000), (int)(e.secs / 60 % 1000), (int)(e.secs % 60));
+}
+
+static void goToTitle();
+
+// The game is over (or won): a place in the table? then the initials, else the title
+static void afterGame() {
+  entrySlot = -1;
+  for (int i = 0; i < HI_COUNT; i++)
+    if (score > hiTable[i].score) { entrySlot = i; break; }
+  if (entrySlot < 0 || score <= 0) {
+    goToTitle();
+    return;
+  }
+  entryOn = true;
+  entryPos = 0;
+  entryT = 0;
+  strcpy(entryName, "AAA");
+  sfxPlay(SFX_FANFARE);
+}
+
+static void updateEntry(float dt) {
+  entryT += dt;
+  char &c = entryName[entryPos];
+  if (pressed & BTN_UP) { c = (c >= 'Z') ? 'A' : c + 1; sfxPlay(SFX_KEY); }
+  if (pressed & BTN_DOWN) { c = (c <= 'A') ? 'Z' : c - 1; sfxPlay(SFX_KEY); }
+  if (pressed & BTN_LEFT) { if (entryPos > 0) entryPos--; sfxPlay(SFX_CLICK); }
+  if ((pressed & (BTN_USE | BTN_JUMP | BTN_RIGHT)) && entryT > 0.3f) {
+    sfxPlay(SFX_CLICK);
+    entryPos++;
+    if (entryPos >= 3) {               // done: into the table
+      for (int i = HI_COUNT - 1; i > entrySlot; i--) hiTable[i] = hiTable[i - 1];
+      memcpy(hiTable[entrySlot].name, entryName, 4);
+      hiTable[entrySlot].score = (int32_t)score;
+      hiTable[entrySlot].secs = (int32_t)playT;
+      saveHiScores();
+      sfxPlay(SFX_FANFARE);
+      entryOn = false;
+      goToTitle();
+    }
+  }
+}
+
+// NEW HIGH SCORE: the initials, three letters, and the table as it will be
+static void drawEntry() {
+  gfxClipAll();
+  fillRect(0, 0, SCREEN_W - 1, SCREEN_H - 1, rgb565(6, 8, 16));
+  for (int k = 0; k < 90; k++) {
+    int x = (k * 263) % SCREEN_W, y = (k * 151) % SCREEN_H;
+    fillRect(x, y, x, y, rgb565(120, 120, 150));
+  }
+  float pulse = 0.7f + 0.3f * sinf(entryT * 4);
+  drawVectorText("NEW HIGH SCORE", SCREEN_W / 2, 70, 6.0f, dimmed(255, 210, 80, pulse), true);
+  char b[64];
+  int ps = (int)playT;
+  snprintf(b, sizeof(b), "%07ld     %d:%02d", score, ps / 60, ps % 60);
+  drawVectorText(b, SCREEN_W / 2, 140, 5.0f, rgb565(240, 240, 245), true);
+  drawVectorText("ENTER YOUR INITIALS", SCREEN_W / 2, 196, 3.0f, rgb565(180, 184, 196), false);
+  for (int k = 0; k < 3; k++) {
+    int cx = SCREEN_W / 2 - 110 + k * 110, cy = 290;
+    bool on = (k == entryPos);
+    fillRect(cx - 42, cy - 54, cx + 42, cy + 54, on ? rgb565(30, 34, 50) : rgb565(16, 18, 28));
+    drawRectOutline(cx - 42, cy - 54, cx + 42, cy + 54, on ? rgb565(255, 200, 70) : rgb565(80, 86, 100), on ? 3 : 1);
+    char l[2] = { entryName[k], 0 };
+    drawVectorText(l, cx, cy, 10.0f, on ? rgb565(255, 230, 120) : rgb565(220, 220, 228), true);
+    if (on) {
+      int ax[3] = { cx - 14, cx + 14, cx }, ay[3] = { cy - 64, cy - 64, cy - 80 };
+      fillPolygon(ax, ay, 3, rgb565(255, 200, 70));
+      int bx[3] = { cx - 14, cx + 14, cx }, by[3] = { cy + 64, cy + 64, cy + 80 };
+      fillPolygon(bx, by, 3, rgb565(255, 200, 70));
+    }
+  }
+  drawVectorText("UP / DOWN: LETTER     X: NEXT     LEFT: BACK", SCREEN_W / 2, 400, 2.4f, rgb565(150, 156, 170), false);
+  drawVectorText("RANK  INITIALS    SCORE    TIME PLAYED", SCREEN_W / 2, 452, 2.2f, rgb565(255, 190, 70), false);
+  for (int r = 0; r < HI_COUNT; r++) {
+    HiEntry e;
+    if (r == entrySlot) {
+      memcpy(e.name, entryName, 4);
+      e.score = (int32_t)score;
+      e.secs = (int32_t)playT;
+    } else {
+      e = hiTable[r > entrySlot ? r - 1 : r];
+    }
+    hiLine(b, sizeof(b), e, r + 1);
+    drawVectorText(b, SCREEN_W / 2, 494 + r * 40, 3.0f, r == entrySlot ? rgb565(255, 220, 120) : rgb565(170, 174, 186), r == entrySlot);
+  }
+}
+
 // ============================================================ the game
 // ============================================================ the title
 static bool onTitle = true;
@@ -4005,6 +4190,27 @@ static const char *const titleStory[] = {
 };
 #define STORY_LINES (int)(sizeof(titleStory) / sizeof(titleStory[0]))
 #define STORY_CHARS_PER_SECOND 38.0f
+#define TITLE_STORY 16.0f                // the title's panel: the story this long...
+#define TITLE_CYCLE 26.0f                // ...then the high scores, round and round
+
+// The top 5, in the title's panel (it takes turns with the story)
+static void drawTitleScores(float t) {
+  const int x0 = 196, x1 = 1084, y0 = 250, y1 = 572;
+  float f = fminf(1.0f, t / 0.5f);
+  blendRect(x0, y0, x1, y1, 4, 10, 16, 0.78f);
+  drawRectOutline(x0, y0, x1, y1, rgb565(60, 170, 190), 2);
+  fillRect(x0 + 2, y0 + 2, x1 - 2, y0 + 30, rgb565(16, 40, 60));
+  drawVectorText("TOP 5 AGENTS", SCREEN_W / 2, y0 + 16, 2.4f, rgb565(255, 190, 70), true);
+  drawVectorText("RANK  INITIALS    SCORE    TIME PLAYED", SCREEN_W / 2, y0 + 62, 2.2f, dimmed(150, 200, 220, f), false);
+  for (int r = 0; r < HI_COUNT; r++) {
+    float k = clampv((t - 0.3f - r * 0.18f) / 0.3f, 0.0f, 1.0f);
+    if (k <= 0) continue;
+    char b[64];
+    hiLine(b, sizeof(b), hiTable[r], r + 1);
+    drawVectorText(b, SCREEN_W / 2, y0 + 110 + r * 44, 3.2f, r == 0 ? dimmed(255, 220, 120, k) : dimmed(236, 236, 242, k), true);
+  }
+  for (int y = y0 + 34; y < y1 - 2; y += 4) blendRect(x0 + 2, y, x1 - 2, y, 0, 0, 0, 0.18f);
+}
 
 static void drawTitleStory() {
   const int x0 = 196, x1 = 1084, y0 = 250, y1 = 572;
@@ -4093,7 +4299,16 @@ static void drawTitle() {
   drawVectorTextW(w2, SCREEN_W / 2, 186, 11.0f, glow, 9.0f);
   drawVectorTextW(w1, SCREEN_W / 2, 84, 11.0f, main, 3.4f);
   drawVectorTextW(w2, SCREEN_W / 2, 186, 11.0f, main, 3.4f);
-  drawTitleStory();
+  // the panel: the story (typed out), then the high scores, in turn
+  float cyc = fmodf(titleT, TITLE_CYCLE);
+  if (cyc < TITLE_STORY) {
+    float keep = titleT;
+    titleT = cyc;                        // (the story types out afresh each time round)
+    drawTitleStory();
+    titleT = keep;
+  } else {
+    drawTitleScores(cyc - TITLE_STORY);
+  }
   if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 620, 4.0f, rgb565(240, 240, 245), true);
   if (tuneProblem[0][0]) drawVectorText(tuneProblem[0], SCREEN_W / 2, 656, 1.8f, rgb565(220, 120, 90), false);
   if (tuneProblem[1][0]) drawVectorText(tuneProblem[1], SCREEN_W / 2, 674, 1.8f, rgb565(220, 120, 90), false);
@@ -4121,6 +4336,7 @@ static void newGame() {
   health = HEALTH_MAX;
   hurtFlashT = 0;
   timeLeft = GAME_SECONDS;
+  playT = drainT = 0;
   gameOver = END_NONE;
   itemShowT = nothingShowT = 0;
   drivesCarried = drivesLoaded = 0;
@@ -4131,8 +4347,15 @@ static void newGame() {
   msgT = 0;
 }
 
+static void goToTitle() {
+  onTitle = true;
+  titleT = 0;
+  tuneWanted.store(0, std::memory_order_relaxed);
+}
+
 void gameInit(uint32_t seed) {
   gfxInit();
+  loadHiScores();
   layoutSeed = seed;
   paintShaftPicture();
   onTitle = true;
@@ -4162,13 +4385,24 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     }
   }
 
-  if (gameOver != END_NONE) {           // the game is over: X (after a moment) back to the title
+  if (entryOn) {                        // initials for the high score table
+    tuneWanted.store(0, std::memory_order_relaxed);
+    liftHum.store(0, std::memory_order_relaxed);
+    droneHum.store(0, std::memory_order_relaxed);
+    updateEntry(dt);
+    if (entryOn) drawEntry();
+    else drawTitle();
+    return;
+  }
+
+  if (gameOver != END_NONE) {           // the game is over: X (after a moment) to the high scores, or the title
     gameOverT += dt;
     if (gameOverT > 1.5f && (pressed & BTN_JUMP)) {
-      onTitle = true;
-      titleT = 0;
-      tuneWanted.store(0, std::memory_order_relaxed);
-      drawTitle();
+      afterGame();
+      liftHum.store(0, std::memory_order_relaxed);
+      droneHum.store(0, std::memory_order_relaxed);
+      if (entryOn) drawEntry();
+      else drawTitle();
       return;
     }
     held = pressed = 0;
@@ -4186,6 +4420,12 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     pressed = 0;
   } else {
     if (gameOver == END_NONE && introT < 0) {
+      playT += dt;
+      drainT += dt;
+      if (drainT >= HEALTH_DRAIN_SECONDS) {   // every minute of play: 1 health
+        drainT -= HEALTH_DRAIN_SECONDS;
+        hurt(1);
+      }
       timeLeft -= dt;
       if (timeLeft <= 0) {
         timeLeft = 0;

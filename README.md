@@ -1,14 +1,15 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 014: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 015: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
 on the walls (warning lights, fans, coolant tubes...), and room hazards:
 electrified floors, dark rooms, security cameras and drones; 36 QUANTUM
 DRIVES to find, 3 power generators, QUANTUM CONTROL with its drive bay and
-main computer, and the sub basement it unlocks.
+main computer, and the sub basement it unlocks (reaching it wins, for now),
+and a top 5 high score table.
 
 ## What's different from NUCLEAR MISSION's PS5 port
 
@@ -113,7 +114,7 @@ a QUANTUM DRIVE in them; the other 92 have nothing.
 
 ## Health, first aid and the clock
 
-- **Health:** a bar of 50 points in the top bar. Dropping one level costs
+- **Health:** a bar of 50 points in the top bar. Every minute of play costs 1. Dropping one level costs
   nothing; two levels cost 5; three (top to bottom) cost 15, and knock him
   down for a moment. Falling down a pit costs 15 and puts him back at the door
   he came in by. At 0 the game is over.
@@ -130,7 +131,7 @@ a QUANTUM DRIVE in them; the other 92 have nothing.
 3 rooms (at random) have a POWER GENERATOR: a yellow generator on a skid with
 a lever on its control box, down (off) and a red lamp. Search it (hold
 Square): the lever goes up, the lamp turns green and its engine fan starts
-turning (100 points). All 3 must be on before the main computer in QUANTUM
+turning (100 points), and **5 minutes** go back on the clock. All 3 must be on before the main computer in QUANTUM
 CONTROL will start. The map marks a generator in a room you've been in (its
 lamp red or green), and the lift area's panel counts them.
 
@@ -138,10 +139,10 @@ lamp red or green), and the lift area's panel counts them.
 
 A room of its own in the middle column of the map (between lifts E and F), on
 a random row, one level high, with a door at the bottom on each side. Its
-equipment is NUCLEAR MISSION's LCC: computer racks with their lights, reel to
-reel tape units, the fan, a display over the main computer (the countdown,
-once there is power), the main computer and its printer, and new, the
-**QUANTUM DRIVE BAY**: 36 slots and a counter. The map always shows it (in
+equipment is NUCLEAR MISSION's LCC, with the new **QUANTUM DRIVE BAY** (36
+slots and a counter) on the left; the main computer and its printer in the
+middle, a display over it (the countdown, once there is power), and on the
+right the reel to reel tape units, the fan and three computer racks. The map always shows it (in
 purple).
 
 - **The drive bay:** stand at it and press Square: every drive he is carrying
@@ -164,7 +165,17 @@ Once unlocked, that shaft's car goes one level further down, below the
 complex's bottom floor (the panel says FLOOR SB). The mini map doesn't show
 it; the Options map does, under the bottom row. There the lift area has a
 wall on the left and a door on the right into the sub basement: a bare
-concrete hall with nothing in it yet, and no other way out.
+concrete hall with nothing in it yet. For now, going into it ends the game:
+**MISSION COMPLETE**.
+
+## The high scores
+
+When the game ends (time, health, or MISSION COMPLETE), a score good enough
+for the top 5 asks for initials (as NUCLEAR MISSION's): UP / DOWN to change
+the letter, X (or Square, or RIGHT) for the next, LEFT to go back. The table
+has the initials, the score and the time played. The title screen's panel
+takes turns: the story, then TOP 5 AGENTS. On the PS5 the table is kept in
+`/download0/quantum-lockdown/hiscores.bin` (the title's own storage).
 
 ## On the walls
 
@@ -205,8 +216,11 @@ None in room 1, where he starts. The map marks the ones he has been in.
   "CAUGHT ON CAMERA! -30 SECONDS", 30 seconds off the clock, hands up, and back
   at the door he came in by. Each camera starts its sweep at the far end, and
   gives him a moment after he comes in.
-- **Drone** (3 rooms, 10%): it waits a moment, then flies after him anywhere in
-  the room (through anything), slowly - he runs twice as fast. Its light: green
+- **Drone** (3 rooms, 10%): first it hangs at the far side of the room and
+  sweeps a narrow red scanning beam across the room and back (through
+  anything). The beam sees him whether he moves or not; once it does, the
+  beam goes off ("THE DRONE HAS SEEN YOU") and the drone flies after him
+  anywhere in the room (through anything), slowly - he runs twice as fast. Its light: green
   out of range, yellow getting close, red (blinking) in range, and then it
   fires: a bullet every 0.8 seconds, 5 health each, aimed where he is when it
   fires, so a moving target is hard to hit. Run, put distance between, or leave
