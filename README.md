@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 015: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 016: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -131,7 +131,8 @@ a QUANTUM DRIVE in them; the other 92 have nothing.
 3 rooms (at random) have a POWER GENERATOR: a yellow generator on a skid with
 a lever on its control box, down (off) and a red lamp. Search it (hold
 Square): the lever goes up, the lamp turns green and its engine fan starts
-turning (100 points), and **5 minutes** go back on the clock. All 3 must be on before the main computer in QUANTUM
+turning (100 points), and time goes back on the clock: **5 minutes** for the
+first generator turned on, **10** for the second, **15** for the third. All 3 must be on before the main computer in QUANTUM
 CONTROL will start. The map marks a generator in a room you've been in (its
 lamp red or green), and the lift area's panel counts them.
 
@@ -209,20 +210,23 @@ None in room 1, where he starts. The map marks the ones he has been in.
 
 - **Security cameras** (6 rooms with one, 20%; 3 rooms with two, 10%): hung
   from the ceiling in a top corner (or both), each sweeping its beam across
-  the room and back every 6 seconds. The beam goes through everything:
+  the room and back every 6 seconds (with two, the second takes 7.1, so the
+  beams drift apart). The beam goes through everything:
   walls, floors, equipment. Standing still in it is safe (searching too);
   moving in it (running, jumping, falling, riding a lift pad) is not. The beam
   goes amber while it is on him, red when it catches him: an alarm,
   "CAUGHT ON CAMERA! -30 SECONDS", 30 seconds off the clock, hands up, and back
   at the door he came in by. Each camera starts its sweep at the far end, and
   gives him a moment after he comes in.
-- **Drone** (3 rooms, 10%): first it hangs at the far side of the room and
-  sweeps a narrow red scanning beam across the room and back (through
-  anything). The beam sees him whether he moves or not; once it does, the
-  beam goes off ("THE DRONE HAS SEEN YOU") and the drone flies after him
-  anywhere in the room (through anything), slowly - he runs twice as fast. Its light: green
+- **Drone** (3 rooms, 10%): it starts at the far side of the room, its narrow
+  red scanning beam turning right round it (through anything). The beam sees
+  him whether he moves or not. When it does, the beam goes off ("THE DRONE
+  HAS SEEN YOU" the first time) and the drone flies to the spot where it saw
+  him (just over his head) - not after him - and there it scans again, and so
+  on. It flies anywhere in the room (through anything), slowly - he runs twice as fast. Its light: green
   out of range, yellow getting close, red (blinking) in range, and then it
-  fires: a bullet every 0.8 seconds, 5 health each, aimed where he is when it
+  fires, whether it is scanning or flying (it carries on to where it was
+  going): a bullet every 0.8 seconds, 5 health each, aimed where he is when it
   fires, so a moving target is hard to hit. Run, put distance between, or leave
   the room. It starts again from the far side whenever he comes in.
 

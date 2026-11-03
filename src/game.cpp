@@ -35,7 +35,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "015"
+#define GAME_VERSION      "016"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -68,7 +68,7 @@
 #define EQUIPMENT_TOTAL   128      // ...128 in the whole complex (so 8 rooms have 5)
 #define ITEMS_HIDDEN      36       // pieces of equipment with a QUANTUM DRIVE in them (the rest: nothing)
 #define GENERATORS        3        // power generators (each in a different room): all on to power the main computer
-#define GENERATOR_BONUS   (5 * 60) // seconds added to the countdown when a generator is turned on
+#define GENERATOR_BONUS   (5 * 60) // turning on a generator adds to the countdown: the 1st this, the 2nd twice it, the 3rd three times
 #define HEALTH_DRAIN_SECONDS 60.0f // every minute of play costs 1 health
 #define HI_COUNT          5        // the high score table
 #define CONTROL_COL       4        // the QUANTUM CONTROL room is in this column (the middle one), on a random row
@@ -95,7 +95,8 @@
 #define CAMERA_ROOMS      6        // 20% of the rooms: a security camera in a top corner...
 #define DUAL_CAMERA_ROOMS 3        // ...10%: one in each top corner
 #define CAM_PENALTY       30       // seconds off the clock when a camera sees him moving
-#define CAM_PERIOD        6.0f     // seconds for a sweep across and back
+#define CAM_PERIOD        6.0f     // seconds for a sweep across and back...
+#define CAM2_PERIOD       7.1f     // ...the second camera in a room with two: a little slower, so the beams drift apart
 #define CAM_MID_DEG       38.0f    // the sweep: its middle (degrees from straight down, out into the room)...
 #define CAM_SWING_DEG     34.0f    // ...and how far each way
 #define CAM_HALF_DEG      7.0f     // half the width of the beam (it goes through everything)
@@ -110,8 +111,9 @@
 #define BULLET_SPEED      650.0f
 #define BULLET_HURT       5        // health a bullet costs
 #define DRONE_GRACE       1.5f     // seconds it waits after he comes in (or back in)
-#define DRONE_SCAN_DEG_S  42.0f    // before it hunts: its red scanning beam sweeps the room, this many degrees a second...
-#define DRONE_SCAN_HALF   3.0f     // ...half its width (it sees him through anything, moving or not)
+#define DRONE_SCAN_DEG_S  80.0f    // its red scanning beam turns right round it, this many degrees a second...
+#define DRONE_SCAN_HALF   3.0f     // ...half its width (it sees him through anything, moving or not); then it flies
+                                   // to where it saw him and scans again. In range it fires, whatever it is doing.
 #define NVG_RANGE         400      // night vision: how far the goggles light up ahead...
 #define NVG_HALF_DEG      28.0f    // ...half the width of their view...
 #define NVG_AROUND        56       // ...and the circle round him
@@ -386,6 +388,7 @@ struct Camera {
   float x, y;                          // the pivot
   float t, angle;                      // the sweep's clock; where it points (degrees from straight down, + to the right)
   float mid;                           // the middle of its sweep (out into the room)
+  float period;                        // seconds for its sweep across and back
   float movingT;                       // how long he has been moving in its beam
   uint8_t view;                        // 0 not on him, 1 on him (but he is still), 2 caught him
 };
@@ -396,8 +399,10 @@ static bool camCaughtPending = false;  // seen in the air: hands up when he land
 // The drone
 static float drX, drY, drVX, drVY, drGrace, drFireT, drFlashT;
 static uint8_t drLight = 0;            // 0 green (out of range), 1 yellow (getting close), 2 red (firing)
-static bool drScan = true;             // still scanning the room with its beam (it hunts once the beam finds him)
-static float drScanAng = 0, drScanDir = 1, drScanMin = 0, drScanMax = 0;   // the beam (degrees from straight down, + to the right)
+static bool drScan = true;             // scanning with its beam (else flying to where the beam last found him)
+static float drScanAng = 0, drScanDir = 1;   // the beam (degrees from straight down, + to the right), turning right round
+static float drTX = 0, drTY = 0;       // where it is flying to
+static bool drAlerted = false;         // (it has found him once since he came in)
 static void endGame(int why);
 #define MAX_BULLETS 8
 struct Bullet { float x, y, vx, vy, life; };
@@ -2110,13 +2115,12 @@ static void resetHazardsForEntry(bool fromLeft) {
   drFireT = 0.45f;
   drFlashT = 0;
   drLight = 0;
-  // its scan: from pointing down beside it, across the room to the far side (and back), until it finds him
+  // its scan: the beam turning right round, starting pointing away from the door he came in by
   drScan = true;
+  drAlerted = false;
   bool onRight = drX > SCREEN_W / 2;
-  drScanMin = onRight ? -88.0f : -60.0f;
-  drScanMax = onRight ? 60.0f : 88.0f;
-  drScanAng = onRight ? drScanMax : drScanMin;
-  drScanDir = onRight ? -1.0f : 1.0f;
+  drScanAng = onRight ? 90.0f : -90.0f;
+  drScanDir = onRight ? 1.0f : -1.0f;
   for (int i = 0; i < MAX_BULLETS; i++) bullets[i].life = 0;
 }
 
@@ -2145,8 +2149,9 @@ static void enterRoom(int idx, bool fromLeft) {
     c.x = cx[k];
     c.y = CAM_Y;
     c.mid = c.x < SCREEN_W / 2 ? CAM_MID_DEG : -CAM_MID_DEG;
-    c.t = CAM_PERIOD * (k ? 0.75f : 0.25f);
-    c.angle = c.mid + (c.mid > 0 ? 1 : -1) * CAM_SWING_DEG * sinf(TWO_PI * c.t / CAM_PERIOD);
+    c.period = k ? CAM2_PERIOD : CAM_PERIOD;
+    c.t = c.period * (k ? 0.75f : 0.25f);
+    c.angle = c.mid + (c.mid > 0 ? 1 : -1) * CAM_SWING_DEG * sinf(TWO_PI * c.t / c.period);
     c.movingT = 0;
     c.view = 0;
   }
@@ -2772,7 +2777,8 @@ static void updateAgent(float dt) {
           if (decor[i].kind == DEC_GENERATOR) {   // the power generator: the lever goes up, its lamp turns green
             ri.genOn = true;
             leverT = 0;
-            timeLeft += GENERATOR_BONUS;      // (5 more minutes on the clock)
+            int bonus = GENERATOR_BONUS * generatorsOn();   // (5, 10, then 15 more minutes on the clock)
+            timeLeft += bonus;
             addScore(SEARCH_SCORE, px, py - 26);
             sfxPlay(SFX_POWERUP);
             snprintf(floatText, sizeof(floatText), "POWER ON");
@@ -2782,8 +2788,8 @@ static void updateAgent(float dt) {
             nothingY = py;
             char b[64];
             int n = generatorsOn();
-            if (n >= GENERATORS) snprintf(b, sizeof(b), "ALL %d POWER GENERATORS ON   +%d MINUTES", GENERATORS, GENERATOR_BONUS / 60);
-            else snprintf(b, sizeof(b), "POWER GENERATOR ON - %d OF %d   +%d MINUTES", n, GENERATORS, GENERATOR_BONUS / 60);
+            if (n >= GENERATORS) snprintf(b, sizeof(b), "ALL %d POWER GENERATORS ON   +%d MINUTES", GENERATORS, bonus / 60);
+            else snprintf(b, sizeof(b), "POWER GENERATOR ON - %d OF %d   +%d MINUTES", n, GENERATORS, bonus / 60);
             showMsg(b, 3.5f);
             break;
           }
@@ -2951,7 +2957,7 @@ static void updateCameras(float dt) {
       continue;
     }
     c.t += dt;
-    c.angle = c.mid + (c.mid > 0 ? 1 : -1) * CAM_SWING_DEG * sinf(TWO_PI * c.t / CAM_PERIOD);
+    c.angle = c.mid + (c.mid > 0 ? 1 : -1) * CAM_SWING_DEG * sinf(TWO_PI * c.t / c.period);
     bool seen = inBeam(c, agX, fy - 8) || inBeam(c, agX, fy - h * 0.5f) || inBeam(c, agX, fy - h * 0.9f);
     if (camGrace > 0 || agState == ST_KO || agState == ST_SHOCK) seen = false;
     if (seen && agentMoving()) {
@@ -2984,37 +2990,39 @@ static float hitFlashT = 0, hitX = 0, hitY = 0;
 static void updateDrone(float dt) {
   float fy = feetY();
   float ax = agX, ay = fy - 65 * myScale;           // his chest
-  if (drScan) {                        // the red beam sweeping the room: it sees him through anything, still or not
+  if (drGrace > 0) drGrace -= dt;
+  if (drScan) {                        // the red beam turning right round it: it sees him through anything, still or not
     drScanAng += drScanDir * DRONE_SCAN_DEG_S * dt;
-    if (drScanAng > drScanMax) { drScanAng = drScanMax; drScanDir = -1; }
-    if (drScanAng < drScanMin) { drScanAng = drScanMin; drScanDir = 1; }
+    if (drScanAng > 180.0f) drScanAng -= 360.0f;
+    if (drScanAng < -180.0f) drScanAng += 360.0f;
     float h = 100.0f * myScale;
     const float ys[3] = { fy - 8, fy - h * 0.5f, fy - h * 0.9f };
     bool seen = false;
-    for (int k = 0; k < 3 && !seen && agState != ST_KO; k++) {
+    for (int k = 0; k < 3 && !seen && agState != ST_KO && agState != ST_CAUGHT; k++) {
       float dx = agX - drX, dy = ys[k] - drY;
-      if (dy <= 0) continue;
-      seen = fabsf(atan2f(dx, dy) * 57.29578f - drScanAng) <= DRONE_SCAN_HALF;
+      float diff = fabsf(fmodf(atan2f(dx, dy) * 57.29578f - drScanAng + 540.0f, 360.0f) - 180.0f);
+      seen = diff <= DRONE_SCAN_HALF;
     }
-    drLight = 0;
-    if (seen) {                        // found him: the beam goes off, and it comes after him
+    if (seen) {                        // found him: the beam goes off, and it flies to where he was (just over his head)
       drScan = false;
-      drGrace = 0.6f;
-      sfxPlay(SFX_ALARM);
-      showMsg("THE DRONE HAS SEEN YOU", 2.2f);
+      drTX = clampv(agX, 40.0f, SCREEN_W - 40.0f);
+      drTY = clampv(fy - 150.0f * myScale, CEIL_Y + 30.0f, ROOM_FLOOR_Y - 30.0f);
+      if (!drAlerted) {
+        drAlerted = true;
+        sfxPlay(SFX_ALARM);
+        showMsg("THE DRONE HAS SEEN YOU", 2.2f);
+      } else {
+        sfxPlay(SFX_BEEP);
+      }
     }
-    if (hitFlashT > 0) hitFlashT -= dt;
-    return;
   }
-  // where it wants to be: a little above him and off to its side of him
-  float side = drX > agX ? 1.0f : -1.0f;
-  float tx = agX + side * 150, ty = clampv(fy - 230.0f, CEIL_Y + 50.0f, ROOM_FLOOR_Y - 80.0f);
-  if (drGrace > 0) {
-    drGrace -= dt;
-    tx = drX;
-    ty = drY;
-  }
+  float tx = drScan ? drX : drTX, ty = drScan ? drY : drTY;
   float dx = tx - drX, dy = ty - drY, d = sqrtf(dx * dx + dy * dy);
+  if (!drScan && d < 8.0f && fabsf(drVX) + fabsf(drVY) < 30.0f) {   // there: scan again, the beam starting the way it was going
+    drScan = true;
+    drScanAng = drVX >= 0 ? 90.0f : -90.0f;
+    drScanDir = fxRnd(0, 2) ? 1.0f : -1.0f;
+  }
   float sp = DRONE_SPEED * fminf(1.0f, d / 40.0f);
   float wx = d > 0.1f ? dx / d * sp : 0, wy = d > 0.1f ? dy / d * sp : 0;
   float k = fminf(1.0f, dt * 1.5f);
