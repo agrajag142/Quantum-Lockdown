@@ -35,7 +35,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "016"
+#define GAME_VERSION      "017"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -71,6 +71,11 @@
 #define GENERATOR_BONUS   (5 * 60) // turning on a generator adds to the countdown: the 1st this, the 2nd twice it, the 3rd three times
 #define HEALTH_DRAIN_SECONDS 60.0f // every minute of play costs 1 health
 #define HI_COUNT          5        // the high score table
+#define SHOCK_TIME_LOST   30       // seconds off the clock when the electrified floor gets him...
+#define PIT_TIME_LOST     30       // ...or he falls down a pit in the floor
+#define BONUS_PER_MINUTE  500      // end of game: each whole minute left on the clock
+#define BONUS_CLEAN       1000     // end of game: each of no electrocution, no drone hits, no pit falls,
+                                   // never caught on camera, no first aid used
 #define CONTROL_COL       4        // the QUANTUM CONTROL room is in this column (the middle one), on a random row
 #define CONTROL_ROOM      ROOM_COUNT        // (its index in rooms[], after the 30)
 #define SUB_ROOM          (ROOM_COUNT + 1)  // the sub basement's room (under a lift shaft, once unlocked)
@@ -450,6 +455,11 @@ static EndReason gameOver = END_NONE;
 static float gameOverT = 0;
 static float playT = 0;                // time played (seconds of play: not the map, not the opening)
 static float drainT = 0;               // towards the next minute's health
+// What happened this game (for the end of game bonuses), and the bonuses
+static int nShocks = 0, nDroneHits = 0, nPitFalls = 0, nCaught = 0, nKitsUsed = 0;
+#define BONUS_LINES 6
+static long bonusPts[BONUS_LINES];
+static long bonusTotal = 0;
 // The high scores
 struct HiEntry { char name[4]; int32_t score; int32_t secs; };
 static HiEntry hiTable[HI_COUNT] = { { "ACE", 25000, 850 }, { "VOS", 20000, 785 }, { "MAX", 15000, 700 },
@@ -2326,6 +2336,29 @@ static void endGame(int why) {
   if (gameOver == END_NONE) {
     gameOver = (EndReason)why;
     gameOverT = 0;
+    // the end of game bonuses: minutes left, and each thing that never happened
+    int mins = timeLeft > 0 ? (int)(timeLeft / 60) : 0;
+    bonusPts[0] = (long)mins * BONUS_PER_MINUTE;
+    bonusPts[1] = nShocks == 0 ? BONUS_CLEAN : 0;
+    bonusPts[2] = nDroneHits == 0 ? BONUS_CLEAN : 0;
+    bonusPts[3] = nPitFalls == 0 ? BONUS_CLEAN : 0;
+    bonusPts[4] = nCaught == 0 ? BONUS_CLEAN : 0;
+    bonusPts[5] = nKitsUsed == 0 ? BONUS_CLEAN : 0;
+    bonusTotal = 0;
+    for (int i = 0; i < BONUS_LINES; i++) bonusTotal += bonusPts[i];
+    score += bonusTotal;
+  }
+}
+
+// Time off the clock (the electrified floor, a pit), with a message
+static void loseTime(int secs, const char *what) {
+  timeLeft -= secs;
+  char b[64];
+  snprintf(b, sizeof(b), "%s  -%d SECONDS", what, secs);
+  showMsg(b, 2.6f);
+  if (timeLeft <= 0) {
+    timeLeft = 0;
+    endGame(END_TIME);
   }
 }
 
@@ -2737,7 +2770,9 @@ static void updateAgent(float dt) {
         }
       } else if (agY > ROOM_FLOOR_Y + 2 && y0 <= ROOM_FLOOR_Y + 2) {   // below the floor: down a pit (nothing to land on now)
         sfxPlay(SFX_SCREAM);
-      } else if (agY > SCREEN_H + 160) {   // down a pit
+      } else if (agY > SCREEN_H + 160) {   // down a pit: 15 health and 30 seconds
+        nPitFalls++;
+        loseTime(PIT_TIME_LOST, "FELL DOWN A PIT!");
         hurt(FALL_HURT_3);
         knockOut();
       }
@@ -2801,6 +2836,7 @@ static void updateAgent(float dt) {
             } else {
               health = HEALTH_MAX;
               ri.kitUsed = true;
+              nKitsUsed++;
               paintRoom();                    // (it hangs open now)
               snprintf(floatText, sizeof(floatText), "HEALTH RESTORED");
               sfxPlay(SFX_FANFARE);
@@ -2853,6 +2889,8 @@ static void updateAgent(float dt) {
         elecState = 0;                 // the shock trips the power: safe for a while
         elecT = 0;
         elecSafeFor = ELEC_AFTER_SHOCK;
+        nShocks++;
+        loseTime(SHOCK_TIME_LOST, "ELECTROCUTED!");   // (10 health and 30 seconds)
         hurt(ELEC_HURT);
         knockOut();                    // (he wakes at the door he came in by)
       }
@@ -2965,6 +3003,7 @@ static void updateCameras(float dt) {
       c.view = 1;
       if (c.movingT >= CAM_REACT) {    // CAUGHT
         c.view = 2;
+        nCaught++;
         timeLeft -= CAM_PENALTY;
         if (timeLeft <= 0) {
           timeLeft = 0;
@@ -3066,6 +3105,7 @@ static void updateDrone(float dt) {
     bool hittable = agState != ST_KO && agState != ST_CAUGHT;
     if (b.life > 0 && hittable && fabsf(b.x - agX) < 15 * myScale && b.y > fy - 125 * myScale && b.y < fy) {
       b.life = 0;
+      nDroneHits++;
       hurt(BULLET_HURT);
       sfxPlay(SFX_HIT);
       hitFlashT = 0.15f;
@@ -3908,23 +3948,43 @@ static void drawGameOver() {
   blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 0.65f * k);
   if (gameOverT < 0.4f) return;
   if (gameOver == END_WIN) {
-    drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 250, 8.0f, rgb565(20, 90, 40), 8.0f);
-    drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 250, 8.0f, rgb565(100, 255, 140), 3.0f);
-    drawVectorText("YOU REACHED THE SUB BASEMENT", SCREEN_W / 2, 350, 4.0f, rgb565(240, 240, 245), true);
+    drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
+    drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
+    drawVectorText("YOU REACHED THE SUB BASEMENT", SCREEN_W / 2, 186, 3.2f, rgb565(240, 240, 245), true);
   } else {
-    drawVectorTextW("GAME OVER", SCREEN_W / 2, 250, 10.0f, rgb565(120, 20, 14), 8.0f);
-    drawVectorTextW("GAME OVER", SCREEN_W / 2, 250, 10.0f, rgb565(255, 70, 50), 3.0f);
-    drawVectorText(gameOver == END_TIME ? "THE TIME RAN OUT" : "OUT OF HEALTH", SCREEN_W / 2, 350, 4.0f, rgb565(240, 240, 245), true);
+    drawVectorTextW("GAME OVER", SCREEN_W / 2, 120, 8.0f, rgb565(120, 20, 14), 8.0f);
+    drawVectorTextW("GAME OVER", SCREEN_W / 2, 120, 8.0f, rgb565(255, 70, 50), 3.0f);
+    drawVectorText(gameOver == END_TIME ? "THE TIME RAN OUT" : "OUT OF HEALTH", SCREEN_W / 2, 186, 3.2f, rgb565(240, 240, 245), true);
   }
-  char b[64];
-  int ps = (int)playT;
-  snprintf(b, sizeof(b), "SCORE %ld     TIME PLAYED %d:%02d", score, ps / 60, ps % 60);
-  drawVectorText(b, SCREEN_W / 2, 420, 4.0f, rgb565(255, 190, 70), true);
-  int seen = 0;
-  for (int i = 0; i < ROOM_COUNT; i++) seen += rooms[i].visited;
-  snprintf(b, sizeof(b), "%d OF %d QUANTUM DRIVES   %d OF %d ROOMS", itemsFound, ITEMS_HIDDEN, seen, ROOM_COUNT);
-  drawVectorText(b, SCREEN_W / 2, 470, 2.6f, rgb565(170, 178, 196), false);
-  if (gameOverT > 1.5f && fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X", SCREEN_W / 2, 560, 3.6f, rgb565(240, 240, 245), true);
+  // the end of game bonuses, one line at a time
+  char b[80];
+  int mins = (int)(bonusPts[0] / BONUS_PER_MINUTE);
+  const char *what[BONUS_LINES] = { "", "NO ELECTROCUTION", "NO DRONE HITS", "NO FALLS DOWN PITS", "NEVER CAUGHT ON CAMERA", "NO FIRST AID USED" };
+  drawVectorText("END OF GAME BONUS", SCREEN_W / 2, 236, 2.6f, rgb565(255, 190, 70), true);
+  for (int i = 0; i < BONUS_LINES; i++) {
+    if (gameOverT < 0.6f + i * 0.2f) break;
+    if (i == 0) snprintf(b, sizeof(b), "TIME LEFT  %d MINUTE%s X %d", mins, mins == 1 ? "" : "S", BONUS_PER_MINUTE);
+    else snprintf(b, sizeof(b), "%s", what[i]);
+    float y = 272 + i * 30;
+    bool got = bonusPts[i] > 0;
+    uint16_t c = got ? rgb565(230, 236, 245) : rgb565(110, 116, 130);
+    drawVectorText(b, 360 + vectorTextWidth(b, 2.3f) / 2, y, 2.3f, c, false);
+    snprintf(b, sizeof(b), "%+ld", bonusPts[i]);
+    drawVectorText(got ? b : "-", 920 - vectorTextWidth(got ? b : "-", 2.5f) / 2, y, 2.5f, got ? rgb565(100, 240, 140) : rgb565(110, 116, 130), true);
+  }
+  if (gameOverT >= 0.6f + BONUS_LINES * 0.2f) {
+    fillRect(360, 452, 920, 453, rgb565(90, 100, 120));
+    snprintf(b, sizeof(b), "BONUS %+ld", bonusTotal);
+    drawVectorText(b, 920 - vectorTextWidth(b, 2.6f) / 2, 474, 2.6f, rgb565(100, 240, 140), true);
+    int ps = (int)playT;
+    snprintf(b, sizeof(b), "SCORE %ld     TIME PLAYED %d:%02d", score, ps / 60, ps % 60);
+    drawVectorText(b, SCREEN_W / 2, 528, 4.0f, rgb565(255, 190, 70), true);
+    int seen = 0;
+    for (int i = 0; i < ROOM_COUNT; i++) seen += rooms[i].visited;
+    snprintf(b, sizeof(b), "%d OF %d QUANTUM DRIVES   %d OF %d ROOMS", itemsFound, ITEMS_HIDDEN, seen, ROOM_COUNT);
+    drawVectorText(b, SCREEN_W / 2, 572, 2.4f, rgb565(170, 178, 196), false);
+  }
+  if (gameOverT > 2.2f && fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X", SCREEN_W / 2, 640, 3.6f, rgb565(240, 240, 245), true);
 }
 
 static void drawMessage() {
@@ -4345,6 +4405,8 @@ static void newGame() {
   hurtFlashT = 0;
   timeLeft = GAME_SECONDS;
   playT = drainT = 0;
+  nShocks = nDroneHits = nPitFalls = nCaught = nKitsUsed = 0;
+  bonusTotal = 0;
   gameOver = END_NONE;
   itemShowT = nothingShowT = 0;
   drivesCarried = drivesLoaded = 0;
@@ -4405,7 +4467,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
 
   if (gameOver != END_NONE) {           // the game is over: X (after a moment) to the high scores, or the title
     gameOverT += dt;
-    if (gameOverT > 1.5f && (pressed & BTN_JUMP)) {
+    if (gameOverT > 2.2f && (pressed & BTN_JUMP)) {
       afterGame();
       liftHum.store(0, std::memory_order_relaxed);
       droneHum.store(0, std::memory_order_relaxed);

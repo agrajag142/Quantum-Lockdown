@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 016: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 017: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -116,8 +116,8 @@ a QUANTUM DRIVE in them; the other 92 have nothing.
 
 - **Health:** a bar of 50 points in the top bar. Every minute of play costs 1. Dropping one level costs
   nothing; two levels cost 5; three (top to bottom) cost 15, and knock him
-  down for a moment. Falling down a pit costs 15 and puts him back at the door
-  he came in by. At 0 the game is over.
+  down for a moment. Falling down a pit costs 15 health and **30 seconds** off
+  the clock, and puts him back at the door he came in by. At 0 the game is over.
 - **First aid kits:** 5 in the whole complex, each in a different room, on
   the wall (a white case with a red cross). Search one (hold Square) and the
   health bar is full again; each kit works once (it hangs open after), and
@@ -169,6 +169,22 @@ wall on the left and a door on the right into the sub basement: a bare
 concrete hall with nothing in it yet. For now, going into it ends the game:
 **MISSION COMPLETE**.
 
+## End of game bonus
+
+However the game ends, the score gets a bonus, shown line by line on the
+final screen:
+
+| | |
+| --- | --- |
+| each whole minute left on the clock | 500 |
+| never electrocuted | 1000 |
+| never hit by a drone's bullet | 1000 |
+| never fell down a pit | 1000 |
+| never caught on camera | 1000 |
+| no first aid kit used | 1000 |
+
+The amounts are at the top of `src/game.cpp` (`BONUS_PER_MINUTE`, `BONUS_CLEAN`).
+
 ## The high scores
 
 When the game ends (time, health, or MISSION COMPLETE), a score good enough
@@ -200,7 +216,8 @@ None in room 1, where he starts. The map marks the ones he has been in.
   crackles with a buzz (the warning, 1.6 seconds), then the floor is live
   with blue arcs for 2.6 seconds. Be off it: up on a ledge, on a lift pad
   above the floor, or in the air (a somersault timed over it). Caught on it,
-  he is shocked: 10 health lost and he wakes at the door he came in by. The
+  he is shocked: 10 health and **30 seconds** off the clock lost, and he wakes
+  at the door he came in by. The
   shock trips the power, so it stays safe for a while after. The floor's
   timing settings are at the top of `src/game.cpp` (`ELEC_...`).
 - **Dark room** (3 rooms, 10%; NUCLEAR MISSION's blackout): the lights flicker
