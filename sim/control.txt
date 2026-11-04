@@ -14,7 +14,7 @@ tap USE
 hold NONE 30
 shot 61_no_power
 control 20 3
-walkto 1020
+walkto 160
 tap USE
 hold NONE 180
 shot 62_drives_loaded
@@ -25,7 +25,7 @@ shot 63_unable_to_boot
 hold NONE 30
 tap JUMP
 control 36 3
-walkto 1020
+walkto 160
 tap USE
 hold NONE 330
 walkto 640

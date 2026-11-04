@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 017: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 018: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -191,7 +191,7 @@ When the game ends (time, health, or MISSION COMPLETE), a score good enough
 for the top 5 asks for initials (as NUCLEAR MISSION's): UP / DOWN to change
 the letter, X (or Square, or RIGHT) for the next, LEFT to go back. The table
 has the initials, the score and the time played. The title screen's panel
-takes turns: the story, then TOP 5 AGENTS. On the PS5 the table is kept in
+takes turns, 15 seconds each: MISSION OBJECTIVES, then TOP 5 AGENTS. On the PS5 the table is kept in
 `/download0/quantum-lockdown/hiscores.bin` (the title's own storage).
 
 ## On the walls
@@ -257,6 +257,32 @@ of the lifts, that no two overlap, and that every electrified room has its sign.
 layout can be crossed with every door combination and every spot reached:
 run it after adding or changing a layout.
 
+## The title screen, the briefing
+
+The title sits at the top, with the quantum core turning behind it (three
+orbits, a particle on each), motes drifting up, a camera's beam sweeping the
+dark, sparks along the floor, and now and then the name glitches red and
+cyan. Under it the panel takes turns every 15 seconds:
+
+- **MISSION OBJECTIVES:** 1. POWER ON THE GENERATORS 2. FIND ALL QUANTUM
+  DRIVES 3. UNLOCK SUB BASEMENT ACCESS
+- **TOP 5 AGENTS:** the high scores
+
+After X and the opening (out of the duct), the **STAGE 1** briefing: ABANDONED
+FACILITY, COUNTDOWN TO POWER FAILURE 15:00, RESTORE 3 GENERATORS, with
+pictures of the generators. The clock waits; X again to start playing.
+
+## Settings
+
+**Triangle** (any time in play, not on the map) opens the settings, and
+pauses the game and the clock:
+
+- **STAGE MUSIC** ON / OFF
+- **ELEVATOR MUSIC** ON / OFF (both remembered: `settings.bin` beside the
+  high scores)
+- **QUIT TO TITLE** (X twice): drops the game there and then, no score
+- **RESUME** (or Triangle again)
+
 ## Controls
 
 | DualSense | |
@@ -266,7 +292,7 @@ run it after adding or changing a layout.
 | Cross | somersault |
 | Square or Circle | hold to search equipment |
 | Options or touchpad | the map (shows every room and where its doors lead), and pauses the game |
-| Triangle, on the map | lay out a new complex |
+| Triangle | the settings (pauses the game); on the map: lay out a new complex |
 
 Lift pads start at the stop nearest the door he came in by. Standing beside a
 pad's shaft at one of its stops, UP or DOWN calls the pad to him.

@@ -7,6 +7,9 @@ tap JUMP
 hold NONE 70
 shot 02_opening_duct
 hold NONE 90
+shot 02_stage1_briefing
+tap JUMP
+hold NONE 20
 shot 02_lift_A_start
 tap MAP
 hold NONE 30

@@ -35,7 +35,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "017"
+#define GAME_VERSION      "018"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -491,6 +491,12 @@ static void addScore(long v, float x, float y) {
 
 // On screen
 static bool mapOn = false;
+static bool settingsOn = false;        // the settings menu (Triangle): the game paused
+static int settingsSel = 0;
+static bool quitConfirm = false;       // QUIT TO TITLE pressed once: X again to quit
+static bool briefingOn = false;        // STAGE 1's briefing, after the opening: X to start
+static float briefingT = 0;
+static std::atomic<bool> musicOn[2] = { true, true };   // 0 ELEVATOR MUSIC, 1 STAGE MUSIC (the settings)
 static float msgT = 0;
 static char msgText[64] = "";
 static float clockT = 0;               // seconds since the start (blinking things)
@@ -774,7 +780,7 @@ void gameAudio(short *out, int frames) {
   int want = tuneWanted.load(std::memory_order_relaxed);
   for (int k = 0; k < 2; k++) {
     float vol = k ? STAGE1_MUSIC_VOLUME : ELEVATOR_MUSIC_VOLUME;
-    float target = (tuneReady[k] && want == k + 1) ? vol : 0.0f;
+    float target = (tuneReady[k] && want == k + 1 && musicOn[k].load(std::memory_order_relaxed)) ? vol : 0.0f;
     if (!tuneReady[k] || (tuneGain[k] <= 0 && target <= 0)) continue;
     memset(tuneBuf, 0, (size_t)frames * 4);
     if (k) micromod2_get_audio(tuneBuf, frames);
@@ -3698,7 +3704,8 @@ static void updateIntro(float dt) {
     agentSample(ANIM_JUMP, AG_JUMP_DOWN, shownPose);
     setState(ST_LAND, 0.0f);
     sfxPlay(SFX_LAND);
-    showMsg("OPTIONS: THE MAP", 5.0f);
+    briefingOn = true;                   // STAGE 1's briefing, then he can go
+    briefingT = 0;
     return;
   }
   p.plant = 0;
@@ -4238,32 +4245,123 @@ static void drawEntry() {
   }
 }
 
+// ============================================================ the settings (Triangle), STAGE 1's briefing
+#define SETTINGS_FILE QL_DATA_DIR "/settings.bin"
+#define SETTINGS_ITEMS 4
+static void loadSettings() {
+  FILE *f = fopen(SETTINGS_FILE, "rb");
+  if (!f) return;
+  uint8_t b[2];
+  if (fread(b, 1, 2, f) == 2) {
+    musicOn[1].store(b[0] != 0);
+    musicOn[0].store(b[1] != 0);
+  }
+  fclose(f);
+}
+static void saveSettings() {
+  mkdir(QL_DATA_DIR, 0777);
+  FILE *f = fopen(SETTINGS_FILE, "wb");
+  if (!f) return;
+  uint8_t b[2] = { (uint8_t)musicOn[1].load(), (uint8_t)musicOn[0].load() };
+  fwrite(b, 1, 2, f);
+  fclose(f);
+}
+
+static void quitToTitle();
+
+static void updateSettings() {
+  if (pressed & BTN_UP) { settingsSel = (settingsSel + SETTINGS_ITEMS - 1) % SETTINGS_ITEMS; quitConfirm = false; sfxPlay(SFX_KEY); }
+  if (pressed & BTN_DOWN) { settingsSel = (settingsSel + 1) % SETTINGS_ITEMS; quitConfirm = false; sfxPlay(SFX_KEY); }
+  bool go = (pressed & (BTN_JUMP | BTN_USE)) != 0;
+  bool side = (pressed & (BTN_LEFT | BTN_RIGHT)) != 0;
+  if (settingsSel <= 1 && (go || side)) {          // the music: on / off
+    int k = settingsSel == 0 ? 1 : 0;
+    musicOn[k].store(!musicOn[k].load());
+    saveSettings();
+    sfxPlay(SFX_CLICK);
+  } else if (settingsSel == 2 && go) {             // QUIT TO TITLE: X twice
+    if (quitConfirm) quitToTitle();
+    else quitConfirm = true;
+    sfxPlay(SFX_CLICK);
+  } else if (settingsSel == 3 && go) {             // RESUME
+    settingsOn = false;
+    sfxPlay(SFX_CLICK);
+  }
+}
+
+static void drawSettings() {
+  gfxClipAll();
+  blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 2, 4, 8, 0.72f);
+  int x0 = 330, y0 = 150, x1 = 950, y1 = 560;
+  fillRect(x0, y0, x1, y1, rgb565(12, 16, 26));
+  drawRectOutline(x0, y0, x1, y1, rgb565(90, 220, 255), 3);
+  drawVectorText("SETTINGS", SCREEN_W / 2, y0 + 40, 4.4f, rgb565(90, 220, 255), true);
+  drawVectorText("GAME PAUSED", SCREEN_W / 2, y0 + 82, 2.2f, rgb565(255, 190, 70), false);
+  for (int i = 0; i < SETTINGS_ITEMS; i++) {
+    int y = y0 + 140 + i * 58;
+    bool sel = i == settingsSel;
+    if (sel) fillRect(x0 + 24, y - 22, x1 - 24, y + 22, rgb565(36, 60, 90));
+    uint16_t c = sel ? rgb565(255, 230, 120) : rgb565(220, 226, 236);
+    const char *label = i == 0 ? "STAGE MUSIC" : i == 1 ? "ELEVATOR MUSIC" : i == 2 ? (quitConfirm ? "X AGAIN TO QUIT" : "QUIT TO TITLE") : "RESUME";
+    if (i <= 1) {
+      bool on = musicOn[i == 0 ? 1 : 0].load();
+      drawVectorText(label, x0 + 50 + vectorTextWidth(label, 3.0f) / 2, y, 3.0f, c, true);
+      const char *v = on ? "ON" : "OFF";
+      drawVectorText(v, x1 - 60 - vectorTextWidth(v, 3.0f) / 2, y, 3.0f, on ? rgb565(100, 240, 140) : rgb565(255, 90, 70), true);
+    } else {
+      drawVectorText(label, SCREEN_W / 2, y, 3.0f, i == 2 && quitConfirm ? rgb565(255, 90, 70) : c, true);
+    }
+  }
+  drawVectorText("UP / DOWN: CHOOSE    X: CHANGE    TRIANGLE: BACK", SCREEN_W / 2, y1 - 26, 1.8f, rgb565(150, 158, 176), false);
+}
+
+// STAGE 1: what it is about, with the generators to find
+static void drawBriefing() {
+  gfxClipAll();
+  float k = fminf(1.0f, briefingT / 0.4f);
+  blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 2, 4, 8, 0.75f * k);
+  if (briefingT < 0.2f) return;
+  int x0 = 250, y0 = 80, x1 = 1030, y1 = 660;
+  fillRect(x0, y0, x1, y1, rgb565(10, 12, 20));
+  drawRectOutline(x0, y0, x1, y1, rgb565(255, 190, 70), 3);
+  fillRect(x0 + 3, y0 + 3, x1 - 3, y0 + 64, rgb565(60, 36, 10));
+  drawVectorTextW("STAGE 1", SCREEN_W / 2, y0 + 34, 5.0f, rgb565(255, 210, 90), 2.6f);
+  drawVectorText("ABANDONED FACILITY", SCREEN_W / 2, y0 + 106, 4.0f, rgb565(230, 236, 245), true);
+  char b[64];
+  snprintf(b, sizeof(b), "COUNTDOWN TO POWER FAILURE %d:%02d", GAME_SECONDS / 60, GAME_SECONDS % 60);
+  drawVectorText(b, SCREEN_W / 2, y0 + 156, 3.0f, rgb565(255, 90, 70), true);
+  snprintf(b, sizeof(b), "RESTORE %d GENERATORS", GENERATORS);
+  drawVectorText(b, SCREEN_W / 2, y0 + 206, 3.4f, rgb565(100, 240, 140), true);
+  // the generators: off, as he will find them
+  for (int g = 0; g < GENERATORS; g++) {
+    int cx = SCREEN_W / 2 - 200 + g * 200, fy = y0 + 400;
+    fillRect(cx - 80, fy - 150, cx + 80, fy + 14, rgb565(30, 36, 48));
+    drawRectOutline(cx - 80, fy - 150, cx + 80, fy + 14, rgb565(90, 100, 120), 2);
+    fillRect(cx - 78, fy, cx + 78, fy + 12, rgb565(60, 64, 72));
+    paintGenerator(cx, fy);
+    drawGeneratorLive(cx, fy, 0.0f, false);
+    snprintf(b, sizeof(b), "%d", g + 1);
+    drawVectorText(b, cx - 62, fy - 134, 2.2f, rgb565(255, 190, 70), true);
+  }
+  drawVectorText("SEARCH EACH ONE TO THROW ITS LEVER", SCREEN_W / 2, y0 + 450, 2.4f, rgb565(170, 178, 196), false);
+  if (briefingT > 0.8f && fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, y1 - 40, 3.4f, rgb565(240, 240, 245), true);
+}
+
 // ============================================================ the game
 // ============================================================ the title
 static bool onTitle = true;
 
 static inline float pulseOf(float t) { return 0.5f + 0.5f * sinf(t); }
 
-// The story on the title screen: a classified transmission, typed out line by
-// line, now and then glitching as reality wavers; the last line in red
 static float titleT = 0;                 // seconds on the title screen
-static const char *const titleStory[] = {
-  "A TOP-SECRET EXPERIMENT DESIGNED TO MANIPULATE",
-  "TIME AND MATTER HAS GONE CATASTROPHICALLY WRONG.",
-  "THE FACILITY'S DIRECTOR, PROFESSOR ADRIAN VOSS,",
-  "HAS TAKEN CONTROL OF THE INSTALLATION AND",
-  "ACTIVATED A DEVICE KNOWN AS THE QUANTUM CORE.",
-  "",
-  "THE MACHINE IS NOW DESTABILISING REALITY ITSELF.",
-};
-#define STORY_LINES (int)(sizeof(titleStory) / sizeof(titleStory[0]))
-#define STORY_CHARS_PER_SECOND 38.0f
-#define TITLE_STORY 16.0f                // the title's panel: the story this long...
-#define TITLE_CYCLE 26.0f                // ...then the high scores, round and round
+#define TITLE_STORY 15.0f                // the title's panel: the mission objectives this long...
+#define TITLE_CYCLE 30.0f                // ...then the high scores as long, round and round
 
 // The top 5, in the title's panel (it takes turns with the story)
+#define TPANEL_Y0 214                    // the title's panel (objectives / high scores)
+#define TPANEL_Y1 540
 static void drawTitleScores(float t) {
-  const int x0 = 196, x1 = 1084, y0 = 250, y1 = 572;
+  const int x0 = 196, x1 = 1084, y0 = TPANEL_Y0, y1 = TPANEL_Y1;
   float f = fminf(1.0f, t / 0.5f);
   blendRect(x0, y0, x1, y1, 4, 10, 16, 0.78f);
   drawRectOutline(x0, y0, x1, y1, rgb565(60, 170, 190), 2);
@@ -4275,69 +4373,102 @@ static void drawTitleScores(float t) {
     if (k <= 0) continue;
     char b[64];
     hiLine(b, sizeof(b), hiTable[r], r + 1);
-    drawVectorText(b, SCREEN_W / 2, y0 + 110 + r * 44, 3.2f, r == 0 ? dimmed(255, 220, 120, k) : dimmed(236, 236, 242, k), true);
+    drawVectorText(b, SCREEN_W / 2, y0 + 108 + r * 44, 3.2f, r == 0 ? dimmed(255, 220, 120, k) : dimmed(236, 236, 242, k), true);
   }
   for (int y = y0 + 34; y < y1 - 2; y += 4) blendRect(x0 + 2, y, x1 - 2, y, 0, 0, 0, 0.18f);
 }
 
-static void drawTitleStory() {
-  const int x0 = 196, x1 = 1084, y0 = 250, y1 = 572;
+// MISSION OBJECTIVES, in the title's panel (it takes turns with the high scores)
+static void drawTitleObjectives(float t) {
+  const int x0 = 196, x1 = 1084, y0 = TPANEL_Y0, y1 = TPANEL_Y1;
   blendRect(x0, y0, x1, y1, 4, 10, 16, 0.78f);
   drawRectOutline(x0, y0, x1, y1, rgb565(60, 170, 190), 2);
   fillRect(x0 + 2, y0 + 2, x1 - 2, y0 + 30, rgb565(70, 16, 14));
-  bool blinkHead = fmodf(titleT, 1.2f) < 0.8f;
-  drawVectorText("CLASSIFIED TRANSMISSION", x0 + 22 + vectorTextWidth("CLASSIFIED TRANSMISSION", 2.2f) / 2, y0 + 16, 2.2f,
-                 blinkHead ? rgb565(255, 90, 70) : rgb565(150, 50, 40), true);
-  drawVectorText("FACILITY Q-7  //  PRIORITY ONE", x1 - 22 - vectorTextWidth("FACILITY Q-7  //  PRIORITY ONE", 1.8f) / 2, y0 + 16, 1.8f,
-                 rgb565(220, 150, 140), false);
-  // the text, typed out
-  float typed = (titleT - 0.6f) * STORY_CHARS_PER_SECOND;
-  int lx = x0 + 34, curLine = -1, curCol = 0;
-  // now and then a glitch: one line jumps sideways in two colours
-  float g = fmodf(titleT, 2.9f);
-  int glitchLine = g < 0.14f ? ((int)(titleT / 2.9f) * 5 + 3) % STORY_LINES : -1;
-  for (int l = 0; l < STORY_LINES; l++) {
-    int len = (int)strlen(titleStory[l]);
-    int show = typed <= 0 ? 0 : (typed >= len ? len : (int)typed);
-    typed -= len + 6;                          // (a little pause at each line's end)
-    if (show <= 0) continue;
-    char part[64];
-    snprintf(part, sizeof(part), "%.*s", show, titleStory[l]);
-    float y = y0 + 64 + l * 38;
-    float w = vectorTextWidth(part, 2.5f);
-    bool last = (l == STORY_LINES - 1);
-    uint16_t col = last ? rgb565(255, 70 + (int)(40 * pulseOf(titleT * 3.0f)), 50) : rgb565(170, 236, 246);
-    if (l == glitchLine) {
-      float jx = 8.0f * sinf(titleT * 90.0f);
-      drawVectorText(part, lx + w / 2 + jx - 3, y, 2.5f, rgb565(255, 40, 60), true);
-      drawVectorText(part, lx + w / 2 - jx + 3, y, 2.5f, rgb565(40, 220, 255), true);
-    } else {
-      drawVectorText(part, lx + w / 2, y, 2.5f, col, true);
+  bool blinkHead = fmodf(t, 1.2f) < 0.8f;
+  drawVectorText("MISSION OBJECTIVES", SCREEN_W / 2, y0 + 16, 2.4f, blinkHead ? rgb565(255, 110, 80) : rgb565(170, 60, 44), true);
+  static const char *const obj[3] = { "POWER ON THE GENERATORS", "FIND ALL QUANTUM DRIVES", "UNLOCK SUB BASEMENT ACCESS" };
+  for (int i = 0; i < 3; i++) {
+    float k = clampv((t - 0.3f - i * 0.5f) / 0.4f, 0.0f, 1.0f);
+    if (k <= 0) continue;
+    float y = y0 + 92 + i * 90;
+    float slide = (1.0f - k) * 60;
+    char b[48];
+    snprintf(b, sizeof(b), "%d.", i + 1);
+    drawVectorText(b, x0 + 70 - slide, y, 4.0f, dimmed(255, 190, 70, k), true);
+    // its picture
+    int ix = (int)(x0 + 160 - slide), iy = (int)y;
+    if (i == 0) {                        // a generator, its lamp green
+      fillRect(ix - 30, iy - 18, ix + 22, iy + 16, rgb565(214, 168, 40));
+      fillRect(ix - 30, iy - 18, ix + 22, iy - 15, rgb565(246, 206, 90));
+      fillRect(ix - 24, iy - 12, ix - 4, iy + 10, rgb565(34, 36, 40));
+      fillRect(ix + 24, iy - 22, ix + 36, iy + 16, rgb565(70, 76, 88));
+      fillCircle(ix + 30, iy - 16, 4, rgb565(80, 255, 120));
+      fillRect(ix - 34, iy + 16, ix + 38, iy + 22, rgb565(34, 36, 40));
+    } else if (i == 1) {                 // a quantum drive
+      drawQuantumDrive((float)ix, (float)iy, 0.5f, fmodf(t, 0.8f) < 0.55f);
+    } else {                             // the lift going down
+      fillRect(ix - 26, iy - 26, ix + 26, iy + 26, rgb565(60, 66, 80));
+      drawRectOutline(ix - 26, iy - 26, ix + 26, iy + 26, rgb565(150, 156, 168), 2);
+      int ax[7] = { ix, ix + 16, ix + 7, ix + 7, ix - 7, ix - 7, ix - 16 };
+      int ay[7] = { iy + 18, iy + 2, iy + 2, iy - 16, iy - 16, iy + 2, iy + 2 };
+      fillPolygon(ax, ay, 7, rgb565(255, 220, 80));
     }
-    if (show < len) {
-      curLine = l;
-      curCol = show;
-    }
+    drawVectorText(obj[i], x0 + 230 - slide + vectorTextWidth(obj[i], 3.4f) / 2, y, 3.4f, dimmed(236, 236, 242, k), true);
   }
-  // the cursor, after the last letter typed (or under the text once it is all out)
-  if (fmodf(titleT, 0.6f) < 0.35f) {
-    float cx, cy;
-    if (curLine >= 0) {
-      char part[64];
-      snprintf(part, sizeof(part), "%.*s", curCol, titleStory[curLine]);
-      cx = lx + vectorTextWidth(part, 2.5f) + 8;
-      cy = y0 + 64 + curLine * 38;
-    } else if (typed > 0) {             // all out: it waits at the end of the last line
-      cx = lx + vectorTextWidth(titleStory[STORY_LINES - 1], 2.5f) + 8;
-      cy = y0 + 64 + (STORY_LINES - 1) * 38;
-    } else {
-      cx = -100;
-      cy = 0;
-    }
-    if (cx > 0) fillRect((int)cx, (int)cy - 8, (int)cx + 10, (int)cy + 8, rgb565(170, 236, 246));
-  }
-  // scan lines over it all
   for (int y = y0 + 34; y < y1 - 2; y += 4) blendRect(x0 + 2, y, x1 - 2, y, 0, 0, 0, 0.18f);
+}
+
+// The title's effects: quantum motes drifting up, the quantum core turning
+// behind the name, a camera's beam sweeping, sparks crackling along the floor
+static void drawTitleEffects() {
+  float t = clockT;
+  // a security camera's beam, sweeping the dark
+  {
+    float cx = 1240, cy = 0, a = (-30.0f + 22.0f * sinf(t * 0.6f)) * 0.017453293f;
+    float xs[3] = { cx, cx + sinf(a - 0.09f) * 1500, cx + sinf(a + 0.09f) * 1500 };
+    float ys[3] = { cy, cy + cosf(a - 0.09f) * 1500, cy + cosf(a + 0.09f) * 1500 };
+    blendPolygonF(xs, ys, 3, 255, 240, 170, 0.06f);
+  }
+  // the quantum core: a glowing heart, three orbits turning round it, a particle on each
+  const float qx = SCREEN_W / 2, qy = 108;
+  float pulse = 0.5f + 0.5f * sinf(t * 2.3f);
+  glowDisc(qx, qy, 230, 40, 120, 255, 0.10f + 0.06f * pulse);
+  glowDisc(qx, qy, 70, 120, 200, 255, 0.25f + 0.2f * pulse);
+  for (int o = 0; o < 3; o++) {
+    float rot = t * (0.25f + o * 0.08f) + o * 1.047f;
+    float ra = 300, rb = 54;
+    float cr = cosf(rot), sr = sinf(rot);
+    float px = 0, py = 0;
+    for (int k = 0; k <= 48; k++) {
+      float u = k * TWO_PI / 48;
+      float ex = cosf(u) * ra, ey = sinf(u) * rb;
+      float x = qx + ex * cr - ey * sr, y = qy + ex * sr * 0.35f + ey * cr;
+      if (k) drawLineF(px, py, x, y, o == 1 ? rgb565(70, 40, 110) : rgb565(30, 70, 110), 1.2f);
+      px = x;
+      py = y;
+    }
+    float u = t * (1.6f + o * 0.5f) + o * 2.0f;
+    float ex = cosf(u) * ra, ey = sinf(u) * rb;
+    float x = qx + ex * cr - ey * sr, y = qy + ex * sr * 0.35f + ey * cr;
+    glowDisc(x, y, 22, 120, 220, 255, 0.7f);
+    fillCircle((int)x, (int)y, 3, rgb565(220, 245, 255));
+  }
+  // quantum motes drifting up
+  for (int i = 0; i < 46; i++) {
+    uint32_t h = (uint32_t)(i + 1) * 2654435761u;
+    float sp = 18 + (h >> 27) * 3.0f;
+    float x = (float)((h >> 8) % SCREEN_W) + 14 * sinf(t * 0.7f + i);
+    float y = SCREEN_H + 20 - fmodf(t * sp + (h >> 12) % SCREEN_H, (float)SCREEN_H + 40);
+    bool violet = (h >> 5) & 1;
+    float tw = 0.5f + 0.5f * sinf(t * 3.0f + i * 1.3f);
+    glowDisc(x, y, 9, violet ? 180 : 80, violet ? 90 : 200, 255, 0.35f + 0.35f * tw);
+  }
+  // sparks crackling along the floor now and then
+  if (fmodf(t, 3.2f) < 0.35f)
+    for (int k = 0; k < 4; k++) {
+      int x = fxRnd(60, SCREEN_W - 120);
+      drawArc(x, 708, x + fxRnd(40, 120), 708 - fxRnd(0, 24), 8, fxRnd(0, 2) ? rgb565(230, 245, 255) : rgb565(120, 200, 255), false);
+    }
 }
 
 static void drawTitle() {
@@ -4359,27 +4490,33 @@ static void drawTitle() {
     int y = (int)(k * 60 + off);
     drawLine(560, y, 720, y, rgb565(24, 28, 38), false);
   }
-  // the name, in big vector letters with a glow behind
+  drawTitleEffects();
+  // the name, in big vector letters with a glow behind (now and then reality glitches: it splits red and cyan)
   const char *w1 = "QUANTUM", *w2 = "LOCKDOWN";
   float pulse = 0.5f + 0.5f * sinf(clockT * 2.0f);
   uint16_t glow = rgb565(60 + (int)(40 * pulse), 34, 12), main = rgb565(255, 190, 70);
-  drawVectorTextW(w1, SCREEN_W / 2, 84, 11.0f, glow, 9.0f);
-  drawVectorTextW(w2, SCREEN_W / 2, 186, 11.0f, glow, 9.0f);
-  drawVectorTextW(w1, SCREEN_W / 2, 84, 11.0f, main, 3.4f);
-  drawVectorTextW(w2, SCREEN_W / 2, 186, 11.0f, main, 3.4f);
-  // the panel: the story (typed out), then the high scores, in turn
-  float cyc = fmodf(titleT, TITLE_CYCLE);
-  if (cyc < TITLE_STORY) {
-    float keep = titleT;
-    titleT = cyc;                        // (the story types out afresh each time round)
-    drawTitleStory();
-    titleT = keep;
-  } else {
-    drawTitleScores(cyc - TITLE_STORY);
+  const float ty1 = 62, ty2 = 156, ts = 10.0f;
+  bool glitch = fmodf(clockT, 4.3f) < 0.16f;
+  drawVectorTextW(w1, SCREEN_W / 2, ty1, ts, glow, 9.0f);
+  drawVectorTextW(w2, SCREEN_W / 2, ty2, ts, glow, 9.0f);
+  if (glitch) {
+    float j = 9.0f * sinf(clockT * 97.0f);
+    drawVectorTextW(w1, SCREEN_W / 2 - j, ty1, ts, rgb565(255, 40, 60), 3.0f);
+    drawVectorTextW(w2, SCREEN_W / 2 + j, ty2, ts, rgb565(40, 220, 255), 3.0f);
+    for (int k = 0; k < 3; k++) {          // tears across it
+      int y = fxRnd(20, 210);
+      blendRect(0, y, SCREEN_W - 1, y + fxRnd(2, 8), 120, 220, 255, 0.25f);
+    }
   }
-  if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 620, 4.0f, rgb565(240, 240, 245), true);
-  if (tuneProblem[0][0]) drawVectorText(tuneProblem[0], SCREEN_W / 2, 656, 1.8f, rgb565(220, 120, 90), false);
-  if (tuneProblem[1][0]) drawVectorText(tuneProblem[1], SCREEN_W / 2, 674, 1.8f, rgb565(220, 120, 90), false);
+  drawVectorTextW(w1, SCREEN_W / 2, ty1, ts, main, 3.4f);
+  drawVectorTextW(w2, SCREEN_W / 2, ty2, ts, main, 3.4f);
+  // the panel: the mission objectives, then the high scores, 15 seconds each
+  float cyc = fmodf(titleT, TITLE_CYCLE);
+  if (cyc < TITLE_STORY) drawTitleObjectives(cyc);
+  else drawTitleScores(cyc - TITLE_STORY);
+  if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 594, 4.0f, rgb565(240, 240, 245), true);
+  if (tuneProblem[0][0]) drawVectorText(tuneProblem[0], SCREEN_W / 2, 636, 1.8f, rgb565(220, 120, 90), false);
+  if (tuneProblem[1][0]) drawVectorText(tuneProblem[1], SCREEN_W / 2, 654, 1.8f, rgb565(220, 120, 90), false);
   char b[24];
   snprintf(b, sizeof(b), "VERSION %s", GAME_VERSION);
   drawVectorText(b, SCREEN_W / 2, 698, 1.8f, rgb565(100, 110, 130), false);
@@ -4411,6 +4548,7 @@ static void newGame() {
   itemShowT = nothingShowT = 0;
   drivesCarried = drivesLoaded = 0;
   bayBusy = termOn = false;
+  settingsOn = briefingOn = quitConfirm = false;
   powerPanelT = 0;
   leverT = -1;
   for (int i = 0; i < MAX_POPS; i++) popT[i] = 0;
@@ -4423,9 +4561,21 @@ static void goToTitle() {
   tuneWanted.store(0, std::memory_order_relaxed);
 }
 
+// QUIT TO TITLE: the game is dropped, as it is (no score, no table)
+static void quitToTitle() {
+  settingsOn = quitConfirm = false;
+  mapOn = termOn = briefingOn = bayBusy = false;
+  gameOver = END_NONE;
+  introT = -1;
+  liftHum.store(0, std::memory_order_relaxed);
+  droneHum.store(0, std::memory_order_relaxed);
+  goToTitle();
+}
+
 void gameInit(uint32_t seed) {
   gfxInit();
   loadHiScores();
+  loadSettings();
   layoutSeed = seed;
   paintShaftPicture();
   onTitle = true;
@@ -4479,14 +4629,39 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     mapOn = false;
   }
 
-  if (introT >= 0) {                     // the opening: no map, no clock, no control
+  // the settings (Triangle, not on the map): everything waits, the clock too
+  if ((pressed & BTN_NEW) && !mapOn && gameOver == END_NONE) {
+    settingsOn = !settingsOn;
+    settingsSel = 0;
+    quitConfirm = false;
+    pressed &= ~BTN_NEW;
+  }
+  if (settingsOn) {
+    updateSettings();
+    if (onTitle) {                       // (QUIT TO TITLE)
+      drawTitle();
+      return;
+    }
+    pressed = 0;
+  }
+
+  if (introT >= 0 && !settingsOn) {      // the opening: no map, no clock, no control
     updateIntro(dt);
     pressed = 0;
   }
 
+  if (briefingOn && !settingsOn) {       // STAGE 1's briefing: X and off he goes
+    briefingT += dt;
+    if ((pressed & BTN_JUMP) && briefingT > 0.8f) {
+      briefingOn = false;
+      showMsg("OPTIONS: THE MAP     TRIANGLE: SETTINGS", 5.0f);
+    }
+    pressed = 0;
+  }
+
   if ((pressed & BTN_MAP) && !termOn) mapOn = !mapOn;   // (the map pauses everything, the clock too)
-  if (mapOn) {
-    if (pressed & BTN_NEW) newGame();
+  if (mapOn || settingsOn || briefingOn) {
+    if (mapOn && (pressed & BTN_NEW)) newGame();
     pressed = 0;
   } else {
     if (gameOver == END_NONE && introT < 0) {
@@ -4560,7 +4735,9 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mode == MODE_ROOM && !termOn) drawScorePops();
   if (itemShowT > 0 && mode == MODE_ROOM && !mapOn) drawItemPanel();
   if (mapOn) drawMap();
-  else if (itemShowT <= 0) drawMessage();
+  else if (itemShowT <= 0 && !briefingOn && !settingsOn) drawMessage();
+  if (briefingOn && !mapOn) drawBriefing();
+  if (settingsOn) drawSettings();
   if (gameOver != END_NONE) drawGameOver();
   // the music: the lift's tune in the car, stage 1's everywhere else; the lift's motor
   tuneWanted.store(gameOver != END_NONE ? 0 : (mode == MODE_SHAFT && inCar(agX) && agState != ST_JUMP ? 1 : 2), std::memory_order_relaxed);
@@ -4570,7 +4747,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     for (int i = 0; i < liftCount && mode == MODE_ROOM; i++)
       if (lifts[i].moving) hum = (lifts[i].stops[lifts[i].at] < lifts[i].y ? 1 : 2) + 2;   // (3, 4: a pad - quieter)
   }
-  droneHum.store(mode == MODE_ROOM && curHazard == HZ_DRONE && !mapOn && gameOver == END_NONE ? 1 : 0, std::memory_order_relaxed);
+  droneHum.store(mode == MODE_ROOM && curHazard == HZ_DRONE && !mapOn && !settingsOn && gameOver == END_NONE ? 1 : 0, std::memory_order_relaxed);
   int was = liftHum.exchange(hum, std::memory_order_relaxed);
   if (was != 0 && hum == 0 && !mapOn) sfxPlay(SFX_LIFT_STOP);
   drawHud();
@@ -4600,6 +4777,7 @@ void gameDebugPos(float *x, float *y, int *state) {
 
 // For the PC test build: straight into room 1, made with layout tpl and the doors given
 void gameDebugRoom(int tpl, bool topL, bool topR, int hazard) {
+  briefingOn = settingsOn = false;
   if (onTitle) layOut(layoutSeed);
   onTitle = false;
   rooms[0].tpl = (uint8_t)(tpl % WIDE_ROOM_COUNT);
@@ -4611,6 +4789,7 @@ void gameDebugRoom(int tpl, bool topL, bool topR, int hazard) {
 
 // For the PC test build: drives in hand and generators on, then into QUANTUM CONTROL (by its left door)
 void gameDebugControl(int drives, int gens) {
+  briefingOn = settingsOn = false;
   if (onTitle) layOut(layoutSeed);
   onTitle = false;
   introT = -1;
@@ -4623,6 +4802,7 @@ void gameDebugControl(int drives, int gens) {
 }
 // For the PC test build: into a lift shaft (-1: the sub basement's) at a floor (-1: its lowest stop above the sub basement)
 void gameDebugShaft(int s, int f) {
+  briefingOn = settingsOn = false;
   if (s < 0) s = subShaft < 0 ? 0 : subShaft;
   if (f < 0) {
     f = 0;
@@ -4633,6 +4813,7 @@ void gameDebugShaft(int s, int f) {
 }
 // For the PC test build: a generator's room (n: 0, 1, 2), in by its left door
 void gameDebugGenerator(int n) {
+  briefingOn = settingsOn = false;
   if (onTitle) layOut(layoutSeed);
   onTitle = false;
   introT = -1;
