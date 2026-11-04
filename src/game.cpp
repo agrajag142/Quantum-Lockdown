@@ -39,7 +39,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "023"
+#define GAME_VERSION      "024"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -104,7 +104,15 @@
 #define BIN_H             104
 #define AID_X             170      // ...and every walkway on the left: the first aid cabinet (once each)
 #define KITCHEN_DECK_Y    360      // the kitchen: its storage deck (the floor is the cooking)
-#define CHEF_SPEED        62.0f
+#define CLEAN_MID_Y       440      // the cleaning room: three levels - the floor (the front counter), the office...
+#define CLEAN_TOP_Y       200      // ...and the stores at the top
+#define NPC_SPEED         62.0f    // the lab's people walking their paths
+#define NPC_SIGHT         330      // facing him, on his level, this close: they notice him...
+#define SUSP_STEP         0.7f     // ...a suspicion point every this many seconds he looks at them (twice as fast searching)
+#define SUSP_MAX          5        // ...this many: recognised - back out to the lift area, the clock down
+#define RECOGNISED_TIME_LOST 30
+#define CARD_SHOW         3.2f     // ACCESS CARD LEVEL n FOUND: seconds on screen
+#define S2_ITEMS          16       // searchable things in a lab room, at most
 #define RIDE_SECONDS      20.0f    // the QUANTUMLOOP journey
 #define LOOP_POWER_X      500      // the station: the QUANTUMLOOP's power switch...
 #define LOOP_DOOR_X       800      // ...and its doors (the middle of the portal)
@@ -237,8 +245,22 @@ static uint8_t s2Act = 0;                    // what he is doing instead of movi
 static float s2ActT = 0, binPT = 0;
 static int binPhase = 0;
 static bool bodyCarried = false;
-static int chefPath = 0, chefDir = 1;        // the kitchen's chef: on one of two paths (0 the floor, 1 the deck), back and forth
-static float chefX = 0, chefT = 0, chefPause = 0;
+struct Npc {                                 // the lab's people (the chef, the cleaners): back and forth along a path
+  uint8_t kind;                              // PersonKind
+  float x, y, a, b;                          // where; the level they're on; the ends of the path
+  int dir;
+  float t, pause;                            // (walking / working at an end)
+  bool watching;                             // suspicious of him: stopped, staring
+};
+static Npc npcs[3];
+static int npcCount = 0;
+static int susp = 0;                         // suspicion points (SUSP_MAX: recognised)
+static float suspT = 0;
+static bool s2Recog = false;                 // recognised: hands up, then out to the lift area
+static float cardShowT = 0;                  // ACCESS CARD LEVEL n FOUND
+static int cardShown = 0;
+static bool s2Searched[S2_ROOMS][S2_ITEMS];  // the lab rooms' equipment: searched...
+static float s2Prog[S2_ROOMS][S2_ITEMS];     // ...how far
 
 // Does lift s stop at floor f? Is there a walkway on this side (0 left)?
 static bool s2Stops(int s, int f) { return s >= 0 && s < S2_LIFTS && ((f >= 0 && f <= S2_LEVELS - 1 - s) || (s == 0 && f == S2_ARRIVAL)); }
@@ -439,7 +461,8 @@ static void layOutStage2() {
       ri.seed = (uint16_t)rnd32();
       ri.noRightDoor = f > S2_LEVELS - 2 - s;   // (the next lift doesn't come down this far)
       s2Kind[n] = LK_LAB;
-      s2Lvl[n] = (uint8_t)(s + 1 > 5 ? 5 : s + 1);   // lift B's rooms level 2 ... E's and F's level 5
+      s2Lvl[n] = (uint8_t)(s + 1 > 5 ? 5 : s + 1);   // a column's rooms all the same: lift A's level 1, B's 2 ... E's and F's 5
+      for (int k = 0; k < S2_ITEMS; k++) { s2Searched[n][k] = false; s2Prog[n][k] = 0; }
       s2Room[s][f] = (int8_t)n++;
     }
   // lift A's six rooms, in a random order: the kitchen (level 1: the maintenance man's card), the rest 2..5
@@ -453,7 +476,6 @@ static void layOutStage2() {
   for (int f = 0; f < S2_LEVELS; f++) {
     int idx = s2Room[0][f];
     s2Kind[idx] = kinds[f];
-    s2Lvl[idx] = (uint8_t)(kinds[f] == LK_KITCHEN ? 1 : 2 + rnd(4));
   }
   memset(roomAt, -1, sizeof(roomAt));
   wkFloor = rnd(S2_LEVELS);
@@ -466,6 +488,8 @@ static void layOutStage2() {
   s2Disguised = false;
   s2Act = 0;
   bodyCarried = false;
+  susp = 0;
+  cardShowT = 0;
 }
 
 // ============================================================ where we are
@@ -510,8 +534,13 @@ struct Decor {
   uint8_t kind;
   int16_t x, y;                    // middle, and the top of what it stands on
   uint16_t seed;                   // its blinking lights
+  int16_t w, h;                    // (DEC_LAB: its size - the lab rooms' equipment is painted with the room)
 };
-static Decor decor[MAX_DECOR + 2];       // (the equipment, then a first aid kit and a power generator if the room has them)
+#define DEC_LAB (DEC_GENERATOR + 1)
+#define DECOR_SLOTS 16
+static Decor decor[DECOR_SLOTS];         // (the equipment, then a first aid kit and a power generator if the room has them; the lab: its things)
+static int dW(int i) { return decor[i].kind == DEC_LAB ? decor[i].w : decorW[decor[i].kind]; }
+static int dH(int i) { return decor[i].kind == DEC_LAB ? decor[i].h : decorH[decor[i].kind]; }
 static int decorCount = 0;
 
 // On the walls, only to look at: red warning lights, fans (a big one where
@@ -1493,8 +1522,33 @@ static void drawDecorAnim() {
   }
 }
 
+// The lab rooms' things to search (painted with the room): x middle, y the level, w, h
+struct LabItem { int16_t x, y, w, h; };
+static const LabItem kitchenItems[] = {
+  { 325, ROOM_FLOOR_Y, 150, 236 }, { 570, ROOM_FLOOR_Y, 260, 92 }, { 865, ROOM_FLOOR_Y, 250, 82 }, { 1110, ROOM_FLOOR_Y, 160, 90 },   // fridge, range, prep table, sink
+  { 395, KITCHEN_DECK_Y, 250, 186 }, { 680, KITCHEN_DECK_Y, 240, 186 }, { 890, KITCHEN_DECK_Y, 140, 100 }, { 1115, KITCHEN_DECK_Y, 250, 186 } };   // the racks, boxes and water
+static const LabItem cleaningItems[] = {
+  { 325, ROOM_FLOOR_Y, 150, 190 }, { 470, ROOM_FLOOR_Y, 100, 56 }, { 720, ROOM_FLOOR_Y, 320, 100 }, { 990, ROOM_FLOOR_Y, 140, 190 }, { 1140, ROOM_FLOOR_Y, 100, 110 },   // shelves, buckets, the counter, shelves, the trolley
+  { 325, CLEAN_MID_Y, 90, 170 }, { 430, CLEAN_MID_Y, 90, 170 }, { 650, CLEAN_MID_Y, 180, 110 }, { 825, CLEAN_MID_Y, 70, 130 }, { 990, CLEAN_MID_Y, 140, 80 }, { 1160, CLEAN_MID_Y, 120, 60 },   // cupboards, desk, filing cabinet, boxes
+  { 350, CLEAN_TOP_Y, 140, 80 }, { 545, CLEAN_TOP_Y, 150, 70 }, { 730, CLEAN_TOP_Y, 100, 120 }, { 910, CLEAN_TOP_Y, 140, 80 }, { 1120, CLEAN_TOP_Y, 160, 66 } };   // crates, boxes, the mops, crates, boxes
+static void placeLabItems(int idx) {
+  decorCount = 0;
+  auto add = [](const LabItem &it) {
+    if (decorCount >= DECOR_SLOTS) return;
+    Decor &d = decor[decorCount++];
+    d.kind = DEC_LAB;
+    d.x = it.x; d.y = it.y; d.w = it.w; d.h = it.h;
+    d.seed = 0;
+  };
+  if (s2Kind[idx] == LK_KITCHEN) for (const LabItem &it : kitchenItems) add(it);
+  if (s2Kind[idx] == LK_CLEANING) for (const LabItem &it : cleaningItems) add(it);
+}
 static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
   decorCount = 0;
+  if (stage == 2 && &ri - rooms < S2_ROOMS) {   // the lab: its rooms' own things
+    placeLabItems((int)(&ri - rooms));
+    return;
+  }
   if (&ri - rooms >= ROOM_COUNT) return;   // (no equipment in QUANTUM CONTROL or the sub basement)
   uint32_t save = rngState;
   rngState = ri.seed * 2654435761u + 12345u;
@@ -1513,6 +1567,7 @@ static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
     for (int k = 0; k < DEC_KINDS && used[kind]; k++) kind = (kind + 1) % DEC_KINDS;
     used[kind] = true;
     Decor &d = decor[decorCount++];
+    d.w = d.h = 0;
     d.kind = (uint8_t)kind;
     d.x = s.x;
     d.y = s.y;
@@ -2404,16 +2459,203 @@ static void paintKitchen() {
   drawVectorText("STORES", 1020, 160, 2.2f, rgb565(110, 120, 140), false);
 }
 
+// ---- the cleaning room: the front counter on the floor, the office in the middle, the stores at the top
+static void paintDeckSlab(int y) {
+  fillRect(224, y, SCREEN_W - 1, y + PLAT_T - 1, rgb565(196, 200, 208));
+  fillRect(224, y, SCREEN_W - 1, y + 2, rgb565(244, 246, 250));
+  fillRect(224, y + PLAT_T - 3, SCREEN_W - 1, y + PLAT_T - 1, rgb565(150, 156, 166));
+  for (int x = 300; x < SCREEN_W - 40; x += 230) fillRect(x, y + PLAT_T + 1, x + 90, y + PLAT_T + 4, rgb565(250, 252, 255));   // lights under it
+}
+
+static void paintCrates(int x0, int w, int fy, int seed) {                    // wooden crates, stacked
+  int cw = w / 2 - 2;
+  for (int k = 0; k < 3; k++) {
+    int bx = x0 + (k == 2 ? cw / 2 : k * (cw + 4)), by = fy - (k == 2 ? 40 : 0);
+    if (k == 2 && seed % 2) continue;
+    fillRect(bx, by - 40, bx + cw, by - 1, rgb565(176, 136, 86));
+    drawRectOutline(bx, by - 40, bx + cw, by - 1, rgb565(120, 88, 50), 2);
+    drawLine(bx + 2, by - 38, bx + cw - 2, by - 3, rgb565(130, 96, 56), true);
+    fillRect(bx, by - 22, bx + cw, by - 19, rgb565(130, 96, 56));
+  }
+}
+
+static void paintShelfUnit(int x0, int x1, int fy, int seed) {                 // a steel shelf unit full of cleaning products
+  uint16_t post = rgb565(150, 156, 166);
+  int top = fy - 190;
+  fillRect(x0, top, x0 + 4, fy - 1, post);
+  fillRect(x1 - 4, top, x1, fy - 1, post);
+  for (int k = 0; k < 3; k++) {
+    int sy = fy - 8 - k * 60;
+    fillRect(x0, sy, x1, sy + 4, rgb565(176, 182, 192));
+    for (int n = 0, x = x0 + 8; x < x1 - 20; n++) {
+      int what = (seed + k * 2 + n) % 4, w;
+      if (what == 0) {                                                     // spray bottles
+        w = 16;
+        uint16_t c = (n + k) % 2 ? rgb565(60, 160, 220) : rgb565(230, 80, 120);
+        fillRect(x, sy - 30, x + 12, sy - 1, c);
+        fillRect(x + 3, sy - 38, x + 9, sy - 30, rgb565(240, 240, 240));
+        fillRect(x + 9, sy - 38, x + 14, sy - 35, rgb565(240, 240, 240));
+      } else if (what == 1) {                                              // a jug of bleach
+        w = 26;
+        fillRect(x, sy - 36, x + 22, sy - 1, rgb565(240, 240, 236));
+        fillRect(x + 4, sy - 42, x + 12, sy - 36, rgb565(60, 120, 200));
+        fillRect(x + 3, sy - 24, x + 19, sy - 14, rgb565(240, 200, 60));
+      } else if (what == 2) {                                              // toilet rolls
+        w = 30;
+        for (int r = 0; r < 2; r++)
+          for (int c2 = 0; c2 < 2; c2++) fillRect(x + c2 * 14, sy - 14 - r * 14, x + c2 * 14 + 12, sy - 3 - r * 14, rgb565(250, 250, 250));
+      } else {                                                             // a box of detergent
+        w = 28;
+        fillRect(x, sy - 34, x + 24, sy - 1, rgb565(240, 130, 40));
+        fillRect(x + 3, sy - 26, x + 21, sy - 18, rgb565(250, 250, 250));
+      }
+      x += w + 6;
+    }
+  }
+}
+
+static void paintBuckets(int x0, int fy) {
+  int bx[4] = { x0 + 2, x0 + 26, x0 + 52, 0 }, h[3] = { 34, 30, 40 };
+  uint16_t c[3] = { rgb565(220, 50, 40), rgb565(50, 120, 220), rgb565(240, 200, 40) };
+  for (int k = 0; k < 3; k++) {
+    int xs[4] = { bx[k], bx[k] + 24, bx[k] + 20, bx[k] + 4 }, ys[4] = { fy - h[k], fy - h[k], fy - 1, fy - 1 };
+    fillPolygon(xs, ys, 4, c[k]);
+    fillRect(bx[k], fy - h[k] - 2, bx[k] + 24, fy - h[k], rgb565(60, 60, 64));
+  }
+  fillRect(x0 + 58, fy - 56, x0 + 70, fy - 40, rgb565(120, 120, 126));   // the wringer on the yellow one
+}
+
+static void paintCounter(int x0, int x1, int fy) {                             // the front counter
+  int top = fy - 100;
+  fillRect(x0 + 40, top - 104, x1 - 40, top - 30, rgb565(196, 200, 208));      // a notice board behind it
+  fillRect(x0 + 44, top - 100, x1 - 44, top - 34, rgb565(176, 136, 96));
+  for (int k = 0; k < 6; k++) fillRect(x0 + 60 + k * 36, top - 92 + (k % 2) * 8, x0 + 88 + k * 36, top - 62 + (k % 2) * 8, rgb565(250, 250, 240));
+  fillRect(x0, top, x1, top + 10, rgb565(70, 76, 90));                         // the top
+  fillRect(x0 + 6, top + 10, x1 - 6, fy - 1, rgb565(60, 140, 160));            // the front
+  fillRect(x0 + 6, top + 10, x1 - 6, top + 14, rgb565(90, 180, 196));
+  fillRect(x0 + 6, fy - 10, x1 - 6, fy - 1, rgb565(40, 100, 116));
+  drawVectorText("CLEANING SERVICES", (x0 + x1) / 2.0f, top + 50, 2.4f, rgb565(250, 252, 255), true);
+  fillCircle(x1 - 40, top - 6, 7, rgb565(220, 200, 80));                       // the bell
+  fillRect(x1 - 48, top - 2, x1 - 32, top, rgb565(60, 60, 66));
+  fillRect(x0 + 30, top - 30, x0 + 70, top - 1, rgb565(240, 240, 236));        // a sign-in book
+  fillRect(x0 + 50, top - 30, x0 + 51, top - 1, rgb565(150, 150, 150));
+}
+
+static void paintTrolley(int x0, int fy) {                                     // the cleaning trolley
+  fillRect(x0 + 6, fy - 90, x0 + 94, fy - 86, rgb565(150, 156, 166));
+  fillRect(x0 + 6, fy - 40, x0 + 94, fy - 36, rgb565(150, 156, 166));
+  fillRect(x0 + 6, fy - 90, x0 + 10, fy - 12, rgb565(150, 156, 166));
+  fillRect(x0 + 90, fy - 90, x0 + 94, fy - 12, rgb565(150, 156, 166));
+  fillRect(x0 + 50, fy - 86, x0 + 88, fy - 40, rgb565(40, 40, 44));            // the bin bag
+  fillRect(x0 + 14, fy - 110, x0 + 30, fy - 90, rgb565(60, 160, 220));         // bottles on top
+  fillRect(x0 + 34, fy - 104, x0 + 46, fy - 90, rgb565(230, 80, 120));
+  drawLine(x0 + 4, fy - 12, x0 + 30, fy - 150, rgb565(170, 130, 80), true);    // a broom leaning in it
+  fillCircle(x0 + 16, fy - 6, 6, rgb565(30, 30, 34));
+  fillCircle(x0 + 84, fy - 6, 6, rgb565(30, 30, 34));
+}
+
+static void paintCupboardTall(int cx, int fy) {
+  int x0 = cx - 44, x1 = cx + 44, top = fy - 170;
+  fillRect(x0, top, x1, fy - 1, rgb565(170, 178, 190));
+  fillRect(x0, top, x1, top + 3, rgb565(210, 216, 226));
+  fillRect(cx - 1, top + 6, cx + 1, fy - 6, rgb565(120, 128, 140));
+  fillRect(cx - 10, top + 70, cx - 6, top + 100, rgb565(90, 96, 106));
+  fillRect(cx + 6, top + 70, cx + 10, top + 100, rgb565(90, 96, 106));
+  for (int y = top + 14; y < top + 34; y += 5) {                              // vents
+    fillRect(x0 + 10, y, cx - 10, y + 1, rgb565(130, 138, 150));
+    fillRect(cx + 10, y, x1 - 10, y + 1, rgb565(130, 138, 150));
+  }
+}
+
+static void paintOfficeDesk(int x0, int x1, int fy) {
+  int top = fy - 72;
+  fillRect(x0, top, x1, top + 8, rgb565(150, 110, 70));
+  fillRect(x0 + 6, top + 8, x0 + 12, fy - 1, rgb565(110, 80, 50));
+  fillRect(x1 - 60, top + 8, x1 - 6, fy - 1, rgb565(130, 94, 60));            // its drawers
+  fillRect(x1 - 60, top + 30, x1 - 6, top + 31, rgb565(100, 72, 46));
+  int mx = (x0 + x1) / 2 - 10;                                               // the computer
+  fillRect(mx - 34, top - 52, mx + 34, top - 10, rgb565(40, 44, 52));
+  fillRect(mx - 30, top - 48, mx + 30, top - 14, rgb565(30, 90, 120));
+  for (int k = 0; k < 4; k++) fillRect(mx - 26, top - 44 + k * 7, mx - 26 + 20 + (k * 13) % 30, top - 42 + k * 7, rgb565(120, 220, 255));
+  fillRect(mx - 4, top - 10, mx + 4, top - 1, rgb565(40, 44, 52));
+  fillRect(mx - 30, top - 5, mx + 20, top - 1, rgb565(60, 64, 72));            // keyboard
+  fillRect(x0 + 16, top - 18, x0 + 40, top - 1, rgb565(240, 240, 236));        // papers, a mug
+  fillRect(x1 - 30, top - 14, x1 - 18, top - 1, rgb565(200, 60, 50));
+  fillRect(x0 - 30, fy - 40, x0 + 6, fy - 34, rgb565(50, 54, 62));            // the chair
+  fillRect(x0 - 30, fy - 80, x0 - 24, fy - 34, rgb565(50, 54, 62));
+  fillRect(x0 - 14, fy - 34, x0 - 10, fy - 6, rgb565(90, 96, 106));
+  fillRect(x0 - 28, fy - 6, x0 + 4, fy - 3, rgb565(90, 96, 106));
+}
+
+static void paintFilingCabinet(int cx, int fy) {
+  int x0 = cx - 34, x1 = cx + 34, top = fy - 130;
+  fillRect(x0, top, x1, fy - 1, rgb565(150, 160, 172));
+  for (int k = 0; k < 4; k++) {
+    int y = top + 4 + k * 31;
+    fillRect(x0 + 4, y, x1 - 4, y + 27, rgb565(176, 184, 196));
+    fillRect(cx - 10, y + 6, cx + 10, y + 9, rgb565(90, 96, 106));
+    fillRect(cx - 7, y + 14, cx + 7, y + 21, rgb565(240, 240, 232));
+  }
+}
+
+static void paintMopRack(int cx, int fy) {                                      // mops and brooms hanging on the wall
+  fillRect(cx - 50, fy - 128, cx + 50, fy - 122, rgb565(150, 156, 166));
+  for (int k = 0; k < 4; k++) {
+    int x = cx - 36 + k * 24;
+    fillRect(x - 1, fy - 124, x + 1, fy - 30, rgb565(170, 130, 80));
+    if (k % 2 == 0) {                                                        // a mop head
+      int xs[4] = { x - 10, x + 10, x + 14, x - 14 }, ys[4] = { fy - 34, fy - 34, fy - 6, fy - 6 };
+      fillPolygon(xs, ys, 4, rgb565(232, 232, 222));
+      for (int s = -10; s <= 10; s += 5) drawLine(x + s, fy - 30, x + s * 13 / 10, fy - 6, rgb565(200, 200, 190), false);
+    } else {                                                                 // a broom head
+      fillRect(x - 14, fy - 34, x + 14, fy - 26, rgb565(60, 120, 200));
+      for (int s = -12; s <= 12; s += 4) fillRect(x + s, fy - 26, x + s + 2, fy - 12, rgb565(240, 210, 120));
+    }
+  }
+}
+
+static void paintCleaning() {
+  paintShelfUnit(250, 400, ROOM_FLOOR_Y, 0);
+  paintBuckets(420, ROOM_FLOOR_Y);
+  paintCounter(560, 880, ROOM_FLOOR_Y);
+  paintShelfUnit(920, 1060, ROOM_FLOOR_Y, 2);
+  paintTrolley(1090, ROOM_FLOOR_Y);
+  paintDeckSlab(CLEAN_MID_Y);
+  paintCupboardTall(325, CLEAN_MID_Y);
+  paintCupboardTall(430, CLEAN_MID_Y);
+  paintOfficeDesk(560, 740, CLEAN_MID_Y);
+  paintFilingCabinet(825, CLEAN_MID_Y);
+  paintBox(920, CLEAN_MID_Y, 70, 56, 0);
+  paintBox(994, CLEAN_MID_Y, 60, 46, 2);
+  paintBox(940, CLEAN_MID_Y - 56, 54, 26, 1);
+  paintBox(1100, CLEAN_MID_Y, 56, 42, 1);
+  paintBox(1160, CLEAN_MID_Y, 60, 60, 0);
+  paintDeckSlab(CLEAN_TOP_Y);
+  paintCrates(280, 140, CLEAN_TOP_Y, 0);
+  paintBox(470, CLEAN_TOP_Y, 70, 50, 2);
+  paintBox(544, CLEAN_TOP_Y, 72, 64, 0);
+  paintBox(488, CLEAN_TOP_Y - 50, 46, 18, 1);
+  paintMopRack(730, CLEAN_TOP_Y);
+  paintCrates(840, 140, CLEAN_TOP_Y, 1);
+  paintBox(1040, CLEAN_TOP_Y, 76, 56, 1);
+  paintBox(1120, CLEAN_TOP_Y, 70, 44, 2);
+  paintBox(1130, CLEAN_TOP_Y - 44, 50, 22, 0);
+  drawVectorText("CLEANING", 1040, CLEAN_MID_Y - 170, 4.0f, rgb565(60, 72, 96), true);
+}
+
 // A stage 2 room: white walls, the duct and stripe along the top; then what is in it (the kitchen; the rest empty for now)
 static void paintLabRoom() {
   int idx = curRoom;
   fillRect(0, HUD_H, SCREEN_W - 1, CEIL_Y - 1, rgb565(214, 218, 224));
   for (int x = 40; x < SCREEN_W - 40; x += 180) fillRect(x, CEIL_Y - 8, x + 70, CEIL_Y - 4, rgb565(250, 252, 255));
   labStripe(0, SCREEN_W - 1, CEIL_Y, CEIL_Y + 12);
-  labDuctBand(0, SCREEN_W - 1, CEIL_Y + 16, CEIL_Y + 58);
-  labWall(0, SCREEN_W - 1, CEIL_Y + 61, ROOM_FLOOR_Y - 1);
+  bool clean = s2Kind[idx] == LK_CLEANING;
+  if (!clean) labDuctBand(0, SCREEN_W - 1, CEIL_Y + 16, CEIL_Y + 58);   // (the cleaning room: its top level up there instead)
+  labWall(0, SCREEN_W - 1, clean ? CEIL_Y + 13 : CEIL_Y + 61, ROOM_FLOOR_Y - 1);
   if (s2Kind[idx] == LK_KITCHEN) {
     paintKitchen();
+  } else if (clean) {
+    paintCleaning();
   } else {
     char b[24];
     s2RoomName(idx, b, sizeof(b));
@@ -2984,10 +3226,12 @@ static const WideRoom subRoomT = { "SUB BASEMENT", 1, { { 0, SCREEN_W, ROOM_FLOO
 static const WideRoom labRoomT = { "LAB", 1, { { 0, SCREEN_W, ROOM_FLOOR_Y } }, 0, {}, 0, {}, 0, {}, 640, 300 };
 static const WideRoom kitchenT = { "KITCHEN", 2, { { 0, SCREEN_W, ROOM_FLOOR_Y }, { 220, SCREEN_W, KITCHEN_DECK_Y } },
                                    1, { { 140, 220, { KITCHEN_DECK_Y, ROOM_FLOOR_Y }, 2 } }, 0, {}, 0, {}, 1020, 120 };
+static const WideRoom cleaningT = { "CLEANING", 3, { { 0, SCREEN_W, ROOM_FLOOR_Y }, { 220, SCREEN_W, CLEAN_MID_Y }, { 220, SCREEN_W, CLEAN_TOP_Y } },
+                                    1, { { 140, 220, { CLEAN_TOP_Y, CLEAN_MID_Y, ROOM_FLOOR_Y }, 3 } }, 0, {}, 0, {}, 640, 100 };
 static const WideRoom &roomTemplate(int idx) {
   if (idx == CONTROL_ROOM) return controlRoomT;
   if (idx == SUB_ROOM || idx == ARRIVAL_ROOM) return subRoomT;
-  if (stage == 2 && idx < S2_ROOMS) return s2Kind[idx] == LK_KITCHEN ? kitchenT : labRoomT;
+  if (stage == 2 && idx < S2_ROOMS) return s2Kind[idx] == LK_KITCHEN ? kitchenT : (s2Kind[idx] == LK_CLEANING ? cleaningT : labRoomT);
   return wideRooms[rooms[idx].tpl];
 }
 
@@ -3108,13 +3352,27 @@ static void enterRoom(int idx, bool fromLeft) {
     c.view = 0;
   }
   resetHazardsForEntry(fromLeft);
-  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_KITCHEN) {   // the chef: on one of his paths, walking away from the door
-    chefPath = fxRnd(0, 2);
-    float a = chefPath ? 420.0f : 330.0f, b = chefPath ? 1180.0f : 1100.0f;
-    chefDir = fromLeft ? 1 : -1;
-    chefX = fromLeft ? a + 140 : b - 140;
-    chefPause = 0;
-    chefT = 0;
+  // the lab's people: on their paths, walking away from the door he came in by
+  npcCount = 0;
+  susp = 0;
+  suspT = 0;
+  s2Recog = false;
+  auto addNpc = [&](uint8_t kind, float y, float a, float b, float start) {
+    Npc &n = npcs[npcCount++];
+    n.kind = kind;
+    n.y = y; n.a = a; n.b = b;
+    n.dir = fromLeft ? 1 : -1;
+    n.x = fromLeft ? a + start : b - start;
+    n.t = n.pause = 0;
+    n.watching = false;
+  };
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_KITCHEN) {   // the chef: on one of his two paths
+    if (fxRnd(0, 2)) addNpc(PK_CHEF, KITCHEN_DECK_Y, 420, 1180, 140);
+    else addNpc(PK_CHEF, ROOM_FLOOR_Y, 330, 1100, 140);
+  }
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_CLEANING) {  // two cleaners: the floor and the office
+    addNpc(PK_CLEANER, ROOM_FLOOR_Y, 300, 1150, 160);
+    addNpc(PK_CLEANER, CLEAN_MID_Y, 380, 1180, 300);
   }
 }
 
@@ -3437,19 +3695,21 @@ static int decorAt() {
   if (mode != MODE_ROOM) return -1;
   for (int i = 0; i < decorCount; i++) {
     const Decor &d = decor[i];
-    if (fabsf(agY - d.y) < 0.5f && fabsf(agX - d.x) < decorW[d.kind] / 2 + 14) return i;
+    if (fabsf(agY - d.y) < 0.5f && fabsf(agX - d.x) < dW(i) / 2 + 14) return i;
   }
   return -1;
 }
 
 // A piece that can't be searched (any more): searched already, or a used first aid kit
 static bool pieceDone(int i) {
+  if (decor[i].kind == DEC_LAB) return s2Searched[curRoom][i];
   const RoomInfo &ri = rooms[curRoom];
   if (decor[i].kind == DEC_GENERATOR) return ri.genOn;
   return decor[i].kind == DEC_FIRSTAID ? ri.kitUsed : ri.searched[i];
 }
 // How far it has been searched (the kit's and the generator's are kept after the equipment's)
 static float &pieceProgress(int i) {
+  if (decor[i].kind == DEC_LAB) return s2Prog[curRoom][i];
   RoomInfo &ri = rooms[curRoom];
   if (decor[i].kind == DEC_GENERATOR) return ri.progress[MAX_DECOR + 1];
   return decor[i].kind == DEC_FIRSTAID ? ri.progress[MAX_DECOR] : ri.progress[i];
@@ -3657,6 +3917,7 @@ static void useFoyerAid() {
   }
 }
 
+static void foundCard(int level);
 static void startS2Act(int what) {
   s2Act = (uint8_t)what;
   s2ActT = 0;
@@ -3707,16 +3968,14 @@ static void updateS2Act(float dt) {
     p.plant = 1;
     if ((int)(before / SEARCH_BEEP_SECONDS) != (int)(t / SEARCH_BEEP_SECONDS) && t < 1.1f) sfxPlay(SFX_BEEP);
     if (before < 1.1f && t >= 1.1f) {      // his card, his overalls
-      s2Card = s2Card > 1 ? s2Card : 1;
+      foundCard(1);
       s2Disguised = true;
       wkState = WK_STRIPPED;
-      sfxPlay(SFX_FOUND);
     }
     if (t >= 1.7f) {
       s2Act = 0;
       addScore(1000, agX, CAR_FLOOR_Y - 170);
-      sfxPlay(SFX_FANFARE);
-      showMsg("LEVEL 1 ACCESS CARD - DISGUISED AS MAINTENANCE", 4.0f);
+      showMsg("DISGUISED AS MAINTENANCE", 4.0f);
       setState(ST_IDLE, 0.2f);
     }
   } else if (s2Act == 3) {                   // into the bin with him
@@ -3805,33 +4064,139 @@ static void updateWorker(float dt) {
   }
 }
 
-// The kitchen's chef: back and forth along his path, a pause at each end (busy at the counter, the shelves)
-static void updateChef(float dt) {
-  chefT += dt;
-  float a = chefPath ? 420.0f : 330.0f, b = chefPath ? 1180.0f : 1100.0f;
-  if (chefPause > 0) {
-    chefPause -= dt;
-    if (chefPause <= 0) chefDir = -chefDir;
-    return;
-  }
-  chefX += chefDir * CHEF_SPEED * dt;
-  if ((chefDir > 0 && chefX >= b) || (chefDir < 0 && chefX <= a)) {
-    chefX = clampv(chefX, a, b);
-    chefPause = 1.8f;
+// The lab's people: back and forth along their paths, a pause at each end (working); stopped while
+// they're suspicious of him
+static void updateNpcs(float dt) {
+  for (int i = 0; i < npcCount; i++) {
+    Npc &n = npcs[i];
+    n.t += dt;
+    if (n.watching) continue;
+    if (n.pause > 0) {
+      n.pause -= dt;
+      if (n.pause <= 0) n.dir = -n.dir;
+      continue;
+    }
+    n.x += n.dir * NPC_SPEED * dt;
+    if ((n.dir > 0 && n.x >= n.b) || (n.dir < 0 && n.x <= n.a)) {
+      n.x = clampv(n.x, n.a, n.b);
+      n.pause = 1.8f;
+    }
   }
 }
 
-static void drawChef() {
-  AgentPose p;
-  if (chefPause > 0) {                       // busy: reaching forward, working
-    p = PERSON_IDLE;
-    p.armN = 70 + 12 * sinf(chefT * 8); p.elbowN = 50; p.armF = 60 + 10 * sinf(chefT * 8 + 1.5f); p.elbowF = 56;
-    p.torso = 8;
-    p.head = 10;
-  } else {
-    personWalk(p, chefT);
+// Can this one see him? (facing him, on his level, close enough)
+static bool npcSees(const Npc &n) {
+  return fabsf(agY - n.y) < 60 && n.dir * (agX - n.x) > 0 && fabsf(agX - n.x) < NPC_SIGHT;
+}
+
+// Suspicion: someone who can see him while he looks at them, or while he searches, gets
+// suspicious - a point every SUSP_STEP (twice as fast if he's searching). Looking away and not
+// searching clears it. SUSP_MAX: recognised.
+static void updateSuspicion(float dt) {
+  if (npcCount == 0 || s2Recog || agState == ST_CAUGHT || agState == ST_KO) return;
+  bool searching = agState == ST_USE, any = false;
+  for (int i = 0; i < npcCount; i++) {
+    Npc &n = npcs[i];
+    bool looking = agFacing * (n.x - agX) > 0;
+    n.watching = npcSees(n) && (looking || searching);
+    any |= n.watching;
   }
-  drawPersonU(p, chefX, chefPath ? (float)KITCHEN_DECK_Y : (float)ROOM_FLOOR_Y, chefDir, AGENT_SCALE, PK_CHEF);
+  if (!any) {
+    susp = 0;
+    suspT = 0;
+    return;
+  }
+  suspT += dt * (searching ? 2.0f : 1.0f);
+  if (suspT < SUSP_STEP) return;
+  suspT -= SUSP_STEP;
+  susp++;
+  sfxPlay(SFX_WARN);
+  if (susp >= SUSP_MAX) {                    // recognised: hands up, then out to the lift area, the clock down
+    susp = SUSP_MAX;
+    s2Recog = true;
+    searchItem = -1;
+    if (agState == ST_LIFT && agLift >= 0) lifts[agLift].moving = false;
+    sfxPlay(SFX_ALARM);
+    loseTime(RECOGNISED_TIME_LOST, "RECOGNISED!");
+    setState(ST_CAUGHT, 0.15f);
+  }
+}
+
+static void drawNpcs() {
+  for (int i = 0; i < npcCount; i++) {
+    const Npc &n = npcs[i];
+    AgentPose p;
+    if (n.watching) {                        // stopped, staring at him
+      p = PERSON_IDLE;
+      p.head = -4;
+      p.torso = -2;
+    } else if (n.pause > 0) {                // busy: reaching forward, working
+      p = PERSON_IDLE;
+      p.armN = 70 + 12 * sinf(n.t * 8); p.elbowN = 50; p.armF = 60 + 10 * sinf(n.t * 8 + 1.5f); p.elbowF = 56;
+      p.torso = 8;
+      p.head = 10;
+    } else {
+      personWalk(p, n.t);
+    }
+    drawPersonU(p, n.x, n.y, n.dir, AGENT_SCALE, n.kind);
+    if (n.kind == PK_CLEANER) {              // a mop in the near hand
+      int hx, hy, mx, my;
+      agentHand(p, n.x, n.y, n.dir, AGENT_SCALE, hx, hy, mx, my);
+      float fx = hx + n.dir * 34.0f;
+      drawLineF((float)hx - n.dir * 6.0f, hy - 40.0f, fx, n.y - 8.0f, rgb565(170, 130, 80), 3.0f);
+      fillRectF(fx - 16, n.y - 12, fx + 16, n.y - 1, rgb565(230, 230, 220));
+      fillRectF(fx - 4, n.y - 16, fx + 4, n.y - 11, rgb565(60, 140, 200));
+    }
+    if (n.watching && susp > 0) {            // ? over their head, redder with each point
+      float k = (float)susp / SUSP_MAX;
+      uint16_t c = rgb565(255, (int)(220 - 170 * k), (int)(80 - 40 * k));
+      drawVectorTextW("?", n.x, n.y - 200, 4.0f + k * 2.0f, c, 2.6f);
+    }
+  }
+}
+
+// SUSPICION: five pips at the top of the screen, in a room with people in it
+static void drawSuspicionMeter() {
+  int x0 = 20, y0 = HUD_H + 8, x1 = 330, y1 = HUD_H + 48;
+  fillRect(x0, y0, x1, y1, rgb565(12, 14, 20));
+  drawRectOutline(x0, y0, x1, y1, susp > 0 ? rgb565(255, 90, 60) : rgb565(90, 100, 120), 1);
+  drawVectorText("SUSPICION", x0 + 74, (y0 + y1) / 2, 2.4f, susp > 0 ? rgb565(255, 200, 80) : rgb565(190, 200, 220), false);
+  for (int k = 0; k < SUSP_MAX; k++) {
+    int bx = x0 + 156 + k * 32, by = y0 + 10;
+    bool on = k < susp;
+    fillRect(bx, by, bx + 22, by + 18, on ? (susp >= SUSP_MAX - 1 ? rgb565(255, 60, 40) : rgb565(255, 170, 50)) : rgb565(40, 44, 54));
+    drawRectOutline(bx, by, bx + 22, by + 18, rgb565(120, 128, 146), 1);
+  }
+}
+
+// ACCESS CARD LEVEL n FOUND: the card, big, for a moment
+static void foundCard(int level) {
+  if (level > s2Card) s2Card = level;
+  cardShown = level;
+  cardShowT = CARD_SHOW;
+  sfxPlay(SFX_FOUND);
+  sfxPlay(SFX_FANFARE);
+}
+static void drawCardPanel() {
+  gfxClipAll();
+  int x0 = 340, y0 = 150, x1 = 940, y1 = 420;
+  float k = fminf(1.0f, (CARD_SHOW - cardShowT) / 0.2f);
+  blendRect(x0, y0, x1, y1, 0, 0, 0, 0.78f * k);
+  drawRectOutline(x0, y0, x1, y1, rgb565(90, 200, 255), 3);
+  char b[40];
+  snprintf(b, sizeof(b), "ACCESS CARD LEVEL %d FOUND", cardShown);
+  drawVectorText(b, SCREEN_W / 2, y0 + 40, 3.4f, rgb565(240, 244, 250), true);
+  int cx0 = SCREEN_W / 2 - 110, cy0 = y0 + 80, cx1 = SCREEN_W / 2 + 110, cy1 = y0 + 220;   // the card
+  fillRect(cx0, cy0, cx1, cy1, rgb565(240, 242, 246));
+  fillRect(cx0, cy0, cx1, cy0 + 30, rgb565(40, 110, 200));
+  drawVectorText("QUANTUM LAB", (cx0 + cx1) / 2, cy0 + 15, 2.0f, rgb565(240, 244, 250), true);
+  fillRect(cx0 + 18, cy0 + 50, cx0 + 58, cy0 + 80, rgb565(220, 180, 60));                 // its chip
+  fillRect(cx0 + 18, cy0 + 64, cx0 + 58, cy0 + 65, rgb565(160, 120, 30));
+  fillRect(cx0 + 37, cy0 + 50, cx0 + 38, cy0 + 80, rgb565(160, 120, 30));
+  snprintf(b, sizeof(b), "L%d", cardShown);
+  drawVectorTextW(b, cx1 - 60, cy0 + 74, 6.0f, rgb565(200, 30, 30), 3.0f);
+  drawVectorText("ACCESS", cx0 + 60, cy1 - 22, 1.6f, rgb565(80, 90, 110), false);
+  fillRect(cx0, cy1 - 8, cx1, cy1, rgb565(200, 30, 30));
 }
 
 // The maintenance man over his shoulder, or going into the bin (drawn after him)
@@ -3876,7 +4241,10 @@ static void drawS2Prompts() {
 static void updateStage2(float dt) {
   if (s2BumpT > 0) s2BumpT -= dt;
   updateWorker(dt);
-  if (mode == MODE_ROOM && curRoom < S2_ROOMS && s2Kind[curRoom] == LK_KITCHEN) updateChef(dt);
+  if (mode == MODE_ROOM && curRoom < S2_ROOMS) {
+    updateSuspicion(dt);
+    updateNpcs(dt);
+  }
   if (bodyT >= 0) {                          // he'll be found
     float was = bodyT;
     bodyT -= dt;
@@ -3942,7 +4310,7 @@ static void updateAgent(float dt) {
           floatColour = rgb565(150, 156, 170);
           nothingShowT = NOTHING_SHOW;
           nothingX = decor[i].x;
-          nothingY = decor[i].y - decorH[decor[i].kind] - 22;
+          nothingY = decor[i].y - dH(i) - 22;
         }
       } else if ((held & BTN_USE) && mode == MODE_ROOM) {   // (nothing to search in the lift)
         searchItem = -1;
@@ -4096,7 +4464,7 @@ static void updateAgent(float dt) {
         searchT += dt;
         if (searchT >= SEARCH_SECONDS) {
           RoomInfo &ri = rooms[curRoom];
-          float px = decor[i].x, py = decor[i].y - decorH[decor[i].kind] - 22;
+          float px = decor[i].x, py = decor[i].y - dH(i) - 22;
           if (decor[i].kind == DEC_GENERATOR) {   // the power generator: the lever goes up, its lamp turns green
             ri.genOn = true;
             leverT = 0;
@@ -4133,6 +4501,18 @@ static void updateAgent(float dt) {
             nothingShowT = NOTHING_SHOW;
             nothingX = px;
             nothingY = py;
+            break;
+          }
+          if (decor[i].kind == DEC_LAB) {      // the lab's things: nothing in them yet
+            bool first = !s2Searched[curRoom][i];
+            s2Searched[curRoom][i] = true;
+            if (first) addScore(SEARCH_SCORE, px, py - 26);
+            nothingShowT = NOTHING_SHOW;
+            nothingX = px;
+            nothingY = py;
+            snprintf(floatText, sizeof(floatText), "NOTHING");
+            sfxPlay(SFX_CLUNK);
+            floatColour = rgb565(170, 170, 180);
             break;
           }
           bool first = !ri.searched[i];
@@ -4173,7 +4553,16 @@ static void updateAgent(float dt) {
     }
 
     case ST_CAUGHT:                    // caught on camera: hands up, then back at the door
-      if (gameOver == END_NONE && agT >= CAUGHT_SECONDS) respawn();
+      if (gameOver == END_NONE && agT >= CAUGHT_SECONDS) {
+        if (s2Recog) {                 // recognised in the lab: out through the door he came in by
+          s2Recog = false;
+          susp = 0;
+          suspT = 0;
+          leaveThroughEdge(entryFacing < 0);
+        } else {
+          respawn();
+        }
+      }
       break;
 
     case ST_SHOCK:                     // caught on the live floor: jolting, then down
@@ -5025,8 +5414,8 @@ static void drawSearchMarks() {
   const RoomInfo &ri = rooms[curRoom];
   for (int i = 0; i < decorCount; i++) {
     const Decor &d = decor[i];
-    int top = d.y - decorH[d.kind];
-    if (d.kind < DEC_KINDS && ri.searched[i]) {
+    int top = d.y - dH(i);
+    if ((d.kind < DEC_KINDS && ri.searched[i]) || (d.kind == DEC_LAB && s2Searched[curRoom][i])) {
       uint16_t c = ri.holds[i] ? rgb565(255, 210, 70) : (ri.docs[i] ? rgb565(255, 90, 70) : rgb565(80, 230, 120));   // (gold: a drive; red: documents)
       int tx = d.x - 6, ty = top - 12;
       drawLine(tx, ty, tx + 4, ty + 5, c, true);
@@ -5040,7 +5429,7 @@ static void drawSearchMarks() {
     bool now = (agState == ST_USE && searchItem == i);
     if (!now && prog <= 0) continue;
     const Decor &d = decor[i];
-    int x0 = d.x - 36, y0 = d.y - decorH[d.kind] - 30;
+    int x0 = d.x - 36, y0 = d.y - dH(i) - 30;
     drawRectOutline(x0, y0, x0 + 72, y0 + 9, now ? rgb565(220, 220, 230) : rgb565(110, 116, 130), 1);
     int w = (int)(68 * fminf(prog, SEARCH_SECONDS) / SEARCH_SECONDS);
     if (w > 0) fillRect(x0 + 2, y0 + 2, x0 + 1 + w, y0 + 7, now ? rgb565(120, 200, 255) : rgb565(70, 110, 150));
@@ -6382,6 +6771,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (nothingShowT > 0) nothingShowT -= dt;
     if (itemShowT > 0) itemShowT -= dt;
     if (docShowT > 0) docShowT -= dt;
+    if (cardShowT > 0) cardShowT -= dt;
     for (int i = 0; i < MAX_POPS; i++)
       if (popT[i] > 0) popT[i] -= dt;
     if (leverT >= 0) leverT += dt;
@@ -6416,7 +6806,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     for (int i = 0; i < liftCount; i++) drawLiftPad(lifts[i]);
     drawDecorAnim();
     if (curRoom == CONTROL_ROOM) drawControlRoomAnim();
-    if (stage == 2 && curRoom < S2_ROOMS && s2Kind[curRoom] == LK_KITCHEN) drawChef();
+    if (stage == 2 && curRoom < S2_ROOMS) drawNpcs();
     if (curRoom == SUB_ROOM || curRoom == ARRIVAL_ROOM) drawLoopStation(curRoom == ARRIVAL_ROOM);
     if (curHazard == HZ_ELECTRIC && elecState == 1 && flickerDim(elecT)) dimRoom();
     if (curHazard == HZ_DARK && !lightsOut && ((darkT > 0.25f && darkT < 0.35f) || (darkT > 0.5f && darkT < 0.56f))) dimRoom();
@@ -6464,6 +6854,8 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mode == MODE_ROOM && !termOn) drawScorePops();
   if (itemShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawItemPanel();
   if (docShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawDocPanel();
+  if (stage == 2 && mode == MODE_ROOM && npcCount > 0 && !mapOn && gameOver == END_NONE) drawSuspicionMeter();
+  if (cardShowT > 0 && !mapOn && gameOver == END_NONE) drawCardPanel();
   if (mapOn) drawMap();
   else if (itemShowT <= 0 && !briefingOn && !settingsOn && scene != SC_STAGE_CLEAR && scene != SC_STAGE2_BRIEF && scene != SC_RIDE) drawMessage();
   if (briefingOn && !mapOn) drawBriefing();

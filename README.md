@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 023: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 024: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -10,8 +10,9 @@ electrified floors, dark rooms, security cameras and drones; 18 QUANTUM
 DRIVES to find, 3 power generators, QUANTUM CONTROL with its drive bay and
 main computer, the sub basement it unlocks and the QUANTUMLOOP to stage 2,
 stage 2's QUANTUM LAB (six lifts, 21 rooms, card readers, the kitchen and
-its chef, the maintenance man to knock out, search and hide in a bin), and a
-top 5 high score table.
+its chef, the cleaning room and its two cleaners, people who get suspicious,
+the maintenance man to knock out, search and hide in a bin), and a top 5 high
+score table.
 
 ## What's different from NUCLEAR MISSION's PS5 port
 
@@ -237,8 +238,13 @@ kitchen.
 access level (L1 to L5) under it - red lamp and a shut white door with a red
 band while his card isn't good enough (walking into it: ACCESS LEVEL n
 REQUIRED), green and open once it is. Once he has been in a room its doors
-stay open. Lift A's rooms are level 1 (the kitchen) and 2 to 5 at random;
-lift B's level 2, C's 3, D's 4, E's and F's 5.
+stay open. Every room in a column needs the same level: lift A's rooms
+level 1, B's level 2, C's 3, D's 4, E's 5 - and F's 5 too (there's no
+level 6 card).
+
+**Access cards**: finding one puts up **ACCESS CARD LEVEL n FOUND** with a
+picture of the card, for a few seconds (the maintenance man's level 1 card
+now; the same for any others later).
 
 **Signs**: each door has a sign beside it saying what's through it. Lift A's
 six rooms are, in a random order each game: KITCHEN, MEDICAL BAY, SECURITY,
@@ -258,8 +264,9 @@ middle of the top bar becomes **BODY FOUND IN 1:00**, counting down (red;
 flashing and beeping in the last ten seconds); at zero: MISSION FAILED, the
 body was found. Then, beside him:
 
-1. **Square**: search him - his **level 1 access card** and his overalls:
-   you're disguised as maintenance (blue overalls, hi-vis band, cap).
+1. **Square**: search him - his **level 1 access card** (ACCESS CARD LEVEL 1
+   FOUND) and his overalls: you're disguised as maintenance (blue overalls,
+   hi-vis band, cap).
 2. **Square** again: the bin - you lift him over your shoulder, carry him to
    the bin, lid up, tip him in, lid down. The top bar shows the mission's
    countdown again.
@@ -274,7 +281,31 @@ sacks of flour and rice, jars, a pallet of bottled water), reached by the
 lift pad on the left. **The chef** walks one of two paths back and forth -
 the floor (fridge to sink) or the deck (along the racks) - pausing at each
 end to work. Coming in, he's on one of them, with his back to you, walking
-away. He doesn't notice you yet (for testing).
+away.
+
+**The cleaning room**: three levels, reached by the lift pad on the left.
+The floor: the front counter (CLEANING SERVICES on its front, a bell, a
+notice board behind), two steel shelf units of cleaning products (spray
+bottles, bleach, toilet rolls, detergent), buckets and the cleaning trolley.
+The middle: two tall cupboards, a desk with its computer and chair, a filing
+cabinet, boxes. The top: crates and boxes, and mops and brooms hanging on the
+wall. **Two cleaners** (teal tunics, mops) walk their paths: one on the floor,
+one on the middle level - both walking away from you as you come in.
+
+**Searching**: everything in the kitchen (8 things) and the cleaning room
+(16) can be searched like stage 1's equipment - hold Square; 100 points the
+first time. There's nothing in any of it yet (NOTHING).
+
+**Suspicion** (as in NUCLEAR MISSION): someone who is facing you, on your
+level and within 330 units gets suspicious if you're looking at them, or if
+they see you searching. They stop where they are and stare, with a **?** over
+their head going redder, and the **SUSPICION** meter at the top left (five
+pips, in any room with people in it) fills: a point every 0.7 seconds,
+twice as fast while you search. Look away (face the other way) and stop
+searching, and it goes back to nothing and they carry on. Five points and
+you're **RECOGNISED**: hands up, 30 seconds off the clock, and you're put
+out in the lift area by the door you came in by. (The disguise doesn't
+change this, for now.)
 
 **The panel** in stage 2: LIFT A..F and the level; ROOMS (of 21), ACCESS
 CARD, DISGUISE, FIRST AID LEFT, SCORE. The mini map and the Options map show
