@@ -1,0 +1,41 @@
+# From the end of stage 1 into stage 2 (seed 1): the settings' JUMP TO STAGE 2,
+# the QUANTUMLOOP sign, STAGE 1 COMPLETE, stage 2's briefing, the power switch,
+# the doors, the journey, the arrival station, stage 2's lift area.
+seed 1
+hold NONE 30
+tap JUMP
+hold NONE 200
+tap JUMP
+hold NONE 20
+tap NEW
+tap DOWN
+tap DOWN
+tap JUMP
+hold NONE 20
+shot 70_sub_floor_sign
+hold RIGHT 200
+hold NONE 40
+shot 71_stage1_complete
+hold NONE 140
+tap JUMP
+hold NONE 60
+shot 72_stage2_briefing
+tap JUMP
+hold NONE 20
+walkto 500
+tap USE
+hold NONE 60
+shot 73_powering_up
+hold NONE 120
+walkto 800
+tap USE
+hold NONE 100
+shot 74_boarding
+hold NONE 600
+shot 75_the_journey
+hold NONE 780
+shot 76_arrival
+hold NONE 300
+hold LEFT 400
+hold NONE 30
+shot 77_stage2_lift_area

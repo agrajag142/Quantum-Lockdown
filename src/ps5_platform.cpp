@@ -269,6 +269,7 @@ int main() {
   loadTune(0, "/app0/assets/elevator.mod");
   loadTune(1, "/app0/assets/stage1.mod");
   loadTune(2, "/app0/assets/title.mod");
+  loadTune(3, "/app0/assets/stage2.mod");
   soundInit();
   // the first picture, then the splash screen can go
   gameFrame(1 / 60.0f, 0, 0);

@@ -6,7 +6,7 @@
 // with a drone; none in room 1), every
 // electrified room with its HIGH VOLTAGE sign on the wall.
 //
-//   gcc -O2 -c ../src/micromod.c ../src/micromod2.c ../src/micromod3.c && g++ -std=c++20 -O2 -w -I../src check_layout.cpp ../src/gfx.cpp micromod.o micromod2.o micromod3.o -o check_layout && ./check_layout
+//   gcc -O2 -c ../src/micromod.c ../src/micromod2.c ../src/micromod3.c ../src/micromod4.c && g++ -std=c++20 -O2 -w -I../src check_layout.cpp ../src/gfx.cpp micromod.o micromod2.o micromod3.o micromod4.o -o check_layout && ./check_layout
 #include "../src/game.cpp"
 
 int main() {
@@ -32,6 +32,11 @@ int main() {
     if (eq != EQUIPMENT_TOTAL || hid != ITEMS_HIDDEN || colMin < MIN_PER_COL || colMax > MAX_PER_COL || roomAt[0][0] != 0 || kits != FIRST_AID_KITS) {
       bad++;
       printf("seed %u: equipment %d, finds %d, rooms a column %d..%d, kits %d\n", seed, eq, hid, colMin, colMax, kits);
+    }
+    for (int i = 0; i < ROOM_COUNT; i++) {
+      int dr = 0;
+      for (int k = 0; k < MAX_DECOR; k++) dr += rooms[i].holds[k];
+      if (dr > 1) { bad++; printf("seed %u room %d: %d drives\n", seed, i + 1, dr); }
     }
     int docs = 0, docRooms = 0;
     for (int i = 0; i < ROOM_COUNT; i++) {
@@ -106,6 +111,6 @@ int main() {
     }
   }
   printf("wall ornaments: %.1f a room on average, a big fan in %.0f%% of rooms\n", ornTotal / 60000.0, bigFans / 600.0);
-  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), 18 drives, 5 documents (different rooms, not in drive pieces), 5 first aid kits, 2-6 rooms a column, no overlaps, 3 generators, QUANTUM CONTROL in the middle column, at most 2 decorations a room, 6 electrified, 3 dark, 6 one-camera, 3 two-camera, 3 drone rooms, signs up");
+  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), 18 drives (one at most a room), 5 documents (different rooms, not in drive pieces), 5 first aid kits, 2-6 rooms a column, no overlaps, 3 generators, QUANTUM CONTROL in the middle column, at most 2 decorations a room, 6 electrified, 3 dark, 6 one-camera, 3 two-camera, 3 drone rooms, signs up");
   return bad != 0;
 }

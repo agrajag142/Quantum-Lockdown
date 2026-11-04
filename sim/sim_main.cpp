@@ -1,7 +1,7 @@
 // The PC test build: the game with a scripted controller, saving screenshots.
 //
-//   gcc -O2 -c ../src/micromod.c ../src/micromod2.c ../src/micromod3.c && g++ -O2 -I../src ../src/game.cpp ../src/gfx.cpp sim_main.cpp micromod.o micromod2.o micromod3.o -o sim
-//   ./sim script.txt out/ [elevator.mod [stage1.mod [title.mod]]]
+//   gcc -O2 -c ../src/micromod.c ../src/micromod2.c ../src/micromod3.c ../src/micromod4.c && g++ -O2 -I../src ../src/game.cpp ../src/gfx.cpp sim_main.cpp micromod.o micromod2.o micromod3.o micromod4.o -o sim
+//   ./sim script.txt out/ [elevator.mod [stage1.mod [title.mod [stage2.mod]]]]
 //
 // Script lines:  hold BUTTONS FRAMES   (BUTTONS: LEFT+JUMP etc, or NONE)
 //                tap BUTTONS           (one frame down, one up)
@@ -61,8 +61,8 @@ static void shot(const char *dir, const char *name) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 3) { fprintf(stderr, "usage: sim script.txt outdir [elevator.mod [stage1.mod [title.mod]]]\n"); return 2; }
-  for (int k = 0; k < 3 && argc > 3 + k; k++) {   // the tunes, as the PS5 build loads them: elevator.mod, stage1.mod, title.mod
+  if (argc < 3) { fprintf(stderr, "usage: sim script.txt outdir [elevator.mod [stage1.mod [title.mod [stage2.mod]]]]\n"); return 2; }
+  for (int k = 0; k < 4 && argc > 3 + k; k++) {   // the tunes, as the PS5 build loads them: elevator.mod, stage1.mod, title.mod, stage2.mod
     FILE *mf = fopen(argv[3 + k], "rb");
     if (!mf) continue;
     fseek(mf, 0, SEEK_END);

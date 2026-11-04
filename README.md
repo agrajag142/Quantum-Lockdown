@@ -1,14 +1,14 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 020: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 021: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
 on the walls (warning lights, fans, coolant tubes...), and room hazards:
 electrified floors, dark rooms, security cameras and drones; 18 QUANTUM
 DRIVES to find, 3 power generators, QUANTUM CONTROL with its drive bay and
-main computer, and the sub basement it unlocks (reaching it wins, for now),
+main computer, the sub basement it unlocks and the QUANTUMLOOP to stage 2,
 and a top 5 high score table.
 
 ## What's different from NUCLEAR MISSION's PS5 port
@@ -61,7 +61,7 @@ bookshelf and coat stand; new, a desk with a computer (its screen scrolling),
 a steel cupboard and a computer rack (its lamps winking, tapes turning).
 
 Each column of rooms has its own wall colour (teal, maroon, olive, navy,
-purple, rust, forest green, mustard, plum - `wallColours` in `src/game.cpp`). 18 of them, anywhere, have
+purple, rust, forest green, mustard, plum - `wallColours` in `src/game.cpp`). 18 of them, each in a different room, have
 a QUANTUM DRIVE in them, and 5 others (each in a different room) TOP SECRET
 DOCUMENTS; the rest have nothing.
 
@@ -130,6 +130,8 @@ DOCUMENTS; the rest have nothing.
   the wall (a white case with a red cross). Search one (hold Square) and the
   health bar is full again; each kit works once (it hangs open after), and
   not while the bar is already full. The map marks a room's unused kit.
+- **The last minute:** every 10 seconds (at 1:00, 0:50 ... 0:10) an alert
+  sounds and the lights flicker.
 - **The clock:** 15 minutes from the start. At 0:00 the power fails: the
   generators wind down, the lights flicker and go out, his night vision comes
   on, and **MISSION FAILED - POWER FAILURE** comes up: the game is over. It is
@@ -141,8 +143,7 @@ DOCUMENTS; the rest have nothing.
 3 rooms (at random) have a POWER GENERATOR: a yellow generator on a skid with
 a lever on its control box, down (off) and a red lamp. Search it (hold
 Square): the lever goes up, the lamp turns green and its engine fan starts
-turning (100 points), and time goes back on the clock: **5 minutes** for the
-first generator turned on, **10** for the second, **15** for the third. All 3 must be on before the main computer in QUANTUM
+turning (100 points), and **5 minutes** go back on the clock (each one). All 3 must be on before the main computer in QUANTUM
 CONTROL will start. The map marks a generator in a room you've been in (its
 lamp red or green), and the lift area's panel counts them.
 
@@ -170,14 +171,41 @@ purple).
     at random from those that go down to the bottom floor. LOG OFF to leave.
     The clock keeps running while he is at the computer.
 
-## The sub basement
+## The sub basement, and on to stage 2
 
 Once unlocked, that shaft's car goes one level further down, below the
 complex's bottom floor (the panel says FLOOR SB). The mini map doesn't show
 it; the Options map does, under the bottom row. There the lift area has a
-wall on the left and a door on the right into the sub basement: a bare
-concrete hall with nothing in it yet. For now, going into it ends the game:
-**MISSION COMPLETE**.
+wall on the left and, on the right, a sign - **QUANTUMLOOP** and an arrow -
+and the door into the QUANTUMLOOP station.
+
+Going in ends stage 1:
+
+1. **STAGE 1 COMPLETE**: the stage 1 bonus, worked out as at the end of the
+   game (minutes left x 500, 1000 each for no electrocution, drone hits, pit
+   falls, camera catches, first aid). The incidents are then counted afresh
+   for stage 2; the clock carries on from where it is.
+2. **STAGE 2**: GET TO THE QUANTUM LAB AND DISABLE THE QUANTUM CORE (and
+   `assets/stage2.mod` starts, if STAGE MUSIC is on). X to play.
+3. **The station** (after the picture: QUANTUMLOOP TRANSPORT SYSTEM, the
+   departure board, benches, the portal and the transport's tube): the
+   **QUANTUMLOOP POWER** switch on the left - stand at it, Square: the
+   portal's light arcs, the tube's strip, the sign and the board come on in
+   turn, with a rising whine and a chime (NEXT DEPARTURE STAGE 2, NOW
+   BOARDING). Then the **doors** (Square at them): they slide open with a hiss.
+   The way back up is shut once stage 2 has begun.
+4. **On board** (the clock waits): he walks in, fade to black, then the
+   cabin: him on a seat, the tunnel rushing past the windows, the display
+   counting down to arrival, a deep rumble - about 20 seconds
+   (`RIDE_SECONDS`). Fade to black again.
+5. **The arrival station**: the same, its board saying ARRIVED STAGE 2 and
+   QUANTUM LAB with an arrow. He steps out, the doors close: head left.
+6. **Stage 2's lift area** (LIFT Q, FLOOR Q1): a wall on the left, nothing
+   else yet, and the lift doesn't move. The mini map and the Options map say
+   STAGE 2 - no map yet.
+
+MISSION COMPLETE isn't reached any more for now; the game ends with the
+clock, health, or QUIT TO TITLE.
 
 ## End of game bonus
 
@@ -291,6 +319,8 @@ pauses the game and the clock:
 - **STAGE MUSIC** ON / OFF
 - **ELEVATOR MUSIC** ON / OFF (both remembered: `settings.bin` beside the
   high scores)
+- **JUMP TO STAGE 2** (for testing): straight to the sub basement's lift
+  area at the end of stage 1 (unlocked), ready to go into the station
 - **QUIT TO TITLE** (X twice): drops the game there and then, no score
 - **RESUME** (or Triangle again)
 
@@ -335,6 +365,7 @@ g++ -O2 -Imission2/src mission2/sim/check_rooms.cpp -o check && ./check   # chec
 mission2/build.sh sim mission2/sim/hazards.txt   # an electrified floor (and a shock), a dark room, the walls
 mission2/build.sh sim mission2/sim/cameras_drone.txt   # caught on camera, two cameras, the drone
 mission2/build.sh sim mission2/sim/control.txt         # a generator, QUANTUM CONTROL, the computer, the sub basement
+mission2/build.sh sim mission2/sim/stage2.txt          # JUMP TO STAGE 2, the station, the QUANTUMLOOP, stage 2's lift area
 mission2/build.sh sim my_script.txt       # your own script (see sim/sim_main.cpp for the commands)
 ```
 
@@ -350,7 +381,7 @@ checked on the PC before it goes on the console.
 | `src/rooms_wide.h` | the room layouts (1280 units wide, four levels) |
 | `src/gfx.cpp`, `gfx.h` | drawing: the 1920x1080 picture, unit-space calls as in the sketch, vector letters |
 | `src/ps5_platform.cpp` | the PS5 side: the TV picture, the DualSense, the sound, the loop |
-| `src/micromod.c`, `.h` | the MOD player (Martin Cameron's Micromod, as in NUCLEAR MISSION); `micromod2.c`, `micromod3.c` second and third copies of it |
+| `src/micromod.c`, `.h` | the MOD player (Martin Cameron's Micromod, as in NUCLEAR MISSION); `micromod2.c`, `micromod3.c`, `micromod4.c` more copies of it (one a tune) |
 | `src/agent_rig.h`, `people.h` | NUCLEAR MISSION's agent and people, unchanged |
 | `sim/` | the PC test build, the room layout checker and the icon maker (not compiled into the app) |
 | `sce_sys/` | `param.json` (PPSA99903) and the home-screen icon |

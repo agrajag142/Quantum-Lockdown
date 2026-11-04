@@ -35,7 +35,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "020"
+#define GAME_VERSION      "021"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -71,8 +71,9 @@
 #define DOC_SHOW          2.8f     // seconds their panel stays up
 #define POWER_OUT_SECONDS 0.6f     // the countdown at zero: the lights flicker this long, then out (night vision)...
 #define POWER_FAIL_PANEL  1.6f     // ...and MISSION FAILED comes up after this
+#define WARN_EVERY        10       // the last minute: every this many seconds the lights flicker and an alert sounds
 #define GENERATORS        3        // power generators (each in a different room): all on to power the main computer
-#define GENERATOR_BONUS   (5 * 60) // turning on a generator adds to the countdown: the 1st this, the 2nd twice it, the 3rd three times
+#define GENERATOR_BONUS   (5 * 60) // turning on a generator adds this to the countdown (each one)
 #define HEALTH_DRAIN_SECONDS 60.0f // every minute of play costs 1 health
 #define HI_COUNT          5        // the high score table
 #define SHOCK_TIME_LOST   30       // seconds off the clock when the electrified floor gets him...
@@ -82,8 +83,13 @@
                                    // never caught on camera, no first aid used
 #define CONTROL_COL       4        // the QUANTUM CONTROL room is in this column (the middle one), on a random row
 #define CONTROL_ROOM      ROOM_COUNT        // (its index in rooms[], after the 30)
-#define SUB_ROOM          (ROOM_COUNT + 1)  // the sub basement's room (under a lift shaft, once unlocked)
-#define ALL_ROOMS         (ROOM_COUNT + 2)
+#define SUB_ROOM          (ROOM_COUNT + 1)  // the sub basement's room: the QUANTUMLOOP station (under a lift shaft, once unlocked)
+#define ARRIVAL_ROOM      (ROOM_COUNT + 2)  // stage 2: where the QUANTUMLOOP arrives
+#define ALL_ROOMS         (ROOM_COUNT + 3)
+#define S2_FLOOR          0        // stage 2's lift area: the floor it is at (no other stops yet)
+#define RIDE_SECONDS      20.0f    // the QUANTUMLOOP journey
+#define LOOP_POWER_X      500      // the station: the QUANTUMLOOP's power switch...
+#define LOOP_DOOR_X       800      // ...and its doors (the middle of the portal)
 #define SUB_FLOOR         FLOORS   // the sub basement: a floor under the bottom row of the complex
 #define MAX_ORNAMENTS_SHOWN 2      // decorations on a room's walls (not counting the HIGH VOLTAGE sign)
 #define SEARCH_SCORE      100      // searching a piece of equipment (the first time)
@@ -133,6 +139,7 @@
 #define ELEVATOR_MUSIC_VOLUME 0.40f  // elevator.mod, while he stands in the lift car: 0.0 = off ... 1.0 = full
 #define STAGE1_MUSIC_VOLUME   0.25f  // stage1.mod, the rest of the time in stage 1
 #define TITLE_MUSIC_VOLUME    0.35f  // title.mod, on the title screen (and while initials are entered)
+#define STAGE2_MUSIC_VOLUME   0.25f  // stage2.mod, stage 2 (from its briefing on)
 #define MUSIC_FADE_SECONDS    0.8f   // fading in and out (the two cross over)
 #define SFX_VOLUME            1.00f  // the sound effects (steps, the lift)
 #define LIFT_HUM_VOLUME       0.30f  // the lift's motor while it moves (room lift pads a little quieter)
@@ -179,6 +186,16 @@ static bool shaftSeen[SHAFTS][FLOORS + 1];
 // The way down: the main computer unlocks the sub basement under one lift shaft
 static bool subUnlocked = false;
 static int subShaft = -1;
+// The stages, and the scenes between them
+static int stage = 1;
+enum Scene : uint8_t { SC_NONE, SC_STAGE_CLEAR, SC_STAGE2_BRIEF, SC_BOARD_WALK, SC_FADE_OUT, SC_RIDE, SC_ARRIVE };
+static uint8_t scene = SC_NONE;
+static float sceneT = 0;
+static bool loopPowered = false;       // the QUANTUMLOOP's power switched on
+static float loopPowerT = 9;           // seconds since (its lights coming on)
+static float loopDoorT = 0;            // its doors: 0 shut ... 1 open
+static int loopDoorDir = 0;            // +1 opening, -1 closing
+static std::atomic<int> rideHum{0};    // the journey's rumble
 // Quantum drives: found and carried, and loaded into the drive bay in QUANTUM CONTROL
 static int drivesCarried = 0, drivesLoaded = 0;
 static float leverT = -1;                  // >= 0: the lever of this room's generator going up (seconds)
@@ -200,6 +217,7 @@ static char shaftLetter(int s) { return (char)('A' + s); }
 // -1 (a wall). right: the room to the right of the shaft (through its left
 // door), else the one to the left (through its right door).
 static int roomOff(int s, int f, bool right) {
+  if (stage == 2) return (right && f == S2_FLOOR) ? ARRIVAL_ROOM : -1;   // (stage 2's lift area: the arrival room on its right, nothing else yet)
   if (f == SUB_FLOOR) return (right && subUnlocked && s == subShaft) ? SUB_ROOM : -1;
   if (f < 0 || f >= FLOORS) return -1;
   int c = right ? s : s - 1, r = f / 2;
@@ -277,14 +295,14 @@ static void layOut(uint32_t seed) {
     }
   // the two rooms that aren't in the numbering: QUANTUM CONTROL (one level, a door at the bottom
   // on each side) and the sub basement's (a door on the left only; it isn't anywhere until unlocked)
-  for (int k = CONTROL_ROOM; k <= SUB_ROOM; k++) {
+  for (int k = CONTROL_ROOM; k <= ARRIVAL_ROOM; k++) {
     RoomInfo &ri = rooms[k];
     memset(&ri, 0, sizeof(ri));
     ri.row = (int8_t)(k == CONTROL_ROOM ? controlRow : ROWS);
     ri.col = (int8_t)(k == CONTROL_ROOM ? CONTROL_COL : 0);
     ri.topL = ri.topR = false;
     ri.seed = (uint16_t)rnd32();
-    ri.noRightDoor = (k == SUB_ROOM);
+    ri.noRightDoor = (k != CONTROL_ROOM);
   }
   roomAt[controlRow][CONTROL_COL] = (int8_t)CONTROL_ROOM;
   subUnlocked = false;
@@ -296,14 +314,16 @@ static void layOut(uint32_t seed) {
     ri.decorN++;
     extra--;
   }
-  // and the pieces with something in them, ITEMS_HIDDEN of them anywhere
+  // and the pieces with a quantum drive in them, ITEMS_HIDDEN of them, one at most in a room
   for (int k = 0; k < ITEMS_HIDDEN;) {
     RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
-    int i = rnd(ri.decorN);
-    if (ri.holds[i]) continue;
-    ri.holds[i] = true;
+    bool has = false;
+    for (int m = 0; m < MAX_DECOR; m++) has |= ri.holds[m];
+    if (has) continue;
+    ri.holds[rnd(ri.decorN)] = true;
     k++;
-  }  // the TOP SECRET DOCUMENTS: in pieces without a drive, each in a different room
+  }
+  // the TOP SECRET DOCUMENTS: in pieces without a drive, each in a different room
   for (int k = 0; k < DOCUMENTS;) {
     RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
     int i = rnd(ri.decorN);
@@ -471,6 +491,8 @@ static EndReason gameOver = END_NONE;
 static float gameOverT = 0;
 static float playT = 0;                // time played (seconds of play: not the map, not the opening)
 static float drainT = 0;               // towards the next minute's health
+static int warnSlot = 99;              // the last minute: which ten seconds the last alert was in
+static float warnT = 9;                // seconds since that alert (the lights flicker for the first moment)
 // What happened this game (for the end of game bonuses), and the bonuses
 static int nShocks = 0, nDroneHits = 0, nPitFalls = 0, nCaught = 0, nKitsUsed = 0;
 #define BONUS_LINES 6
@@ -545,11 +567,15 @@ long micromod3_initialise(signed char *data, long sampling_rate);
 void micromod3_set_gain(long value);
 void micromod3_get_audio(short *output_buffer, long count);
 void micromod3_set_position(long pos);
+long micromod4_calculate_mod_file_len(signed char *module_header);
+long micromod4_initialise(signed char *data, long sampling_rate);
+void micromod4_set_gain(long value);
+void micromod4_get_audio(short *output_buffer, long count);
 }
 
 enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND,
                      SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN, SFX_SCREAM, SFX_ALARM, SFX_SHOT, SFX_HIT,
-                     SFX_POWERUP, SFX_CLICK, SFX_DENIED, SFX_KEY, SFX_SHUTDOWN };
+                     SFX_POWERUP, SFX_CLICK, SFX_DENIED, SFX_KEY, SFX_SHUTDOWN, SFX_WARN, SFX_LOOPPOWER, SFX_DOORS };
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -561,18 +587,20 @@ struct Voice {
 static Voice voices[MAX_VOICES];
 static uint32_t noiseState = 22222;
 
-static std::atomic<int> tuneWanted{3};    // 0 none, 1 the lift's (elevator.mod), 2 stage 1's (stage1.mod), 3 the title's (title.mod)
+static std::atomic<int> tuneWanted{3};    // 0 none, 1 the lift's (elevator.mod), 2 stage 1's (stage1.mod), 3 the title's (title.mod), 4 stage 2's (stage2.mod)
 static std::atomic<int> liftHum{0};       // 0 still, 1 the car going up, 2 down, 3 / 4 a room's lift pad
 static std::atomic<int> droneHum{0};      // a drone in the room: its rotors' whine (0 none)
-#define TUNES 3                            // 0 elevator.mod, 1 stage1.mod, 2 title.mod: three MOD players, one each
-static bool tuneReady[TUNES] = { false, false, false };
-static char tuneProblem[TUNES][48] = { "NO ELEVATOR.MOD IN THE ASSETS", "NO STAGE1.MOD IN THE ASSETS", "NO TITLE.MOD IN THE ASSETS" };
-static float tuneGain[TUNES] = { 0, 0, 0 };   // (the sound thread's)
+#define TUNES 4                            // 0 elevator.mod, 1 stage1.mod, 2 title.mod, 3 stage2.mod: a MOD player each
+static bool tuneReady[TUNES] = { false, false, false, false };
+static char tuneProblem[TUNES][48] = { "NO ELEVATOR.MOD IN THE ASSETS", "NO STAGE1.MOD IN THE ASSETS", "NO TITLE.MOD IN THE ASSETS",
+                                       "NO STAGE2.MOD IN THE ASSETS" };
+static float tuneGain[TUNES] = { 0, 0, 0, 0 };   // (the sound thread's)
 static std::atomic<bool> titleFromStart{false};   // (back at the title: its tune starts again from the top)
-static long (*const modLen[TUNES])(signed char *) = { micromod_calculate_mod_file_len, micromod2_calculate_mod_file_len, micromod3_calculate_mod_file_len };
-static long (*const modInit[TUNES])(signed char *, long) = { micromod_initialise, micromod2_initialise, micromod3_initialise };
-static void (*const modGain[TUNES])(long) = { micromod_set_gain, micromod2_set_gain, micromod3_set_gain };
-static void (*const modAudio[TUNES])(short *, long) = { micromod_get_audio, micromod2_get_audio, micromod3_get_audio };
+static long (*const modLen[TUNES])(signed char *) = { micromod_calculate_mod_file_len, micromod2_calculate_mod_file_len,
+                                                     micromod3_calculate_mod_file_len, micromod4_calculate_mod_file_len };
+static long (*const modInit[TUNES])(signed char *, long) = { micromod_initialise, micromod2_initialise, micromod3_initialise, micromod4_initialise };
+static void (*const modGain[TUNES])(long) = { micromod_set_gain, micromod2_set_gain, micromod3_set_gain, micromod4_set_gain };
+static void (*const modAudio[TUNES])(short *, long) = { micromod_get_audio, micromod2_get_audio, micromod3_get_audio, micromod4_get_audio };
 static short tuneBuf[2048 * 2];
 static uint8_t sfxRing[64];
 static std::atomic<int> sfxHead{0}, sfxTail{0};
@@ -633,6 +661,24 @@ static void startEffect(uint8_t sfx) {
       startVoice(WAVE_SQUARE, 110, 16, 120, 2600, 0.09f);
       startVoice(WAVE_TRIANGLE, 300, 24, 420, 2300, 0.20f);
       startVoice(WAVE_NOISE, 400, 50, 2500, 300, 0.25f);
+      break;
+    case SFX_WARN:                             // the last minute: a two-tone alert, three times
+      for (int k = 0; k < 3; k++) {
+        startVoice(WAVE_SQUARE, 700, 700, k * 300, 140, 0.13f);
+        startVoice(WAVE_SQUARE, 520, 520, k * 300 + 150, 140, 0.13f);
+      }
+      break;
+    case SFX_LOOPPOWER:                        // the QUANTUMLOOP powering up: a rising whine, then a chime
+      startVoice(WAVE_NOISE, 900, 150, 0, 90, 0.30f);
+      startVoice(WAVE_TRIANGLE, 60, 900, 80, 2000, 0.25f);
+      startVoice(WAVE_SQUARE, 30, 120, 80, 2000, 0.06f);
+      startVoice(WAVE_TRIANGLE, 1047, 1047, 2100, 300, 0.30f);
+      startVoice(WAVE_TRIANGLE, 1568, 1568, 2250, 500, 0.25f);
+      break;
+    case SFX_DOORS:                            // its doors sliding: a hiss and a hum
+      startVoice(WAVE_NOISE, 3000, 600, 0, 900, 0.20f);
+      startVoice(WAVE_SQUARE, 200, 140, 0, 900, 0.05f);
+      startVoice(WAVE_NOISE, 500, 100, 950, 150, 0.22f);
       break;
     case SFX_CLICK:                            // a drive sliding into the bay
       startVoice(WAVE_SQUARE, 1200, 1200, 0, 15, 0.12f);
@@ -746,6 +792,22 @@ static inline float liftHumSample(int hum) {
   return (pulse * 0.6f + tri * 0.4f) * throb * humLevel;
 }
 
+// The QUANTUMLOOP's journey: a deep rumble, rushing past in waves
+static float rdLP = 0, rdPhase = 0, rdWave = 0, rdLevel = 0;
+static uint32_t rdNoise = 777;
+static inline float rideSample(int on) {
+  rdLevel += ((on ? 0.22f : 0.0f) - rdLevel) * 0.0004f;
+  if (rdLevel < 0.0005f && !on) return 0;
+  rdNoise = rdNoise * 1664525u + 1013904223u;
+  rdLP += ((float)(rdNoise >> 16) / 32768.0f - 1.0f - rdLP) * 0.03f;
+  rdPhase += 41.0f / AUDIO_RATE;
+  if (rdPhase >= 1) rdPhase -= 1;
+  rdWave += 2.6f / AUDIO_RATE;
+  if (rdWave >= 1) rdWave -= 1;
+  float tri = 4.0f * fabsf(rdPhase - 0.5f) - 1.0f;
+  return (rdLP * 2.2f + tri * 0.35f) * (0.6f + 0.4f * sinf(rdWave * TWO_PI)) * rdLevel;
+}
+
 // A drone's rotors: a thin whine with a fast flutter, quiet
 static float drPhase = 0, drPhase2 = 0, drWob = 0, drLevel = 0;
 static inline float droneSample(int on) {
@@ -764,7 +826,7 @@ static inline float droneSample(int on) {
 
 void gameSetTune(int which, signed char *data, long len) {
   if (which < 0 || which >= TUNES || !data || len < 1084) return;
-  static const char *const names[TUNES] = { "ELEVATOR.MOD", "STAGE1.MOD", "TITLE.MOD" };
+  static const char *const names[TUNES] = { "ELEVATOR.MOD", "STAGE1.MOD", "TITLE.MOD", "STAGE2.MOD" };
   const char *name = names[which];
   long need = modLen[which](data);
   if (need < 0) { snprintf(tuneProblem[which], 48, "%s: NOT A MOD FILE", name); return; }
@@ -788,6 +850,7 @@ void gameAudio(short *out, int frames) {
   // the effects and the lift's hum (mono)
   int hum = liftHum.load(std::memory_order_relaxed);
   int drone = droneHum.load(std::memory_order_relaxed);
+  int ride = rideHum.load(std::memory_order_relaxed);
   static float fx[2048];
   for (int n = 0; n < frames; n++) {
     float mix = 0;
@@ -811,7 +874,7 @@ void gameAudio(short *out, int frames) {
         screamPos += (float)SCREAM_RATE / AUDIO_RATE;
       }
     }
-    fx[n] = mix * SFX_VOLUME + liftHumSample(hum) + droneSample(drone);
+    fx[n] = mix * SFX_VOLUME + liftHumSample(hum) + droneSample(drone) + rideSample(ride);
   }
   // the three tunes, each fading towards its level (a tune at nothing waits where it was)
   static int32_t acc[2048 * 2];
@@ -819,8 +882,9 @@ void gameAudio(short *out, int frames) {
   int want = tuneWanted.load(std::memory_order_relaxed);
   if (tuneReady[2] && tuneGain[2] <= 0 && titleFromStart.exchange(false)) micromod3_set_position(0);
   for (int k = 0; k < TUNES; k++) {
-    float vol = k == 0 ? ELEVATOR_MUSIC_VOLUME : (k == 1 ? STAGE1_MUSIC_VOLUME : TITLE_MUSIC_VOLUME);
-    bool allowed = k == 2 || musicOn[k].load(std::memory_order_relaxed);   // (the settings: stage and elevator music)
+    static const float vols[TUNES] = { ELEVATOR_MUSIC_VOLUME, STAGE1_MUSIC_VOLUME, TITLE_MUSIC_VOLUME, STAGE2_MUSIC_VOLUME };
+    float vol = vols[k];
+    bool allowed = k == 2 || musicOn[k == 3 ? 1 : k].load(std::memory_order_relaxed);   // (the settings: stage music, both stages; elevator music)
     float target = (tuneReady[k] && want == k + 1 && allowed) ? vol : 0.0f;
     if (!tuneReady[k] || (tuneGain[k] <= 0 && target <= 0)) continue;
     memset(tuneBuf, 0, (size_t)frames * 4);
@@ -1762,35 +1826,189 @@ static void paintControlRoom() {
   hazardBand(b0 + 4, b1 - 6, fy - 14, fy - 6);
 }
 
-// ---- the sub basement: a bare concrete hall under a low ceiling, nothing in it (for now)
-static void paintSubRoom() {
-  int fy = ROOM_FLOOR_Y, ceil = 300;
-  fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(52, 54, 56));
-  uint32_t h = 4242;
-  for (int i = 0; i < 900; i++) {                                         // the concrete's speckle
-    h = h * 1664525u + 1013904223u;
-    int x = (h >> 8) % SCREEN_W;
-    h = h * 1664525u + 1013904223u;
-    int y = ceil + (h >> 8) % (fy - ceil);
-    fillRect(x, y, x + 1, y, (h & 0x100) ? rgb565(62, 64, 66) : rgb565(44, 46, 48));
+// ---- the QUANTUMLOOP station (the sub basement's room) and, in stage 2, the
+// arrival station (the same, its board saying where you are): a sign and the
+// departure board on the left, benches, the power switch, the portal with
+// its doors, and the transport's tube running off to the right. What lights
+// up and moves is drawn each frame (drawLoopStation).
+#define LOOP_RING_Y   520          // the portal's middle
+static void paintLoopStation(bool arrival) {
+  int fy = ROOM_FLOOR_Y;
+  // the walls: concrete panels in steel frames
+  fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(74, 78, 84));
+  for (int x = 0; x < SCREEN_W; x += 128) {
+    fillRect(x + 4, 124, x + 123, fy - 8, rgb565(86, 90, 96));
+    fillRect(x, 110, x + 3, fy - 1, rgb565(52, 56, 62));
   }
-  for (int y = ceil + 60; y < fy; y += 70) fillRect(0, y, SCREEN_W - 1, y, rgb565(40, 42, 44));   // the shuttering's lines
-  for (int x = 180; x < SCREEN_W - 100; x += 300) {                        // pillars
-    fillRect(x, ceil, x + 44, fy - 1, rgb565(70, 72, 74));
-    fillRect(x, ceil, x + 4, fy - 1, rgb565(92, 94, 96));
-    fillRect(x + 40, ceil, x + 44, fy - 1, rgb565(46, 48, 50));
-    hazardBand(x, x + 44, fy - 70, fy - 56);
+  for (int y = 250; y < fy; y += 140) fillRect(0, y, SCREEN_W - 1, y + 2, rgb565(60, 64, 70));
+  // the ceiling: beams, pipes, light panels
+  fillRect(0, HUD_H, SCREEN_W - 1, 110, rgb565(34, 38, 46));
+  for (int x = 60; x < SCREEN_W; x += 240) fillRect(x, HUD_H, x + 30, 110, rgb565(50, 56, 66));
+  paintPipe(64, 16);
+  for (int k = 0; k < 3; k++) {
+    int lx = 180 + k * 400;
+    fillRect(lx, 96, lx + 150, 108, rgb565(240, 244, 250));
+    fillRect(lx - 4, 92, lx + 154, 96, rgb565(70, 76, 88));
+    glowDisc(lx + 75.0f, 110.0f, 150, 200, 220, 255, 0.12f);
   }
-  fillRect(0, HUD_H, SCREEN_W - 1, ceil - 1, rgb565(30, 32, 34));          // the low ceiling, pipes along it
-  paintPipe(ceil - 60, 22);
-  paintPipe(ceil - 28, 14);
-  fillRect(0, ceil - 6, SCREEN_W - 1, ceil - 1, rgb565(20, 20, 22));
-  for (int x = 120; x < SCREEN_W; x += 300) {                              // caged lamps
-    fillRect(x, ceil, x + 30, ceil + 8, rgb565(255, 224, 150));
-    fillRect(x - 2, ceil + 8, x + 32, ceil + 10, rgb565(60, 60, 60));
+  paintPipe(118, 12);
+  // the sign: QUANTUMLOOP TRANSPORT SYSTEM, a swoosh over it
+  fillRect(70, 150, 440, 252, rgb565(28, 32, 40));
+  drawRectOutline(70, 150, 440, 252, rgb565(110, 116, 128), 2);
+  drawVectorTextW("QUANTUMLOOP", 255, 186, 3.9f, rgb565(230, 234, 240), 2.4f);
+  drawVectorText("TRANSPORT SYSTEM", 255, 228, 2.0f, rgb565(170, 176, 186), false);
+  for (int k = 0; k < 24; k++) {                       // (the swoosh)
+    float a0 = 3.4f + k * 0.07f, a1 = a0 + 0.07f;
+    drawLineF(300 + cosf(a0) * 130, 214 + sinf(a0) * 46, 300 + cosf(a1) * 130, 214 + sinf(a1) * 46, rgb565(200, 206, 216), 2.0f);
   }
-  drawVectorText("SUB BASEMENT", SCREEN_W / 2, 420, 5.0f, rgb565(84, 86, 90), true);
-  drawVectorText("LEVEL SB", SCREEN_W / 2, 470, 2.6f, rgb565(84, 86, 90), true);
+  // the departure board's frame (what it says: drawLoopStation)
+  fillRect(110, 290, 380, 452, rgb565(24, 26, 32));
+  drawRectOutline(110, 290, 380, 452, rgb565(120, 126, 138), 3);
+  // benches, a bin
+  for (int b = 0; b < 3; b++) {
+    int x0 = 118 + b * 66;
+    fillRect(x0, 560, x0 + 60, 604, rgb565(150, 156, 166));
+    for (int yy = 566; yy < 600; yy += 7)
+      for (int xx = x0 + 5; xx < x0 + 56; xx += 7) fillRect(xx, yy, xx + 2, yy + 2, rgb565(100, 104, 114));
+    fillRect(x0 - 2, 604, x0 + 62, 616, rgb565(176, 182, 192));
+  }
+  fillRect(124, 616, 132, fy - 1, rgb565(80, 84, 92));
+  fillRect(304, 616, 312, fy - 1, rgb565(80, 84, 92));
+  fillRect(350, 600, 384, fy - 1, rgb565(150, 156, 166));
+  fillRect(346, 594, 388, 602, rgb565(176, 182, 192));
+  fillRect(356, 610, 378, 616, rgb565(40, 44, 50));
+  // the power switch: a pedestal under a sign
+  int px = LOOP_POWER_X;
+  fillRect(px - 84, 470, px + 84, 500, rgb565(28, 32, 40));
+  drawRectOutline(px - 84, 470, px + 84, 500, rgb565(255, 190, 70), 1);
+  drawVectorText("QUANTUMLOOP POWER", px, 485, 1.4f, rgb565(255, 190, 70), true);
+  fillRect(px - 26, 580, px + 26, fy - 1, rgb565(70, 76, 88));
+  fillRect(px - 26, 580, px + 26, 584, rgb565(130, 136, 148));
+  int tx[4] = { px - 36, px + 36, px + 30, px - 30 }, ty[4] = { 548, 534, 584, 584 };   // its tilted top
+  fillPolygon(tx, ty, 4, rgb565(96, 102, 116));
+  hazardBand(px - 26, px + 25, fy - 22, fy - 12);
+  // the tube, off to the right
+  for (int y = 330; y <= 650; y++) {
+    float k = (y - 330) / 320.0f;
+    int c = (int)(150 - 90 * fabsf(k - 0.32f) * 1.6f);
+    fillRect(980, y, SCREEN_W - 17, y, rgb565(c, c + 4, c + 10));
+  }
+  for (int x = 1060; x < SCREEN_W - 20; x += 120) {
+    fillRect(x, 330, x + 4, 650, rgb565(70, 74, 82));
+    fillRect(x + 5, 330, x + 6, 650, rgb565(190, 196, 204));
+  }
+  drawVectorTextW("QUANTUMLOOP", 1140, 470, 2.6f, rgb565(210, 216, 226), 2.0f);
+  // railings in front of it
+  fillRect(1010, 596, SCREEN_W - 20, 602, rgb565(230, 180, 40));
+  fillRect(1010, 630, SCREEN_W - 20, 634, rgb565(170, 176, 186));
+  for (int x = 1016; x < SCREEN_W - 20; x += 80) fillRect(x, 596, x + 5, fy - 1, rgb565(170, 176, 186));
+  // the portal: a heavy ring round the doorway
+  int cx = LOOP_DOOR_X, cy = LOOP_RING_Y;
+  fillCircle(cx, cy, 236, rgb565(46, 50, 58));
+  fillCircle(cx, cy, 228, rgb565(150, 156, 166));
+  fillCircle(cx - 4, cy - 4, 214, rgb565(176, 182, 192));
+  fillCircle(cx, cy, 212, rgb565(120, 126, 136));
+  fillCircle(cx, cy, 176, rgb565(60, 64, 72));
+  for (int k = 0; k < 16; k++) {
+    float a = k * TWO_PI / 16;
+    fillCircle(cx + (int)(cosf(a) * 220), cy + (int)(sinf(a) * 220), 3, rgb565(90, 96, 106));
+  }
+  fillRect(cx - 74, 470, cx + 74, fy - 1, rgb565(40, 44, 52));      // the door frame
+  fillRect(cx - 74, 470, cx + 74, 474, rgb565(150, 156, 166));
+  fillRect(cx - 100, 384, cx + 100, 462, rgb565(20, 24, 32));        // the sign over it (lit: drawLoopStation)
+  drawRectOutline(cx - 100, 384, cx + 100, 462, rgb565(90, 96, 108), 2);
+  (void)arrival;
+}
+
+// The station, each frame: the portal's lights, the tube's strip, the sign
+// and the board, the switch's lamps, the doors (and what is behind them)
+static bool atLoopPower();
+static bool atLoopDoor();
+static void drawLoopStation(bool arrival) {
+  int fy = ROOM_FLOOR_Y, cx = LOOP_DOOR_X, cy = LOOP_RING_Y;
+  bool blink = fmodf(clockT, 1.0f) < 0.6f;
+  float k = loopPowered ? clampv(loopPowerT / 2.0f, 0.0f, 1.0f) : 0.0f;   // (the lights coming on, in turn)
+  bool flick = loopPowered && k < 1.0f && fxRnd(0, 4) == 0;
+  // the portal's light arcs
+  for (int a = 0; a < 4; a++) {
+    float on = clampv(k * 4.0f - a, 0.0f, 1.0f);
+    float mid = (a == 0 ? 200 : a == 1 ? 140 : a == 2 ? 340 : 40) * 0.017453293f;
+    uint16_t c = on > 0.5f && !flick ? rgb565(110, 200, 255) : rgb565(36, 56, 80);
+    for (int s2 = -6; s2 < 6; s2++) {
+      float a0 = mid + s2 * 0.06f, a1 = a0 + 0.06f;
+      drawLineF(cx + cosf(a0) * 194, cy + sinf(a0) * 194, cx + cosf(a1) * 194, cy + sinf(a1) * 194, c, 9.0f);
+    }
+    if (on > 0.5f && !flick) glowDisc(cx + cosf(mid) * 194, cy + sinf(mid) * 194, 90, 60, 160, 255, 0.35f);
+  }
+  // the tube's strip
+  if (k > 0) {
+    int x1 = 980 + (int)((SCREEN_W - 17 - 980) * k);
+    fillRect(980, 556, x1, 562, rgb565(90, 190, 255));
+    glowDisc((980 + x1) / 2.0f, 559.0f, (x1 - 980) / 2.0f + 20, 40, 140, 255, 0.18f);
+  } else {
+    fillRect(980, 556, SCREEN_W - 17, 562, rgb565(40, 60, 80));
+  }
+  // the sign over the doors
+  bool lit = k >= 0.5f && !flick;
+  drawVectorText("QUANTUMLOOP", cx, 408, 2.3f, lit ? rgb565(230, 240, 255) : rgb565(60, 66, 78), true);
+  if (arrival) drawVectorText("ARRIVALS", cx, 440, 2.4f, lit ? rgb565(255, 220, 80) : rgb565(70, 64, 40), true);
+  else {
+    drawVectorText("STAGE 2", cx - 16, 440, 2.4f, lit ? rgb565(255, 220, 80) : rgb565(70, 64, 40), true);
+    for (int c2 = 0; c2 < 2; c2++) {
+      int ax = cx + 44 + c2 * 14;
+      int xs[3] = { ax, ax + 10, ax }, ys[3] = { 430, 440, 450 };
+      fillPolygon(xs, ys, 3, lit ? rgb565(255, 220, 80) : rgb565(70, 64, 40));
+    }
+  }
+  if (lit) glowDisc(cx, 423, 120, 80, 150, 255, 0.15f);
+  // the departure board
+  fillRect(122, 302, 368, 440, rgb565(8, 14, 30));
+  if (arrival) {
+    drawVectorText("ARRIVED", 245, 330, 2.6f, rgb565(120, 210, 255), true);
+    drawVectorText("STAGE 2", 245, 372, 3.4f, rgb565(255, 220, 80), true);
+    if (blink) drawVectorText("QUANTUM LAB", 260, 414, 2.2f, rgb565(120, 255, 160), true);
+    int xs[3] = { 156, 172, 172 }, ys[3] = { 414, 404, 424 };
+    fillPolygon(xs, ys, 3, rgb565(120, 255, 160));
+  } else if (!loopPowered || k < 0.75f) {
+    drawVectorText("QUANTUMLOOP", 245, 340, 2.4f, rgb565(120, 210, 255), true);
+    if (blink && !loopPowered) drawVectorText("POWER OFFLINE", 245, 392, 2.4f, rgb565(255, 80, 60), true);
+  } else {
+    drawVectorText("NEXT DEPARTURE", 245, 326, 2.2f, rgb565(120, 210, 255), true);
+    drawVectorText("STAGE 2", 245, 366, 3.4f, rgb565(255, 220, 80), true);
+    if (blink) drawVectorText("NOW BOARDING", 245, 412, 2.4f, rgb565(120, 255, 160), true);
+  }
+  for (int y = 302; y < 440; y += 3) blendRect(122, y, 368, y, 0, 0, 0, 0.2f);
+  // the power switch: its hand plate and lamps
+  int px = LOOP_POWER_X;
+  bool on = loopPowered || arrival;
+  fillCircle(px, 546, 14, on ? rgb565(60, 220, 110) : rgb565(200, 40, 30));
+  fillCircle(px - 4, 542, 4, rgb565(255, 255, 255));
+  if (on) glowDisc(px, 546, 50, 60, 255, 120, 0.4f);
+  else if (blink) glowDisc(px, 546, 40, 255, 40, 30, 0.3f);
+  for (int l = 0; l < 3; l++) fillRect(px - 18 + l * 14, 562, px - 10 + l * 14, 568, on && k * 3 > l ? rgb565(80, 255, 120) : rgb565(60, 30, 26));
+  // the doors: behind them, the transport's lit cabin; the two halves slide apart
+  int dx0 = cx - 70, dx1 = cx + 70, dy0 = 478;
+  fillRect(dx0, dy0, dx1, fy - 1, rgb565(150, 160, 176));
+  fillRect(dx0, dy0 + 40, dx1, dy0 + 100, rgb565(20, 40, 70));          // (its window: the tunnel)
+  for (int s2 = 0; s2 < 3; s2++) fillRect(dx0 + 10 + s2 * 46, dy0 + 120, dx0 + 40 + s2 * 46, dy0 + 176, rgb565(60, 80, 120));   // (seats)
+  int open = (int)(70 * loopDoorT);
+  for (int h = 0; h < 2; h++) {
+    int x0 = h ? cx + open : dx0, x1 = h ? dx1 : cx - open;
+    if (x1 - x0 < 2) continue;
+    fillRect(x0, dy0, x1, fy - 1, rgb565(176, 182, 192));
+    fillRect(x0, dy0, x1, dy0 + 3, rgb565(220, 226, 234));
+    int wx0 = h ? x0 + 12 : x1 - 56, wx1 = h ? x0 + 56 : x1 - 12;   // the windows
+    if (wx1 > x1 - 4) wx1 = x1 - 4;
+    if (wx0 < x0 + 4) wx0 = x0 + 4;
+    if (wx1 > wx0) fillRect(wx0, dy0 + 20, wx1, dy0 + 110, rgb565(40, 60, 80));
+    hazardBand(x0, x1, fy - 56, fy - 42);
+  }
+  if (blink && scene == SC_NONE) {
+    if (atLoopPower()) drawVectorText("USE", LOOP_POWER_X, 450, 3.0f, rgb565(255, 220, 120), true);
+    if (atLoopDoor() && loopDoorT <= 0) drawVectorText("USE", cx, 362, 3.0f, rgb565(255, 220, 120), true);
+  }
+  fillCircle(cx - 30, 474, 3, on && loopDoorT >= 0 ? rgb565(80, 255, 140) : rgb565(220, 40, 30));
+  fillCircle(cx + 30, 474, 3, on ? rgb565(80, 255, 140) : rgb565(220, 40, 30));
 }
 
 static void paintRoom() {
@@ -1798,7 +2016,7 @@ static void paintRoom() {
   gfxClipAll();
   if (curRoom >= ROOM_COUNT) {               // QUANTUM CONTROL, the sub basement: their own
     if (curRoom == CONTROL_ROOM) paintControlRoom();
-    else paintSubRoom();
+    else paintLoopStation(curRoom == ARRIVAL_ROOM);
     for (int i = 0; i < platCount; i++) paintPlatform(plats[i]);
     paintRoomSide(false, doorYL);
     paintRoomSide(true, doorYR, !rooms[curRoom].noRightDoor);
@@ -1961,7 +2179,7 @@ static void drawCatwalkDoor(bool right, int fy, int room) {
   // the room's number beside the door
   char b[24];
   if (room == CONTROL_ROOM) snprintf(b, sizeof(b), "QUANTUM CONTROL");
-  else if (room == SUB_ROOM) snprintf(b, sizeof(b), "SUB BASEMENT");
+  else if (room == SUB_ROOM || room == ARRIVAL_ROOM) snprintf(b, sizeof(b), "QUANTUMLOOP");
   else snprintf(b, sizeof(b), "ROOM %d", room + 1);
   float w = vectorTextWidth(b, 2.2f);
   drawVectorText(b, right ? x0 - 22 - w / 2 : x1 + 22 + w / 2, top + 14, 2.2f, rgb565(170, 230, 180), false);
@@ -2045,7 +2263,8 @@ static void drawShaftScene() {
     if (fy < HUD_H - 40 || fy - CORR_H - 20 > PLAY_Y1) continue;
     int cy = fy - CORR_H;
     char name[8];
-    if (L == SUB_FLOOR) snprintf(name, sizeof(name), "SB");
+    if (stage == 2) snprintf(name, sizeof(name), "Q%d", L + 1);
+    else if (L == SUB_FLOOR) snprintf(name, sizeof(name), "SB");
     else snprintf(name, sizeof(name), "%d", L + 1);
     for (int side = 0; side < 2; side++) {
       int room = roomOff(curShaft, L, side == 1);
@@ -2068,7 +2287,17 @@ static void drawShaftScene() {
       for (int x = x0 + 50; x < x1 - 20; x += 120) fillRect(x, cy + 1, x + 18, cy + 4, lamp);
       // the door at the far end, then the hand rail in front of the wall
       drawCatwalkDoor(side == 1, fy, room);
-      if (curShaft == ventShaft && L == ventFloor && (ventX > SHAFT_X1) == (side == 1)) drawVent(fy, cy);
+      if (stage == 1 && curShaft == ventShaft && L == ventFloor && (ventX > SHAFT_X1) == (side == 1)) drawVent(fy, cy);
+      if (side == 1 && room == SUB_ROOM) {           // the sub basement: the way to the QUANTUMLOOP
+        int sx0 = SHAFT_X1 + 150, sx1 = SHAFT_X1 + 410, sy0 = cy + 84, sy1 = cy + 140;
+        fillRect(sx0, sy0, sx1, sy1, rgb565(20, 26, 36));
+        drawRectOutline(sx0, sy0, sx1, sy1, rgb565(90, 180, 255), 2);
+        drawVectorText("QUANTUMLOOP", sx0 + 104, sy0 + 28, 2.8f, rgb565(230, 240, 255), true);
+        int ax = sx1 - 44, ay = sy0 + 28;
+        int xs[7] = { ax + 26, ax + 6, ax + 6, ax - 18, ax - 18, ax + 6, ax + 6 }, ys[7] = { ay, ay - 20, ay - 9, ay - 9, ay + 9, ay + 9, ay + 20 };
+        fillPolygon(xs, ys, 7, rgb565(255, 220, 80));
+        glowDisc((sx0 + sx1) / 2.0f, (sy0 + sy1) / 2.0f, 160, 60, 140, 255, 0.12f);
+      }
       int r0 = side ? x0 : 40, r1 = side ? x1 - 40 : x1;
       drawLine(r0, fy - 44, r1, fy - 44, rail, true);
       for (int x = r0 + 20; x < r1; x += 40) drawLine(x, fy - 44, x, fy - 1, rail, false);
@@ -2099,7 +2328,7 @@ static const WideRoom controlRoomT = { "QUANTUM CONTROL", 1, { { 0, SCREEN_W, RO
 static const WideRoom subRoomT = { "SUB BASEMENT", 1, { { 0, SCREEN_W, ROOM_FLOOR_Y } }, 0, {}, 0, {}, 0, {}, 640, 0 };
 static const WideRoom &roomTemplate(int idx) {
   if (idx == CONTROL_ROOM) return controlRoomT;
-  if (idx == SUB_ROOM) return subRoomT;
+  if (idx == SUB_ROOM || idx == ARRIVAL_ROOM) return subRoomT;
   return wideRooms[rooms[idx].tpl];
 }
 
@@ -2180,13 +2409,20 @@ static void resetHazardsForEntry(bool fromLeft) {
   for (int i = 0; i < MAX_BULLETS; i++) bullets[i].life = 0;
 }
 
+static void computeBonuses();
+
 static void enterRoom(int idx, bool fromLeft) {
   mode = MODE_ROOM;
   curRoom = idx;
   buildRoom(idx, fromLeft);
   paintRoom();
   rooms[idx].visited = true;
-  if (idx == SUB_ROOM) endGame(END_WIN);   // (for now: reaching the sub basement wins the game)
+  if (idx == SUB_ROOM && stage == 1) {     // the QUANTUMLOOP station: stage 1 is over (its bonuses), then stage 2
+    computeBonuses();
+    scene = SC_STAGE_CLEAR;
+    sceneT = 0;
+    sfxPlay(SFX_FANFARE);
+  }
   curHazard = rooms[idx].hazard;
   leverT = -1;
   powerPanelT = 0;
@@ -2240,6 +2476,10 @@ static void leaveThroughEdge(bool right) {
   const RoomInfo &ri = rooms[curRoom];
   if (curRoom == SUB_ROOM) {                // (its only door: back to the lift it is under)
     enterShaft(subShaft, SUB_FLOOR, false);
+    return;
+  }
+  if (curRoom == ARRIVAL_ROOM) {            // stage 2: out to its lift area
+    enterShaft(0, S2_FLOOR, false);
     return;
   }
   if (right) enterShaft(ri.col + 1, ri.row * 2 + (ri.topR ? 0 : 1), true);
@@ -2328,6 +2568,7 @@ static bool inCar(float x) { return mode == MODE_SHAFT && x > SHAFT_X0 + 14 && x
 static bool exitOpen(bool right) {
   if (mode == MODE_SHAFT) return !carMoving && roomOff(curShaft, carFloor, right) >= 0;
   if (right && rooms[curRoom].noRightDoor) return false;
+  if (!right && curRoom == SUB_ROOM && stage == 2) return false;   // (stage 2 begun: no way back up)
   return fabsf(agY - (right ? doorYR : doorYL)) < 0.5f;
 }
 
@@ -2387,18 +2628,24 @@ static void endGame(int why) {
       termOn = false;
       powerPanelT = 0;
     }
-    // the end of game bonuses: minutes left, and each thing that never happened
-    int mins = timeLeft > 0 ? (int)(timeLeft / 60) : 0;
-    bonusPts[0] = (long)mins * BONUS_PER_MINUTE;
-    bonusPts[1] = nShocks == 0 ? BONUS_CLEAN : 0;
-    bonusPts[2] = nDroneHits == 0 ? BONUS_CLEAN : 0;
-    bonusPts[3] = nPitFalls == 0 ? BONUS_CLEAN : 0;
-    bonusPts[4] = nCaught == 0 ? BONUS_CLEAN : 0;
-    bonusPts[5] = nKitsUsed == 0 ? BONUS_CLEAN : 0;
-    bonusTotal = 0;
-    for (int i = 0; i < BONUS_LINES; i++) bonusTotal += bonusPts[i];
-    score += bonusTotal;
+    computeBonuses();
   }
+}
+
+// The bonuses (end of a stage, end of the game): minutes left, and each thing
+// that never happened (since the last stage ended)
+static void computeBonuses() {
+  int mins = timeLeft > 0 ? (int)(timeLeft / 60) : 0;
+  bonusPts[0] = (long)mins * BONUS_PER_MINUTE;
+  bonusPts[1] = nShocks == 0 ? BONUS_CLEAN : 0;
+  bonusPts[2] = nDroneHits == 0 ? BONUS_CLEAN : 0;
+  bonusPts[3] = nPitFalls == 0 ? BONUS_CLEAN : 0;
+  bonusPts[4] = nCaught == 0 ? BONUS_CLEAN : 0;
+  bonusPts[5] = nKitsUsed == 0 ? BONUS_CLEAN : 0;
+  bonusTotal = 0;
+  for (int i = 0; i < BONUS_LINES; i++) bonusTotal += bonusPts[i];
+  score += bonusTotal;
+  nShocks = nDroneHits = nPitFalls = nCaught = nKitsUsed = 0;   // (counted afresh for the next stage)
 }
 
 // Time off the clock (the electrified floor, a pit), with a message
@@ -2669,6 +2916,30 @@ static void updateTerminal(float dt) {
   }
 }
 
+// ---- the QUANTUMLOOP station: the power switch, then the doors (then on board)
+static bool atLoopPower() { return curRoom == SUB_ROOM && stage == 2 && onFloorStill() && fabsf(agX - LOOP_POWER_X) < 60; }
+static bool atLoopDoor() { return curRoom == SUB_ROOM && stage == 2 && onFloorStill() && fabsf(agX - LOOP_DOOR_X) < 80; }
+static void useLoopPower() {
+  if (loopPowered) {
+    showMsg("THE QUANTUMLOOP HAS POWER", 2.0f);
+    return;
+  }
+  loopPowered = true;
+  loopPowerT = 0;
+  sfxPlay(SFX_LOOPPOWER);
+  showMsg("QUANTUMLOOP POWER ON", 2.5f);
+}
+static void useLoopDoor() {
+  if (!loopPowered) {
+    showMsg("NO POWER TO THE QUANTUMLOOP", 2.5f);
+    sfxPlay(SFX_DENIED);
+    return;
+  }
+  if (loopDoorDir != 0 || loopDoorT > 0) return;
+  loopDoorDir = 1;                     // (open: then he goes on board)
+  sfxPlay(SFX_DOORS);
+}
+
 static void updateAgent(float dt) {
   bool L = held & BTN_LEFT, R = held & BTN_RIGHT;
   int want = (R && !L) ? 1 : ((L && !R) ? -1 : 0);
@@ -2698,6 +2969,10 @@ static void updateAgent(float dt) {
       } else if (pressed & BTN_JUMP) {
         if (want) agFacing = want;
         startJump();
+      } else if ((pressed & BTN_USE) && atLoopPower()) {
+        useLoopPower();                 // the QUANTUMLOOP's power...
+      } else if ((pressed & BTN_USE) && atLoopDoor()) {
+        useLoopDoor();                  // ...and its doors
       } else if ((pressed & BTN_USE) && atConsole()) {
         useConsole();                   // QUANTUM CONTROL: the main computer...
       } else if ((pressed & BTN_USE) && atBay()) {
@@ -2863,7 +3138,7 @@ static void updateAgent(float dt) {
           if (decor[i].kind == DEC_GENERATOR) {   // the power generator: the lever goes up, its lamp turns green
             ri.genOn = true;
             leverT = 0;
-            int bonus = GENERATOR_BONUS * generatorsOn();   // (5, 10, then 15 more minutes on the clock)
+            int bonus = GENERATOR_BONUS;      // (5 more minutes on the clock)
             timeLeft += bonus;
             addScore(SEARCH_SCORE, px, py - 26);
             sfxPlay(SFX_POWERUP);
@@ -3946,6 +4221,11 @@ static void drawMiniMap(int x0, int y0, int x1, int y1) {
     }
   int gx0 = fx0 + 8, gy0 = fy0 + 8, gx1 = fx1 - 8, gy1 = fy1 - 8;
   fillRect(gx0, gy0, gx1, gy1, rgb565(236, 206, 64));            // the screen: yellow
+  if (stage == 2) {                                               // (stage 2: no map yet)
+    drawVectorText("STAGE 2", (gx0 + gx1) / 2, (gy0 + gy1) / 2 - 14, 4.0f, rgb565(40, 30, 10), true);
+    drawVectorText("QUANTUM LAB", (gx0 + gx1) / 2, (gy0 + gy1) / 2 + 28, 2.4f, rgb565(40, 30, 10), true);
+    return;
+  }
   // the complex, scaled into the screen: the rooms you've been in, the shafts as far as you've seen them
   const int RW = 36, SW = 12, RH = 18, GAP = 7;
   int mw = COLS * RW + SHAFTS * SW, mh = ROWS * RH + (ROWS - 1) * GAP;
@@ -3995,9 +4275,11 @@ static void drawPanel() {
   // on the left: where you are, and the car's arrows
   bevelBox(20, PANEL_Y + 16, 372, SCREEN_H - 18, rgb565(70, 78, 120));
   char b[40];
-  snprintf(b, sizeof(b), "LIFT %c", shaftLetter(curShaft));
+  if (stage == 2) snprintf(b, sizeof(b), "LIFT Q");
+  else snprintf(b, sizeof(b), "LIFT %c", shaftLetter(curShaft));
   drawVectorText(b, 150, PANEL_Y + 62, 4.2f, rgb565(255, 220, 80), true);
-  if (carFloor == SUB_FLOOR) snprintf(b, sizeof(b), "FLOOR SB");
+  if (stage == 2) snprintf(b, sizeof(b), "FLOOR Q%d", carFloor + 1);
+  else if (carFloor == SUB_FLOOR) snprintf(b, sizeof(b), "FLOOR SB");
   else snprintf(b, sizeof(b), "FLOOR %d", carFloor + 1);
   drawVectorText(b, 150, PANEL_Y + 112, 3.4f, rgb565(230, 236, 245), true);
   bool movingUp = carMoving && carFloor * LEVEL_GAP < carWorldY, movingDown = carMoving && !movingUp;
@@ -4033,13 +4315,17 @@ static void drawPanel() {
 // GAME OVER: why, and the score
 static float gameOverShownT() { return gameOverT - (gameOver == END_TIME ? POWER_FAIL_PANEL : 0.0f); }   // (the power failing first)
 static void drawGameOver() {
-  float gameOverT = gameOverShownT();
+  float gameOverT = scene == SC_STAGE_CLEAR ? sceneT : gameOverShownT();
   if (gameOverT < 0) return;
   float k = gameOverT / 1.0f;
   if (k > 1) k = 1;
   blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 0.65f * k);
   if (gameOverT < 0.4f) return;
-  if (gameOver == END_WIN) {
+  if (scene == SC_STAGE_CLEAR) {
+    drawVectorTextW("STAGE 1 COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
+    drawVectorTextW("STAGE 1 COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
+    drawVectorText("YOU REACHED THE QUANTUMLOOP", SCREEN_W / 2, 186, 3.2f, rgb565(240, 240, 245), true);
+  } else if (gameOver == END_WIN) {
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
     drawVectorText("YOU REACHED THE SUB BASEMENT", SCREEN_W / 2, 186, 3.2f, rgb565(240, 240, 245), true);
@@ -4056,7 +4342,7 @@ static void drawGameOver() {
   char b[80];
   int mins = (int)(bonusPts[0] / BONUS_PER_MINUTE);
   const char *what[BONUS_LINES] = { "", "NO ELECTROCUTION", "NO DRONE HITS", "NO FALLS DOWN PITS", "NEVER CAUGHT ON CAMERA", "NO FIRST AID USED" };
-  drawVectorText("END OF GAME BONUS", SCREEN_W / 2, 236, 2.6f, rgb565(255, 190, 70), true);
+  drawVectorText(scene == SC_STAGE_CLEAR ? "STAGE 1 BONUS" : "END OF GAME BONUS", SCREEN_W / 2, 236, 2.6f, rgb565(255, 190, 70), true);
   for (int i = 0; i < BONUS_LINES; i++) {
     if (gameOverT < 0.6f + i * 0.2f) break;
     if (i == 0) snprintf(b, sizeof(b), "TIME LEFT  %d MINUTE%s X %d", mins, mins == 1 ? "" : "S", BONUS_PER_MINUTE);
@@ -4096,6 +4382,12 @@ static void drawMessage() {
 static void drawMap() {
   gfxClipAll();
   blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 4, 6, 10, 0.88f);
+  if (stage == 2) {                                               // (stage 2: no map yet)
+    drawVectorText("STAGE 2 - THE QUANTUM LAB", SCREEN_W / 2, 300, 4.0f, rgb565(120, 220, 255), true);
+    drawVectorText("NO MAP OF THIS AREA YET", SCREEN_W / 2, 360, 2.8f, rgb565(200, 206, 220), false);
+    drawVectorText("OPTIONS: BACK TO THE GAME", SCREEN_W / 2, 662, 2.2f, rgb565(200, 206, 220), true);
+    return;
+  }
   const int RW = 96, SW = 30, RH = 60, GAP = 22;
   const int left = (SCREEN_W - (COLS * RW + SHAFTS * SW)) / 2, top = 124;
   bool blink = fmodf(clockT, 0.8f) < 0.5f;
@@ -4210,6 +4502,198 @@ static void drawMap() {
                  bottom + 64, 1.8f, rgb565(150, 158, 176), false);
   drawVectorText("OPTIONS: BACK TO THE GAME     TRIANGLE: LAY OUT A NEW COMPLEX", SCREEN_W / 2, bottom + 92, 2.2f,
                  rgb565(200, 206, 220), true);
+}
+
+// ============================================================ between the stages
+// STAGE 1 COMPLETE (its bonuses) -> STAGE 2's briefing -> (play: the switch,
+// the doors) -> on board -> the journey -> the arrival station
+static void startRide() {
+  scene = SC_BOARD_WALK;
+  sceneT = 0;
+}
+
+// Walk him towards x (true once there)
+static bool walkTo(float x, float dt) {
+  if (fabsf(agX - x) < 5.0f) {
+    if (agState == ST_RUN) setState(ST_IDLE, 0.15f);
+    agX = x;
+    uint32_t h = held, p = pressed;
+    held = pressed = 0;
+    updateAgent(dt);
+    held = h;
+    pressed = p;
+    return true;
+  }
+  uint32_t h = held, p = pressed;
+  held = agX < x ? BTN_RIGHT : BTN_LEFT;
+  pressed = 0;
+  updateAgent(dt);
+  held = h;
+  pressed = p;
+  return false;
+}
+
+static void updateScene(float dt) {
+  sceneT += dt;
+  bool go = (pressed & BTN_JUMP) != 0;
+  switch (scene) {
+    case SC_STAGE_CLEAR:
+      if (go && sceneT > 2.2f) {
+        scene = SC_STAGE2_BRIEF;
+        sceneT = 0;
+        stage = 2;
+      }
+      break;
+    case SC_STAGE2_BRIEF:
+      if (go && sceneT > 0.8f) {
+        scene = SC_NONE;
+        showMsg("TURN ON THE QUANTUMLOOP'S POWER", 4.0f);
+      }
+      break;
+    case SC_BOARD_WALK:                  // in through the doors...
+      if (walkTo(LOOP_DOOR_X, dt) && sceneT > 0.6f) {
+        scene = SC_FADE_OUT;
+        sceneT = 0;
+      }
+      break;
+    case SC_FADE_OUT:                    // ...and black...
+      if (sceneT >= 1.0f) {
+        scene = SC_RIDE;
+        sceneT = 0;
+      }
+      break;
+    case SC_RIDE:                        // ...the journey...
+      if (sceneT >= RIDE_SECONDS) {
+        enterRoom(ARRIVAL_ROOM, true);   // ...the arrival station: he steps out of the doors
+        loopPowered = true;
+        loopPowerT = 9;
+        loopDoorT = 1;
+        loopDoorDir = 0;
+        placeAgent(LOOP_DOOR_X, ROOM_FLOOR_Y, -1);
+        entryX = 36;
+        entryFacing = 1;
+        scene = SC_ARRIVE;
+        sceneT = 0;
+      }
+      break;
+    case SC_ARRIVE:
+      if (sceneT < 1.0f) {
+        uint32_t h = held; held = 0; updateAgent(dt); held = h;
+        break;
+      }
+      if (loopDoorDir == 0 && loopDoorT >= 1.0f) {
+        if (walkTo(LOOP_DOOR_X - 230, dt)) {
+          loopDoorDir = -1;
+          sfxPlay(SFX_DOORS);
+        }
+      } else if (loopDoorDir == 0 && loopDoorT <= 0.0f) {
+        scene = SC_NONE;
+        showMsg("STAGE 2: HEAD LEFT TO THE LIFT", 4.0f);
+      } else {
+        uint32_t h = held; held = 0; updateAgent(dt); held = h;
+      }
+      break;
+  }
+}
+
+// STAGE 2's briefing
+static void drawStage2Brief() {
+  gfxClipAll();
+  float k = fminf(1.0f, sceneT / 0.4f);
+  blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 2, 4, 8, 0.75f * k);
+  if (sceneT < 0.2f) return;
+  int x0 = 250, y0 = 100, x1 = 1030, y1 = 640;
+  fillRect(x0, y0, x1, y1, rgb565(10, 12, 20));
+  drawRectOutline(x0, y0, x1, y1, rgb565(90, 200, 255), 3);
+  fillRect(x0 + 3, y0 + 3, x1 - 3, y0 + 64, rgb565(10, 40, 70));
+  drawVectorTextW("STAGE 2", SCREEN_W / 2, y0 + 34, 5.0f, rgb565(120, 220, 255), 2.6f);
+  drawVectorText("GET TO THE QUANTUM LAB", SCREEN_W / 2, y0 + 112, 4.0f, rgb565(230, 236, 245), true);
+  drawVectorText("AND DISABLE THE QUANTUM CORE", SCREEN_W / 2, y0 + 162, 3.4f, rgb565(255, 90, 70), true);
+  // the quantum core: a glowing heart in its orbits
+  float qx = SCREEN_W / 2, qy = y0 + 320, t = clockT;
+  glowDisc(qx, qy, 120, 40, 120, 255, 0.35f);
+  fillCircle((int)qx, (int)qy, 26, rgb565(150, 220, 255));
+  fillCircle((int)qx, (int)qy, 16, rgb565(240, 250, 255));
+  for (int o = 0; o < 3; o++) {
+    float rot = t * (0.6f + o * 0.2f) + o * 1.047f, cr = cosf(rot), sr = sinf(rot);
+    float px = 0, py = 0;
+    for (int s2 = 0; s2 <= 40; s2++) {
+      float u = s2 * TWO_PI / 40, ex = cosf(u) * 110, ey = sinf(u) * 30;
+      float x = qx + ex * cr - ey * sr, y = qy + ex * sr + ey * cr;
+      if (s2) drawLineF(px, py, x, y, rgb565(90, 150, 230), 1.5f);
+      px = x;
+      py = y;
+    }
+    float u = t * (2.2f + o * 0.6f), ex = cosf(u) * 110, ey = sinf(u) * 30;
+    glowDisc(qx + ex * cr - ey * sr, qy + ex * sr + ey * cr, 16, 140, 220, 255, 0.8f);
+  }
+  drawVectorText("TAKE THE QUANTUMLOOP", SCREEN_W / 2, y0 + 446, 2.6f, rgb565(170, 178, 196), false);
+  if (sceneT > 0.8f && fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, y1 - 40, 3.4f, rgb565(240, 240, 245), true);
+}
+
+// On board: a seat by the window, the tunnel rushing past
+static void drawRide(float t) {
+  gfxClip(HUD_H, PLAY_Y1);
+  fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(176, 180, 188));    // the cabin wall
+  for (int x = 0; x < SCREEN_W; x += 160) fillRect(x, 150, x + 2, 640, rgb565(150, 154, 162));
+  fillRect(0, HUD_H, SCREEN_W - 1, 150, rgb565(56, 60, 70));              // its ceiling, lit along it
+  fillRect(0, 138, SCREEN_W - 1, 146, rgb565(230, 238, 248));
+  glowDisc(SCREEN_W / 2, 150, 700, 200, 220, 255, 0.10f);
+  // the window band: the tunnel outside
+  const int wy0 = 196, wy1 = 404;
+  fillRect(40, wy0 - 12, SCREEN_W - 41, wy1 + 12, rgb565(40, 44, 52));
+  fillRect(52, wy0, SCREEN_W - 53, wy1, rgb565(6, 8, 12));
+  gfxClip(wy0, wy1);
+  for (int k = 0; k < 7; k++) {                                          // the tunnel's ribs flashing by
+    float x = fmodf(k * 260.0f - t * 1900.0f, 1820.0f);
+    if (x < 0) x += 1820.0f;
+    x -= 140;
+    fillRect((int)x, wy0, (int)x + 22, wy1, rgb565(34, 40, 52));
+    fillRect((int)x + 22, wy0, (int)x + 26, wy1, rgb565(60, 70, 88));
+  }
+  for (int i = 0; i < 44; i++) {                                         // streaks of light
+    uint32_t h = (uint32_t)(i + 7) * 2654435761u;
+    float sp = 1800 + (h >> 22) % 1600, len = 60 + (h >> 12) % 260;
+    float y = wy0 + 8 + (h >> 4) % (wy1 - wy0 - 16);
+    float x = SCREEN_W + len - fmodf(t * sp + (h % 2000), SCREEN_W + 2 * len);
+    int pick = (h >> 9) % 3;
+    uint16_t c = pick == 0 ? rgb565(120, 210, 255) : (pick == 1 ? rgb565(240, 244, 255) : rgb565(255, 170, 80));
+    drawLineF(x, y, x + len, y, c, pick == 1 ? 2.5f : 1.6f);
+  }
+  for (int k = 0; k < 12; k++) {                                         // the rail lights
+    float x = fmodf(k * 120.0f - t * 2600.0f, 1440.0f);
+    if (x < 0) x += 1440.0f;
+    fillRect((int)x - 80, wy1 - 18, (int)x - 40, wy1 - 15, rgb565(255, 220, 120));
+  }
+  if (fmodf(t, 4.5f) < 0.18f) blendRect(52, wy0, SCREEN_W - 53, wy1, 200, 230, 255, 0.25f);   // a station's lights
+  gfxClip(HUD_H, PLAY_Y1);
+  for (int k = 1; k < 4; k++) fillRect(k * 320 - 10, wy0 - 12, k * 320 + 10, wy1 + 12, rgb565(150, 154, 162));   // the frames
+  blendRect(52, wy0, SCREEN_W - 53, wy0 + 40, 255, 255, 255, 0.05f);    // the glass
+  // the display: where it is going, how long
+  fillRect(440, 156, 840, 186, rgb565(10, 14, 24));
+  char b[48];
+  int left = (int)ceilf(fmaxf(0.0f, RIDE_SECONDS - t));
+  snprintf(b, sizeof(b), "QUANTUMLOOP   STAGE 2   ARRIVING %d:%02d", left / 60, left % 60);
+  drawVectorText(b, SCREEN_W / 2, 171, 1.6f, rgb565(255, 190, 70), true);
+  // the seats, him on one
+  for (int k = 0; k < 4; k++) {
+    int c = 230 + k * 260;
+    fillRect(c - 60, 436, c + 60, 600, rgb565(54, 70, 104));
+    fillRect(c - 60, 436, c + 60, 444, rgb565(84, 104, 140));
+    fillRect(c - 40, 446, c + 40, 470, rgb565(64, 82, 120));            // the headrest
+    fillRect(c - 66, 600, c + 66, 616, rgb565(70, 90, 130));
+    fillRect(c - 6, 616, c + 6, 640, rgb565(60, 64, 72));
+  }
+  fillRect(0, 640, SCREEN_W - 1, PLAY_Y1, rgb565(60, 64, 72));           // the floor
+  fillRect(0, 640, SCREEN_W - 1, 644, rgb565(110, 116, 128));
+  AgentPose p;
+  memset(&p, 0, sizeof(p));
+  p.legN = 88; p.kneeN = -86; p.legF = 82; p.kneeF = -84;                // sitting: thighs out, shins down
+  p.armN = 26; p.elbowN = 64; p.armF = 20; p.elbowF = 58;                // hands on his knees
+  p.torso = -4; p.head = 4 + 3 * sinf(t * 0.9f);
+  p.plant = 1;
+  p.lift = 1.5f * sinf(t * 7.0f);                                         // (the ride's hum)
+  drawAgentU(p, 750, 640, 1, myScale);
 }
 
 // ============================================================ the high scores (as NUCLEAR MISSION's)
@@ -4336,7 +4820,7 @@ static void drawEntry() {
 
 // ============================================================ the settings (Triangle), STAGE 1's briefing
 #define SETTINGS_FILE QL_DATA_DIR "/settings.bin"
-#define SETTINGS_ITEMS 4
+#define SETTINGS_ITEMS 5
 static void loadSettings() {
   FILE *f = fopen(SETTINGS_FILE, "rb");
   if (!f) return;
@@ -4357,6 +4841,24 @@ static void saveSettings() {
 }
 
 static void quitToTitle();
+static void unlockSubBasement();
+
+// JUMP TO STAGE 2 (for testing): in the sub basement lift area (unlocked), at the end of stage 1
+static void jumpToStage2() {
+  if (!subUnlocked) unlockSubBasement();
+  stage = 1;
+  scene = SC_NONE;
+  loopPowered = false;
+  loopPowerT = 9;
+  loopDoorT = 0;
+  loopDoorDir = 0;
+  settingsOn = quitConfirm = mapOn = termOn = briefingOn = bayBusy = false;
+  introT = -1;
+  powerPanelT = 0;
+  enterShaft(subShaft, SUB_FLOOR, true);
+  placeAgent((SHAFT_X0 + SHAFT_X1) / 2.0f, CAR_FLOOR_Y, 1);
+  showMsg("JUMPED TO THE END OF STAGE 1", 2.5f);
+}
 
 static void updateSettings() {
   if (pressed & BTN_UP) { settingsSel = (settingsSel + SETTINGS_ITEMS - 1) % SETTINGS_ITEMS; quitConfirm = false; sfxPlay(SFX_KEY); }
@@ -4368,11 +4870,14 @@ static void updateSettings() {
     musicOn[k].store(!musicOn[k].load());
     saveSettings();
     sfxPlay(SFX_CLICK);
-  } else if (settingsSel == 2 && go) {             // QUIT TO TITLE: X twice
+  } else if (settingsSel == 2 && go) {             // JUMP TO STAGE 2 (for testing): the sub basement's lift
+    jumpToStage2();
+    sfxPlay(SFX_CLICK);
+  } else if (settingsSel == 3 && go) {             // QUIT TO TITLE: X twice
     if (quitConfirm) quitToTitle();
     else quitConfirm = true;
     sfxPlay(SFX_CLICK);
-  } else if (settingsSel == 3 && go) {             // RESUME
+  } else if (settingsSel == 4 && go) {             // RESUME
     settingsOn = false;
     sfxPlay(SFX_CLICK);
   }
@@ -4381,7 +4886,7 @@ static void updateSettings() {
 static void drawSettings() {
   gfxClipAll();
   blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 2, 4, 8, 0.72f);
-  int x0 = 330, y0 = 150, x1 = 950, y1 = 560;
+  int x0 = 330, y0 = 130, x1 = 950, y1 = 600;
   fillRect(x0, y0, x1, y1, rgb565(12, 16, 26));
   drawRectOutline(x0, y0, x1, y1, rgb565(90, 220, 255), 3);
   drawVectorText("SETTINGS", SCREEN_W / 2, y0 + 40, 4.4f, rgb565(90, 220, 255), true);
@@ -4391,14 +4896,14 @@ static void drawSettings() {
     bool sel = i == settingsSel;
     if (sel) fillRect(x0 + 24, y - 22, x1 - 24, y + 22, rgb565(36, 60, 90));
     uint16_t c = sel ? rgb565(255, 230, 120) : rgb565(220, 226, 236);
-    const char *label = i == 0 ? "STAGE MUSIC" : i == 1 ? "ELEVATOR MUSIC" : i == 2 ? (quitConfirm ? "X AGAIN TO QUIT" : "QUIT TO TITLE") : "RESUME";
+    const char *label = i == 0 ? "STAGE MUSIC" : i == 1 ? "ELEVATOR MUSIC" : i == 2 ? "JUMP TO STAGE 2" : i == 3 ? (quitConfirm ? "X AGAIN TO QUIT" : "QUIT TO TITLE") : "RESUME";
     if (i <= 1) {
       bool on = musicOn[i == 0 ? 1 : 0].load();
       drawVectorText(label, x0 + 50 + vectorTextWidth(label, 3.0f) / 2, y, 3.0f, c, true);
       const char *v = on ? "ON" : "OFF";
       drawVectorText(v, x1 - 60 - vectorTextWidth(v, 3.0f) / 2, y, 3.0f, on ? rgb565(100, 240, 140) : rgb565(255, 90, 70), true);
     } else {
-      drawVectorText(label, SCREEN_W / 2, y, 3.0f, i == 2 && quitConfirm ? rgb565(255, 90, 70) : c, true);
+      drawVectorText(label, SCREEN_W / 2, y, 3.0f, i == 3 && quitConfirm ? rgb565(255, 90, 70) : c, true);
     }
   }
   drawVectorText("UP / DOWN: CHOOSE    X: CHANGE    TRIANGLE: BACK", SCREEN_W / 2, y1 - 26, 1.8f, rgb565(150, 158, 176), false);
@@ -4597,9 +5102,10 @@ static void drawTitle() {
   if (tuneProblem[0][0]) drawVectorText(tuneProblem[0], SCREEN_W / 2, 636, 1.8f, rgb565(220, 120, 90), false);
   if (tuneProblem[1][0]) drawVectorText(tuneProblem[1], SCREEN_W / 2, 654, 1.8f, rgb565(220, 120, 90), false);
   if (tuneProblem[2][0]) drawVectorText(tuneProblem[2], SCREEN_W / 2, 672, 1.8f, rgb565(220, 120, 90), false);
+  if (tuneProblem[3][0]) drawVectorText(tuneProblem[3], SCREEN_W / 2, 690, 1.8f, rgb565(220, 120, 90), false);
   char b[24];
   snprintf(b, sizeof(b), "VERSION %s", GAME_VERSION);
-  drawVectorText(b, SCREEN_W / 2, 698, 1.8f, rgb565(100, 110, 130), false);
+  drawVectorText(b, SCREEN_W / 2, 710, 1.8f, rgb565(100, 110, 130), false);
 }
 
 // A new game: a new complex, him in the car of shaft A at its top stop
@@ -4624,6 +5130,8 @@ static void newGame() {
   hurtFlashT = 0;
   timeLeft = GAME_SECONDS;
   playT = drainT = 0;
+  warnSlot = 99;
+  warnT = 9;
   nShocks = nDroneHits = nPitFalls = nCaught = nKitsUsed = 0;
   bonusTotal = 0;
   gameOver = END_NONE;
@@ -4631,6 +5139,12 @@ static void newGame() {
   drivesCarried = drivesLoaded = 0;
   bayBusy = termOn = false;
   settingsOn = briefingOn = quitConfirm = false;
+  stage = 1;
+  scene = SC_NONE;
+  loopPowered = false;
+  loopPowerT = 9;
+  loopDoorT = 0;
+  loopDoorDir = 0;
   powerPanelT = 0;
   leverT = -1;
   for (int i = 0; i < MAX_POPS; i++) popT[i] = 0;
@@ -4647,6 +5161,8 @@ static void goToTitle() {
 // QUIT TO TITLE: the game is dropped, as it is (no score, no table)
 static void quitToTitle() {
   settingsOn = quitConfirm = false;
+  scene = SC_NONE;
+  rideHum.store(0, std::memory_order_relaxed);
   mapOn = termOn = briefingOn = bayBusy = false;
   gameOver = END_NONE;
   introT = -1;
@@ -4743,8 +5259,29 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     pressed = 0;
   }
 
-  if ((pressed & BTN_MAP) && !termOn) mapOn = !mapOn;   // (the map pauses everything, the clock too)
-  if (mapOn || settingsOn || briefingOn) {
+  // the QUANTUMLOOP's lights and doors
+  if (!settingsOn && !mapOn) {
+    loopPowerT += dt;
+    if (loopDoorDir != 0) {
+      loopDoorT += loopDoorDir * dt / 1.2f;
+      if (loopDoorT >= 1.0f) {
+        loopDoorT = 1.0f;
+        loopDoorDir = 0;
+        if (curRoom == SUB_ROOM && scene == SC_NONE) startRide();   // (open: he goes on board)
+      } else if (loopDoorT <= 0.0f) {
+        loopDoorT = 0.0f;
+        loopDoorDir = 0;
+      }
+    }
+  }
+  // between the stages: the scenes run, the clock waits
+  if (scene != SC_NONE && !settingsOn && gameOver == END_NONE) {
+    updateScene(dt);
+    pressed = 0;
+  }
+
+  if ((pressed & BTN_MAP) && !termOn && scene == SC_NONE) mapOn = !mapOn;   // (the map pauses everything, the clock too)
+  if (mapOn || settingsOn || briefingOn || scene != SC_NONE) {
     if (mapOn && (pressed & BTN_NEW)) newGame();
     pressed = 0;
   } else {
@@ -4756,6 +5293,16 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
         hurt(1);
       }
       timeLeft -= dt;
+      if (timeLeft > 60) warnSlot = 99;  // (the last minute: an alert and the lights flickering every ten seconds)
+      else if (timeLeft > 0) {
+        int slot = (int)ceilf(timeLeft / WARN_EVERY);
+        if (slot != warnSlot) {
+          warnSlot = slot;
+          warnT = 0;
+          sfxPlay(SFX_WARN);
+        }
+      }
+      warnT += dt;
       if (timeLeft <= 0) {
         timeLeft = 0;
         endGame(END_TIME);
@@ -4787,13 +5334,16 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
 
   // the picture
   gfxTarget = g_frame;
-  if (mode == MODE_ROOM) {
+  if (scene == SC_RIDE) {
+    drawRide(sceneT);
+  } else if (mode == MODE_ROOM) {
     memcpy(g_frame, roomBg, sizeof(roomBg));
     gfxClip(HUD_H, PLAY_Y1);
     drawOrnamentsAnim();
     for (int i = 0; i < liftCount; i++) drawLiftPad(lifts[i]);
     drawDecorAnim();
     if (curRoom == CONTROL_ROOM) drawControlRoomAnim();
+    if (curRoom == SUB_ROOM || curRoom == ARRIVAL_ROOM) drawLoopStation(curRoom == ARRIVAL_ROOM);
     if (curHazard == HZ_ELECTRIC && elecState == 1 && flickerDim(elecT)) dimRoom();
     if (curHazard == HZ_DARK && !lightsOut && ((darkT > 0.25f && darkT < 0.35f) || (darkT > 0.5f && darkT < 0.56f))) dimRoom();
     if (curHazard == HZ_ELECTRIC && elecState != 0) drawFloorArcs(elecState == 2);
@@ -4804,7 +5354,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     drawShaftScene();
   }
   gfxClip(introT >= 0 && introT < 1.9f ? CAR_FLOOR_Y - CORR_H + 1 : HUD_H, mode == MODE_SHAFT ? PANEL_Y - 1 : PLAY_Y1);   // (in the duct: hidden)
-  drawAgentU(shownPose, agX, agY, agFacing, myScale);
+  if (scene != SC_RIDE) drawAgentU(shownPose, agX, agY, agFacing, myScale);
   gfxClip(HUD_H, PLAY_Y1);
   if (mode == MODE_ROOM && lightsOut) {   // dark: the goggles' view, then what glows, the search bars over it
     nightVision();
@@ -4816,7 +5366,11 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mode == MODE_ROOM && curHazard == HZ_DRONE) drawDrone();
   if (mode == MODE_ROOM && powerPanelT > 0 && !mapOn) drawPowerPanel();
   if (termOn && mode == MODE_ROOM) drawTerminal();
-  if (mode == MODE_SHAFT) drawPanel();
+  if (mode == MODE_SHAFT && scene != SC_RIDE) drawPanel();
+  if (gameOver == END_NONE && scene == SC_NONE && warnT < 0.75f && flickerDim(warnT)) {   // the last minute's alert: the lights flicker
+    gfxClip(HUD_H, PLAY_Y1);
+    dimRoom();
+  }
   if (gameOver == END_TIME) {            // the power has failed: the lights flicker and go, night vision comes on
     gfxClip(HUD_H, PLAY_Y1);
     if (gameOverT < POWER_OUT_SECONDS) {
@@ -4830,12 +5384,28 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (itemShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawItemPanel();
   if (docShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawDocPanel();
   if (mapOn) drawMap();
-  else if (itemShowT <= 0 && !briefingOn && !settingsOn) drawMessage();
+  else if (itemShowT <= 0 && !briefingOn && !settingsOn && scene != SC_STAGE_CLEAR && scene != SC_STAGE2_BRIEF && scene != SC_RIDE) drawMessage();
   if (briefingOn && !mapOn) drawBriefing();
   if (settingsOn) drawSettings();
+  {                                      // fading to black and back (on board, off again)
+    float a = 0;
+    if (scene == SC_FADE_OUT) a = sceneT;
+    else if (scene == SC_RIDE) a = sceneT < 1.0f ? 1.0f - sceneT : (sceneT > RIDE_SECONDS - 1.0f ? sceneT - (RIDE_SECONDS - 1.0f) : 0.0f);
+    else if (scene == SC_ARRIVE && sceneT < 1.0f) a = 1.0f - sceneT;
+    if (a > 0) {
+      gfxClipAll();
+      blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, clampv(a, 0.0f, 1.0f));
+    }
+  }
+  if (scene == SC_STAGE_CLEAR) drawGameOver();
+  if (scene == SC_STAGE2_BRIEF) drawStage2Brief();
   if (gameOver != END_NONE) drawGameOver();
   // the music: the lift's tune in the car, stage 1's everywhere else; the lift's motor
-  tuneWanted.store(gameOver != END_NONE ? 0 : (mode == MODE_SHAFT && inCar(agX) && agState != ST_JUMP ? 1 : 2), std::memory_order_relaxed);
+  int tune = mode == MODE_SHAFT && inCar(agX) && agState != ST_JUMP ? 1 : (stage == 2 ? 4 : 2);   // (the lift car's, else the stage's)
+  if (gameOver != END_NONE || scene == SC_STAGE_CLEAR) tune = 0;
+  else if (scene == SC_RIDE || scene == SC_STAGE2_BRIEF || scene == SC_FADE_OUT || scene == SC_ARRIVE) tune = 4;
+  tuneWanted.store(tune, std::memory_order_relaxed);
+  rideHum.store(scene == SC_RIDE && !settingsOn ? 1 : 0, std::memory_order_relaxed);
   int hum = 0;
   if (!mapOn && gameOver == END_NONE) {
     if (mode == MODE_SHAFT && carMoving) hum = carFloor * LEVEL_GAP < carWorldY ? 1 : 2;
@@ -4850,14 +5420,14 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
 
 // For the PC test build: where he is and what he is doing
 const char *gameDebug() {
-  static char b[160];
+  static char b[200];
   static const char *st[] = { "IDLE", "RUN", "JUMP", "USE", "FALL", "LAND", "LIFT", "KO", "SHOCK", "CAUGHT" };
   if (mode == MODE_SHAFT)
     snprintf(b, sizeof(b), "shaft %c floor %d%s x=%.0f y=%.0f %s%s", shaftLetter(curShaft), carFloor + 1, carMoving ? " (moving)" : "", agX, agY, st[agState],
              subUnlocked ? (subShaft == curShaft ? " [sub basement under this lift]" : " [sub basement elsewhere]") : "");
   else if (curRoom >= ROOM_COUNT)
     snprintf(b, sizeof(b), "%s x=%.0f y=%.0f %s drives %d carried %d loaded, generators %d, terminal %s page %d, sub %c",
-             curRoom == CONTROL_ROOM ? "QUANTUM CONTROL" : "SUB BASEMENT", agX, agY, st[agState], drivesCarried, drivesLoaded,
+             curRoom == CONTROL_ROOM ? "QUANTUM CONTROL" : (curRoom == SUB_ROOM ? "QUANTUMLOOP STATION" : "ARRIVAL STATION"), agX, agY, st[agState], drivesCarried, drivesLoaded,
              generatorsOn(), termOn ? "on" : "off", termPage, subUnlocked ? shaftLetter(subShaft) : '-');
   else
     snprintf(b, sizeof(b), "room %d (row %d col %d, doors L:%s R:%s) x=%.0f y=%.0f %s", curRoom + 1, rooms[curRoom].row, rooms[curRoom].col,
