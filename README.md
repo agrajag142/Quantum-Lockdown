@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 018: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 019: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -93,6 +93,9 @@ a QUANTUM DRIVE in them; the other 92 have nothing.
   `assets/stage1.mod` the rest of the time (stage 1 is the only stage so far).
   The two cross-fade, and each picks up where it left off - they are two
   separate copies of the MOD player (`micromod.c` and `micromod2.c`).
+- **Title music:** `assets/title.mod` on the title screen (and while initials
+  are entered), from the top each time the title comes back; a third copy of
+  the player (`micromod3.c`). It fades out as the game starts.
 - **The lift moving:** a low buzzing motor hum that throbs, its pitch drifting
   up as it rises and down as it falls, after Impossible Mission's (room lift
   pads hum a little quieter); a soft thump when it stops.
@@ -259,10 +262,11 @@ run it after adding or changing a layout.
 
 ## The title screen, the briefing
 
-The title sits at the top, with the quantum core turning behind it (three
+The title sits at the top (title.mod playing), with the quantum core turning behind it (three
 orbits, a particle on each), motes drifting up, a camera's beam sweeping the
 dark, sparks along the floor, and now and then the name glitches red and
-cyan. Under it the panel takes turns every 15 seconds:
+cyan. Under it, open on the background (no box), these take turns every 15
+seconds:
 
 - **MISSION OBJECTIVES:** 1. POWER ON THE GENERATORS 2. FIND ALL QUANTUM
   DRIVES 3. UNLOCK SUB BASEMENT ACCESS
@@ -339,7 +343,7 @@ checked on the PC before it goes on the console.
 | `src/rooms_wide.h` | the room layouts (1280 units wide, four levels) |
 | `src/gfx.cpp`, `gfx.h` | drawing: the 1920x1080 picture, unit-space calls as in the sketch, vector letters |
 | `src/ps5_platform.cpp` | the PS5 side: the TV picture, the DualSense, the sound, the loop |
-| `src/micromod.c`, `.h` | the MOD player (Martin Cameron's Micromod, as in NUCLEAR MISSION); `micromod2.c` a second copy of it |
+| `src/micromod.c`, `.h` | the MOD player (Martin Cameron's Micromod, as in NUCLEAR MISSION); `micromod2.c`, `micromod3.c` second and third copies of it |
 | `src/agent_rig.h`, `people.h` | NUCLEAR MISSION's agent and people, unchanged |
 | `sim/` | the PC test build, the room layout checker and the icon maker (not compiled into the app) |
 | `sce_sys/` | `param.json` (PPSA99903) and the home-screen icon |

@@ -35,7 +35,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "018"
+#define GAME_VERSION      "019"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -128,6 +128,7 @@
 #endif
 #define ELEVATOR_MUSIC_VOLUME 0.40f  // elevator.mod, while he stands in the lift car: 0.0 = off ... 1.0 = full
 #define STAGE1_MUSIC_VOLUME   0.25f  // stage1.mod, the rest of the time in stage 1
+#define TITLE_MUSIC_VOLUME    0.35f  // title.mod, on the title screen (and while initials are entered)
 #define MUSIC_FADE_SECONDS    0.8f   // fading in and out (the two cross over)
 #define SFX_VOLUME            1.00f  // the sound effects (steps, the lift)
 #define LIFT_HUM_VOLUME       0.30f  // the lift's motor while it moves (room lift pads a little quieter)
@@ -520,6 +521,11 @@ long micromod2_calculate_mod_file_len(signed char *module_header);
 long micromod2_initialise(signed char *data, long sampling_rate);
 void micromod2_set_gain(long value);
 void micromod2_get_audio(short *output_buffer, long count);
+long micromod3_calculate_mod_file_len(signed char *module_header);
+long micromod3_initialise(signed char *data, long sampling_rate);
+void micromod3_set_gain(long value);
+void micromod3_get_audio(short *output_buffer, long count);
+void micromod3_set_position(long pos);
 }
 
 enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND,
@@ -536,12 +542,18 @@ struct Voice {
 static Voice voices[MAX_VOICES];
 static uint32_t noiseState = 22222;
 
-static std::atomic<int> tuneWanted{0};    // 0 none, 1 the lift's (elevator.mod), 2 stage 1's (stage1.mod)
+static std::atomic<int> tuneWanted{3};    // 0 none, 1 the lift's (elevator.mod), 2 stage 1's (stage1.mod), 3 the title's (title.mod)
 static std::atomic<int> liftHum{0};       // 0 still, 1 the car going up, 2 down, 3 / 4 a room's lift pad
 static std::atomic<int> droneHum{0};      // a drone in the room: its rotors' whine (0 none)
-static bool tuneReady[2] = { false, false };
-static char tuneProblem[2][48] = { "NO ELEVATOR.MOD IN THE ASSETS", "NO STAGE1.MOD IN THE ASSETS" };
-static float tuneGain[2] = { 0, 0 };       // (the sound thread's)
+#define TUNES 3                            // 0 elevator.mod, 1 stage1.mod, 2 title.mod: three MOD players, one each
+static bool tuneReady[TUNES] = { false, false, false };
+static char tuneProblem[TUNES][48] = { "NO ELEVATOR.MOD IN THE ASSETS", "NO STAGE1.MOD IN THE ASSETS", "NO TITLE.MOD IN THE ASSETS" };
+static float tuneGain[TUNES] = { 0, 0, 0 };   // (the sound thread's)
+static std::atomic<bool> titleFromStart{false};   // (back at the title: its tune starts again from the top)
+static long (*const modLen[TUNES])(signed char *) = { micromod_calculate_mod_file_len, micromod2_calculate_mod_file_len, micromod3_calculate_mod_file_len };
+static long (*const modInit[TUNES])(signed char *, long) = { micromod_initialise, micromod2_initialise, micromod3_initialise };
+static void (*const modGain[TUNES])(long) = { micromod_set_gain, micromod2_set_gain, micromod3_set_gain };
+static void (*const modAudio[TUNES])(short *, long) = { micromod_get_audio, micromod2_get_audio, micromod3_get_audio };
 static short tuneBuf[2048 * 2];
 static uint8_t sfxRing[64];
 static std::atomic<int> sfxHead{0}, sfxTail{0};
@@ -724,15 +736,15 @@ static inline float droneSample(int on) {
 }
 
 void gameSetTune(int which, signed char *data, long len) {
-  if (which < 0 || which > 1 || !data || len < 1084) return;
-  const char *name = which ? "STAGE1.MOD" : "ELEVATOR.MOD";
-  long need = which ? micromod2_calculate_mod_file_len(data) : micromod_calculate_mod_file_len(data);
+  if (which < 0 || which >= TUNES || !data || len < 1084) return;
+  static const char *const names[TUNES] = { "ELEVATOR.MOD", "STAGE1.MOD", "TITLE.MOD" };
+  const char *name = names[which];
+  long need = modLen[which](data);
   if (need < 0) { snprintf(tuneProblem[which], 48, "%s: NOT A MOD FILE", name); return; }
   if (need > len) { snprintf(tuneProblem[which], 48, "%s: FILE CUT SHORT", name); return; }
-  long ok = which ? micromod2_initialise(data, AUDIO_RATE) : micromod_initialise(data, AUDIO_RATE);
+  long ok = modInit[which](data, AUDIO_RATE);
   if (ok != 0) { snprintf(tuneProblem[which], 48, "%s: WON'T PLAY", name); return; }
-  if (which) micromod2_set_gain(64);
-  else micromod_set_gain(64);
+  modGain[which](64);
   tuneProblem[which][0] = 0;
   tuneReady[which] = true;
 }
@@ -774,17 +786,18 @@ void gameAudio(short *out, int frames) {
     }
     fx[n] = mix * SFX_VOLUME + liftHumSample(hum) + droneSample(drone);
   }
-  // the two tunes, each fading towards its level (a tune at nothing waits where it was)
+  // the three tunes, each fading towards its level (a tune at nothing waits where it was)
   static int32_t acc[2048 * 2];
   memset(acc, 0, (size_t)frames * 2 * sizeof(int32_t));
   int want = tuneWanted.load(std::memory_order_relaxed);
-  for (int k = 0; k < 2; k++) {
-    float vol = k ? STAGE1_MUSIC_VOLUME : ELEVATOR_MUSIC_VOLUME;
-    float target = (tuneReady[k] && want == k + 1 && musicOn[k].load(std::memory_order_relaxed)) ? vol : 0.0f;
+  if (tuneReady[2] && tuneGain[2] <= 0 && titleFromStart.exchange(false)) micromod3_set_position(0);
+  for (int k = 0; k < TUNES; k++) {
+    float vol = k == 0 ? ELEVATOR_MUSIC_VOLUME : (k == 1 ? STAGE1_MUSIC_VOLUME : TITLE_MUSIC_VOLUME);
+    bool allowed = k == 2 || musicOn[k].load(std::memory_order_relaxed);   // (the settings: stage and elevator music)
+    float target = (tuneReady[k] && want == k + 1 && allowed) ? vol : 0.0f;
     if (!tuneReady[k] || (tuneGain[k] <= 0 && target <= 0)) continue;
     memset(tuneBuf, 0, (size_t)frames * 4);
-    if (k) micromod2_get_audio(tuneBuf, frames);
-    else micromod_get_audio(tuneBuf, frames);
+    modAudio[k](tuneBuf, frames);
     float step = vol / (MUSIC_FADE_SECONDS * AUDIO_RATE);
     for (int n = 0; n < frames; n++) {
       if (tuneGain[k] < target) tuneGain[k] = fminf(tuneGain[k] + step, target);
@@ -4358,14 +4371,10 @@ static float titleT = 0;                 // seconds on the title screen
 
 // The top 5, in the title's panel (it takes turns with the story)
 #define TPANEL_Y0 214                    // the title's panel (objectives / high scores)
-#define TPANEL_Y1 540
 static void drawTitleScores(float t) {
-  const int x0 = 196, x1 = 1084, y0 = TPANEL_Y0, y1 = TPANEL_Y1;
+  const int y0 = TPANEL_Y0;
   float f = fminf(1.0f, t / 0.5f);
-  blendRect(x0, y0, x1, y1, 4, 10, 16, 0.78f);
-  drawRectOutline(x0, y0, x1, y1, rgb565(60, 170, 190), 2);
-  fillRect(x0 + 2, y0 + 2, x1 - 2, y0 + 30, rgb565(16, 40, 60));
-  drawVectorText("TOP 5 AGENTS", SCREEN_W / 2, y0 + 16, 2.4f, rgb565(255, 190, 70), true);
+  drawVectorText("TOP 5 AGENTS", SCREEN_W / 2, y0 + 16, 3.0f, rgb565(255, 190, 70), true);
   drawVectorText("RANK  INITIALS    SCORE    TIME PLAYED", SCREEN_W / 2, y0 + 62, 2.2f, dimmed(150, 200, 220, f), false);
   for (int r = 0; r < HI_COUNT; r++) {
     float k = clampv((t - 0.3f - r * 0.18f) / 0.3f, 0.0f, 1.0f);
@@ -4374,17 +4383,13 @@ static void drawTitleScores(float t) {
     hiLine(b, sizeof(b), hiTable[r], r + 1);
     drawVectorText(b, SCREEN_W / 2, y0 + 108 + r * 44, 3.2f, r == 0 ? dimmed(255, 220, 120, k) : dimmed(236, 236, 242, k), true);
   }
-  for (int y = y0 + 34; y < y1 - 2; y += 4) blendRect(x0 + 2, y, x1 - 2, y, 0, 0, 0, 0.18f);
 }
 
 // MISSION OBJECTIVES, in the title's panel (it takes turns with the high scores)
 static void drawTitleObjectives(float t) {
-  const int x0 = 196, x1 = 1084, y0 = TPANEL_Y0, y1 = TPANEL_Y1;
-  blendRect(x0, y0, x1, y1, 4, 10, 16, 0.78f);
-  drawRectOutline(x0, y0, x1, y1, rgb565(60, 170, 190), 2);
-  fillRect(x0 + 2, y0 + 2, x1 - 2, y0 + 30, rgb565(70, 16, 14));
+  const int x0 = 196, y0 = TPANEL_Y0;
   bool blinkHead = fmodf(t, 1.2f) < 0.8f;
-  drawVectorText("MISSION OBJECTIVES", SCREEN_W / 2, y0 + 16, 2.4f, blinkHead ? rgb565(255, 110, 80) : rgb565(170, 60, 44), true);
+  drawVectorText("MISSION OBJECTIVES", SCREEN_W / 2, y0 + 16, 3.0f, blinkHead ? rgb565(255, 110, 80) : rgb565(170, 60, 44), true);
   static const char *const obj[3] = { "POWER ON THE GENERATORS", "FIND ALL QUANTUM DRIVES", "UNLOCK SUB BASEMENT ACCESS" };
   for (int i = 0; i < 3; i++) {
     float k = clampv((t - 0.3f - i * 0.5f) / 0.4f, 0.0f, 1.0f);
@@ -4414,7 +4419,6 @@ static void drawTitleObjectives(float t) {
     }
     drawVectorText(obj[i], x0 + 230 - slide + vectorTextWidth(obj[i], 3.4f) / 2, y, 3.4f, dimmed(236, 236, 242, k), true);
   }
-  for (int y = y0 + 34; y < y1 - 2; y += 4) blendRect(x0 + 2, y, x1 - 2, y, 0, 0, 0, 0.18f);
 }
 
 // The title's effects: quantum motes drifting up, the quantum core turning
@@ -4516,6 +4520,7 @@ static void drawTitle() {
   if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 594, 4.0f, rgb565(240, 240, 245), true);
   if (tuneProblem[0][0]) drawVectorText(tuneProblem[0], SCREEN_W / 2, 636, 1.8f, rgb565(220, 120, 90), false);
   if (tuneProblem[1][0]) drawVectorText(tuneProblem[1], SCREEN_W / 2, 654, 1.8f, rgb565(220, 120, 90), false);
+  if (tuneProblem[2][0]) drawVectorText(tuneProblem[2], SCREEN_W / 2, 672, 1.8f, rgb565(220, 120, 90), false);
   char b[24];
   snprintf(b, sizeof(b), "VERSION %s", GAME_VERSION);
   drawVectorText(b, SCREEN_W / 2, 698, 1.8f, rgb565(100, 110, 130), false);
@@ -4557,7 +4562,8 @@ static void newGame() {
 static void goToTitle() {
   onTitle = true;
   titleT = 0;
-  tuneWanted.store(0, std::memory_order_relaxed);
+  tuneWanted.store(3, std::memory_order_relaxed);   // (the title's tune, from the top)
+  titleFromStart.store(true);
 }
 
 // QUIT TO TITLE: the game is dropped, as it is (no score, no table)
@@ -4595,6 +4601,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
 
   if (onTitle) {
     titleT += dt;
+    tuneWanted.store(3, std::memory_order_relaxed);
     if (pressed & BTN_JUMP) {
       newGame();
       pressed = 0;                     // (that X starts the game; it isn't a somersault)
@@ -4605,7 +4612,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   }
 
   if (entryOn) {                        // initials for the high score table
-    tuneWanted.store(0, std::memory_order_relaxed);
+    tuneWanted.store(3, std::memory_order_relaxed);
     liftHum.store(0, std::memory_order_relaxed);
     droneHum.store(0, std::memory_order_relaxed);
     updateEntry(dt);

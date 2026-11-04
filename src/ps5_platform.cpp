@@ -268,6 +268,7 @@ int main() {
   gameInit((uint32_t)(wall.tv_sec ^ (wall.tv_nsec >> 10)));
   loadTune(0, "/app0/assets/elevator.mod");
   loadTune(1, "/app0/assets/stage1.mod");
+  loadTune(2, "/app0/assets/title.mod");
   soundInit();
   // the first picture, then the splash screen can go
   gameFrame(1 / 60.0f, 0, 0);

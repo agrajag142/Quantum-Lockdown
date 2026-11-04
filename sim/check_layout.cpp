@@ -6,7 +6,7 @@
 // with a drone; none in room 1), every
 // electrified room with its HIGH VOLTAGE sign on the wall.
 //
-//   gcc -O2 -c ../src/micromod.c ../src/micromod2.c && g++ -std=c++20 -O2 -w -I../src check_layout.cpp ../src/gfx.cpp micromod.o micromod2.o -o check_layout && ./check_layout
+//   gcc -O2 -c ../src/micromod.c ../src/micromod2.c ../src/micromod3.c && g++ -std=c++20 -O2 -w -I../src check_layout.cpp ../src/gfx.cpp micromod.o micromod2.o micromod3.o -o check_layout && ./check_layout
 #include "../src/game.cpp"
 
 int main() {

@@ -21,8 +21,9 @@ case ${1:-} in
         mkdir -p "$out/shots"
         gcc -O2 -c "$here/src/micromod.c" -o "$out/micromod.o"
         gcc -O2 -c "$here/src/micromod2.c" -o "$out/micromod2.o"
-        g++ -std=c++20 -O2 -I"$here/src" "$here/src/game.cpp" "$here/src/gfx.cpp" "$here/sim/sim_main.cpp" "$out/micromod.o" "$out/micromod2.o" -o "$out/sim"
-        "$out/sim" "${2:-$here/sim/tour.txt}" "$out/shots" "$here/assets/elevator.mod" "$here/assets/stage1.mod"
+        gcc -O2 -c "$here/src/micromod3.c" -o "$out/micromod3.o"
+        g++ -std=c++20 -O2 -I"$here/src" "$here/src/game.cpp" "$here/src/gfx.cpp" "$here/sim/sim_main.cpp" "$out/micromod.o" "$out/micromod2.o" "$out/micromod3.o" -o "$out/sim"
+        "$out/sim" "${2:-$here/sim/tour.txt}" "$out/shots" "$here/assets/elevator.mod" "$here/assets/stage1.mod" "$here/assets/title.mod"
         if python3 -c 'import PIL' 2>/dev/null; then
             python3 -c 'import sys, glob, os
 from PIL import Image
