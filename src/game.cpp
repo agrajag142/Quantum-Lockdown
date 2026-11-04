@@ -4351,7 +4351,6 @@ static void drawBriefing() {
 // ============================================================ the title
 static bool onTitle = true;
 
-static inline float pulseOf(float t) { return 0.5f + 0.5f * sinf(t); }
 
 static float titleT = 0;                 // seconds on the title screen
 #define TITLE_STORY 15.0f                // the title's panel: the mission objectives this long...
