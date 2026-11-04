@@ -35,7 +35,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "021"
+#define GAME_VERSION      "022"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -4675,14 +4675,16 @@ static void drawRide(float t) {
   int left = (int)ceilf(fmaxf(0.0f, RIDE_SECONDS - t));
   snprintf(b, sizeof(b), "QUANTUMLOOP   STAGE 2   ARRIVING %d:%02d", left / 60, left % 60);
   drawVectorText(b, SCREEN_W / 2, 171, 1.6f, rgb565(255, 190, 70), true);
-  // the seats, him on one
+  // the seats (a little nearer than the rest: drawn larger), him on one, his head well over its back
+  const float RIDE_SCALE = 1.9f;
+  const int seatTop = 640 - (int)(22.0f * RIDE_SCALE) - 2;              // the cushion: at his hip
   for (int k = 0; k < 4; k++) {
     int c = 230 + k * 260;
-    fillRect(c - 60, 436, c + 60, 600, rgb565(54, 70, 104));
-    fillRect(c - 60, 436, c + 60, 444, rgb565(84, 104, 140));
-    fillRect(c - 40, 446, c + 40, 470, rgb565(64, 82, 120));            // the headrest
-    fillRect(c - 66, 600, c + 66, 616, rgb565(70, 90, 130));
-    fillRect(c - 6, 616, c + 6, 640, rgb565(60, 64, 72));
+    fillRect(c - 56, seatTop - 64, c + 56, seatTop, rgb565(54, 70, 104));   // the back: up to his neck
+    fillRect(c - 56, seatTop - 64, c + 56, seatTop - 58, rgb565(84, 104, 140));
+    fillRect(c - 62, seatTop, c + 62, seatTop + 12, rgb565(70, 90, 130));
+    fillRect(c - 62, seatTop, c + 62, seatTop + 3, rgb565(96, 116, 156));
+    fillRect(c - 6, seatTop + 12, c + 6, 640, rgb565(60, 64, 72));
   }
   fillRect(0, 640, SCREEN_W - 1, PLAY_Y1, rgb565(60, 64, 72));           // the floor
   fillRect(0, 640, SCREEN_W - 1, 644, rgb565(110, 116, 128));
@@ -4693,7 +4695,7 @@ static void drawRide(float t) {
   p.torso = -4; p.head = 4 + 3 * sinf(t * 0.9f);
   p.plant = 1;
   p.lift = 1.5f * sinf(t * 7.0f);                                         // (the ride's hum)
-  drawAgentU(p, 750, 640, 1, myScale);
+  drawAgentU(p, 740, 640, 1, RIDE_SCALE);
 }
 
 // ============================================================ the high scores (as NUCLEAR MISSION's)
