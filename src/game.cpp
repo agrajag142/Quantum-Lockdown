@@ -35,7 +35,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "019"
+#define GAME_VERSION      "020"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -66,7 +66,11 @@
 #define NOTHING_SHOW      1.2f
 #define MAX_DECOR         5        // equipment in a room: 4 or 5...
 #define EQUIPMENT_TOTAL   128      // ...128 in the whole complex (so 8 rooms have 5)
-#define ITEMS_HIDDEN      36       // pieces of equipment with a QUANTUM DRIVE in them (the rest: nothing)
+#define ITEMS_HIDDEN      18       // pieces of equipment with a QUANTUM DRIVE in them (the drive bay needs them all)
+#define DOCUMENTS         5        // TOP SECRET DOCUMENTS in other pieces (bonus points: DOC_VALUES, in the order found)
+#define DOC_SHOW          2.8f     // seconds their panel stays up
+#define POWER_OUT_SECONDS 0.6f     // the countdown at zero: the lights flicker this long, then out (night vision)...
+#define POWER_FAIL_PANEL  1.6f     // ...and MISSION FAILED comes up after this
 #define GENERATORS        3        // power generators (each in a different room): all on to power the main computer
 #define GENERATOR_BONUS   (5 * 60) // turning on a generator adds to the countdown: the 1st this, the 2nd twice it, the 3rd three times
 #define HEALTH_DRAIN_SECONDS 60.0f // every minute of play costs 1 health
@@ -160,7 +164,8 @@ struct RoomInfo {
   bool visited;
   uint8_t decorN;                  // its equipment: how many pieces (4 or 5)
   bool searched[MAX_DECOR];        // ...searched yet
-  bool holds[MAX_DECOR];           // ...something in it
+  bool holds[MAX_DECOR];           // ...a quantum drive in it
+  bool docs[MAX_DECOR];            // ...TOP SECRET DOCUMENTS in it
   bool kit, kitUsed;               // a first aid kit here, and whether it has been used
   float progress[MAX_DECOR + 2];   // how far each piece has been searched (seconds; then the kit, the generator)
   uint8_t hazard;                  // Hazard
@@ -264,7 +269,7 @@ static void layOut(uint32_t seed) {
       ri.seed = (uint16_t)rnd32();
       ri.visited = false;
       ri.decorN = (uint8_t)(EQUIPMENT_TOTAL / ROOM_COUNT);
-      for (int i = 0; i < MAX_DECOR; i++) ri.searched[i] = ri.holds[i] = false;
+      for (int i = 0; i < MAX_DECOR; i++) ri.searched[i] = ri.holds[i] = ri.docs[i] = false;
       ri.kit = ri.kitUsed = false;
       for (int i = 0; i < MAX_DECOR + 2; i++) ri.progress[i] = 0;
       ri.hazard = HZ_NONE;
@@ -298,7 +303,17 @@ static void layOut(uint32_t seed) {
     if (ri.holds[i]) continue;
     ri.holds[i] = true;
     k++;
+  }  // the TOP SECRET DOCUMENTS: in pieces without a drive, each in a different room
+  for (int k = 0; k < DOCUMENTS;) {
+    RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
+    int i = rnd(ri.decorN);
+    bool here = false;
+    for (int m = 0; m < MAX_DECOR; m++) here |= ri.docs[m];
+    if (here || ri.holds[i]) continue;
+    ri.docs[i] = true;
+    k++;
   }
+
   // the first aid kits, in rooms with a spare spot for one
   for (int k = 0; k < FIRST_AID_KITS;) {
     RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
@@ -476,6 +491,10 @@ static uint16_t floatColour = 0;
 static long score = 0;
 static int itemsFound = 0;
 static float itemShowT = 0;            // FOUND OBJECT on screen
+static float docShowT = 0;             // TOP SECRET DOCUMENTS on screen
+static int docsFound = 0;
+static long docValue = 0;              // (the last one's value)
+static const long DOC_VALUES[DOCUMENTS] = { 1000, 1500, 2000, 2500, 5000 };
 static float popX[MAX_POPS], popY[MAX_POPS], popT[MAX_POPS];
 static long popV[MAX_POPS];
 
@@ -530,7 +549,7 @@ void micromod3_set_position(long pos);
 
 enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND,
                      SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN, SFX_SCREAM, SFX_ALARM, SFX_SHOT, SFX_HIT,
-                     SFX_POWERUP, SFX_CLICK, SFX_DENIED, SFX_KEY };
+                     SFX_POWERUP, SFX_CLICK, SFX_DENIED, SFX_KEY, SFX_SHUTDOWN };
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -606,6 +625,14 @@ static void startEffect(uint8_t sfx) {
       startVoice(WAVE_TRIANGLE, 80, 520, 100, 900, 0.30f);
       startVoice(WAVE_SQUARE, 40, 90, 100, 900, 0.08f);
       startVoice(WAVE_TRIANGLE, 520, 520, 1000, 300, 0.18f);
+      break;
+    case SFX_SHUTDOWN:                         // the countdown at zero: breakers clunk, the generators wind down to nothing
+      startVoice(WAVE_NOISE, 700, 90, 0, 260, 0.30f);
+      startVoice(WAVE_SQUARE, 90, 40, 0, 220, 0.14f);
+      startVoice(WAVE_TRIANGLE, 420, 30, 120, 2600, 0.30f);
+      startVoice(WAVE_SQUARE, 110, 16, 120, 2600, 0.09f);
+      startVoice(WAVE_TRIANGLE, 300, 24, 420, 2300, 0.20f);
+      startVoice(WAVE_NOISE, 400, 50, 2500, 300, 0.25f);
       break;
     case SFX_CLICK:                            // a drive sliding into the bay
       startVoice(WAVE_SQUARE, 1200, 1200, 0, 15, 0.12f);
@@ -1722,7 +1749,7 @@ static void paintControlRoom() {
   fillRect(x + 100, fy - 46, x + 104, fy - 1, rgb565(60, 64, 72));      // a printer by the desk, with paper
   fillRect(x + 96, fy - 70, x + 112, fy - 46, rgb565(150, 150, 144));
   fillRect(x + 99, fy - 78, x + 109, fy - 70, rgb565(236, 234, 224));
-  // the QUANTUM DRIVE BAY: a tall cabinet, 36 slots (filled each frame), a counter
+  // the QUANTUM DRIVE BAY: a tall cabinet, 18 slots (filled each frame), a counter
   int b0 = BAY_X - 100, b1 = BAY_X + 99;
   fillRect(b0, BAY_TOP, b1, fy - 1, rgb565(64, 70, 84));
   fillRect(b0, BAY_TOP, b1, BAY_TOP + 3, rgb565(130, 138, 156));
@@ -2355,6 +2382,11 @@ static void endGame(int why) {
   if (gameOver == END_NONE) {
     gameOver = (EndReason)why;
     gameOverT = 0;
+    if (why == END_TIME) {               // the power fails: the generators wind down, the lights go
+      sfxPlay(SFX_SHUTDOWN);
+      termOn = false;
+      powerPanelT = 0;
+    }
     // the end of game bonuses: minutes left, and each thing that never happened
     int mins = timeLeft > 0 ? (int)(timeLeft / 60) : 0;
     bonusPts[0] = (long)mins * BONUS_PER_MINUTE;
@@ -2869,7 +2901,16 @@ static void updateAgent(float dt) {
           bool first = !ri.searched[i];
           ri.searched[i] = true;
           if (first) addScore(SEARCH_SCORE, px, py - 26);
-          if (first && ri.holds[i]) {        // something in it
+          if (first && ri.docs[i]) {         // TOP SECRET DOCUMENTS: bonus points, more for each one found
+            docValue = DOC_VALUES[docsFound < DOCUMENTS ? docsFound : DOCUMENTS - 1];
+            docsFound++;
+            sfxPlay(SFX_FOUND);
+            sfxPlay(SFX_FANFARE);
+            addScore(docValue, px, py - 56);
+            docShowT = DOC_SHOW;
+            itemShowT = 0;
+            nothingShowT = 0;
+          } else if (first && ri.holds[i]) {        // a quantum drive in it
             sfxPlay(SFX_FOUND);
             sfxPlay(SFX_FANFARE);
             itemsFound++;
@@ -3332,6 +3373,7 @@ static void nightVision() {
   }
 }
 
+static void drawGoggleReadout();
 // What still glows in the dark: the EXIT lamps, the red lights, the lift pads' lamps
 static void drawDarkGlows() {
   int lx, ly;
@@ -3351,7 +3393,9 @@ static void drawDarkGlows() {
     int cx = (lifts[i].x0 + lifts[i].x1) / 2, y = (int)lroundf(lifts[i].y);
     fillRect(cx - 4, y + 4, cx + 3, y + 6, lifts[i].moving ? rgb565(255, 170, 40) : rgb565(80, 230, 120));
   }
-  // the goggles' read-out
+  drawGoggleReadout();
+}
+static void drawGoggleReadout() {         // (NIGHT VISION and the corners of the view)
   drawVectorText("NIGHT VISION", 112, HUD_H + 22, 1.8f, rgb565(120, 255, 150), true);
   if (fmodf(clockT, 1.0f) < 0.6f) fillCircle(36, HUD_H + 22, 5, rgb565(120, 255, 150));
   uint16_t gc = rgb565(90, 220, 120);
@@ -3529,17 +3573,17 @@ static void drawControlRoomAnim() {
     if (blink) drawVectorText("READY", x, fy - 120, 2.4f, g, true);
   }
   fillCircle(x + 86, fy - 37, 3, power ? rgb565(80, 230, 120) : rgb565(255, 50, 40));
-  // the drive bay: 36 slots, lit as drives are loaded, and the counter
+  // the drive bay: ITEMS_HIDDEN slots (6 across), lit as drives are loaded, and the counter
   for (int i = 0; i < ITEMS_HIDDEN; i++) {
     int c = i % 6, r = i / 6;
-    int sx = BAY_X - 84 + c * 28, sy = BAY_TOP + 50 + r * 24;
+    int sx = BAY_X - 84 + c * 28, sy = BAY_TOP + 52 + r * 46;
     bool in = i < drivesLoaded;
-    fillRect(sx, sy, sx + 22, sy + 14, in ? rgb565(44, 50, 62) : rgb565(6, 8, 10));
+    fillRect(sx, sy, sx + 22, sy + 34, in ? rgb565(44, 50, 62) : rgb565(6, 8, 10));
     if (in) {
-      fillRect(sx + 2, sy + 5, sx + 16, sy + 8, rgb565(90, 230, 255));
-      fillRect(sx + 18, sy + 2, sx + 20, sy + 4, rgb565(80, 255, 120));
+      fillRect(sx + 8, sy + 4, sx + 13, sy + 28, rgb565(90, 230, 255));   // the drive's glowing strip
+      fillRect(sx + 17, sy + 29, sx + 20, sy + 32, rgb565(80, 255, 120));
     } else {
-      fillRect(sx + 18, sy + 2, sx + 20, sy + 4, rgb565(120, 24, 20));
+      fillRect(sx + 17, sy + 29, sx + 20, sy + 32, rgb565(120, 24, 20));
     }
   }
   char cb[16];
@@ -3746,7 +3790,7 @@ static void drawSearchMarks() {
     const Decor &d = decor[i];
     int top = d.y - decorH[d.kind];
     if (d.kind < DEC_KINDS && ri.searched[i]) {
-      uint16_t c = ri.holds[i] ? rgb565(255, 210, 70) : rgb565(80, 230, 120);   // (gold: something was in it)
+      uint16_t c = ri.holds[i] ? rgb565(255, 210, 70) : (ri.docs[i] ? rgb565(255, 90, 70) : rgb565(80, 230, 120));   // (gold: a drive; red: documents)
       int tx = d.x - 6, ty = top - 12;
       drawLine(tx, ty, tx + 4, ty + 5, c, true);
       drawLine(tx + 4, ty + 5, tx + 13, ty - 6, c, true);
@@ -3792,6 +3836,31 @@ static void drawQuantumDrive(float cx, float cy, float s, bool glow) {
   if (glow) glowDisc((x0 + x1 - 22 * s) / 2, cy, 70 * s, 60, 200, 255, 0.35f);
   drawVectorText("Q", x1 - 18 * s, cy, 2.2f * s, rgb565(200, 230, 255), true);
   fillRectF(x0 + 8 * s, y0 + 8 * s, x0 + 14 * s, y0 + 12 * s, rgb565(80, 255, 120));   // its lamp
+}
+
+// A buff folder stamped TOP SECRET (NUCLEAR MISSION's)
+static void drawFolderIcon(int cx, int cy, const char *stamp) {
+  fillRect(cx - 50, cy - 40, cx - 10, cy - 30, rgb565(200, 168, 100));   // tab
+  fillRect(cx - 50, cy - 32, cx + 50, cy + 34, rgb565(214, 184, 116));
+  fillRect(cx - 46, cy - 36, cx + 46, cy - 30, rgb565(240, 236, 224));   // papers inside
+  drawRectOutline(cx - 50, cy - 32, cx + 50, cy + 34, rgb565(160, 128, 70), 1);
+  int hw = (int)(strlen(stamp) * 6 * 1.4f / 2) + 6;
+  drawRectOutline(cx - hw, cy - 10, cx + hw, cy + 12, rgb565(200, 30, 30), 2);
+  drawVectorText(stamp, cx, cy + 1, 1.4f, rgb565(200, 30, 30), true);
+}
+
+// TOP SECRET DOCUMENTS, as NUCLEAR MISSION's panel: the folder, its points
+static void drawDocPanel() {
+  int x0 = 410, y0 = 120, x1 = 870, y1 = 340;
+  fillRect(x0, y0, x1, y1, rgb565(10, 12, 20));
+  drawRectOutline(x0, y0, x1, y1, rgb565(255, 210, 70), 3);
+  drawVectorText("TOP SECRET DOCUMENTS", SCREEN_W / 2, y0 + 30, 3.2f, rgb565(255, 210, 70), true);
+  drawFolderIcon(SCREEN_W / 2, y0 + 104, "TOP SECRET");
+  char b[48];
+  snprintf(b, sizeof(b), "+%ld POINTS", docValue);
+  drawVectorText(b, SCREEN_W / 2, y1 - 62, 3.4f, rgb565(100, 240, 140), true);
+  snprintf(b, sizeof(b), "%d OF %d FOUND", docsFound, DOCUMENTS);
+  drawVectorText(b, SCREEN_W / 2, y1 - 26, 2.4f, rgb565(200, 206, 220), false);
 }
 
 // QUANTUM DRIVE FOUND, as NUCLEAR MISSION's panel: a box with the find in it
@@ -3962,7 +4031,10 @@ static void drawPanel() {
 }
 
 // GAME OVER: why, and the score
+static float gameOverShownT() { return gameOverT - (gameOver == END_TIME ? POWER_FAIL_PANEL : 0.0f); }   // (the power failing first)
 static void drawGameOver() {
+  float gameOverT = gameOverShownT();
+  if (gameOverT < 0) return;
   float k = gameOverT / 1.0f;
   if (k > 1) k = 1;
   blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 0.65f * k);
@@ -3971,10 +4043,14 @@ static void drawGameOver() {
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
     drawVectorText("YOU REACHED THE SUB BASEMENT", SCREEN_W / 2, 186, 3.2f, rgb565(240, 240, 245), true);
+  } else if (gameOver == END_TIME) {
+    drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(120, 20, 14), 8.0f);
+    drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(255, 70, 50), 3.0f);
+    drawVectorText("POWER FAILURE - THE GENERATORS HAVE SHUT DOWN", SCREEN_W / 2, 186, 3.0f, rgb565(240, 240, 245), true);
   } else {
     drawVectorTextW("GAME OVER", SCREEN_W / 2, 120, 8.0f, rgb565(120, 20, 14), 8.0f);
     drawVectorTextW("GAME OVER", SCREEN_W / 2, 120, 8.0f, rgb565(255, 70, 50), 3.0f);
-    drawVectorText(gameOver == END_TIME ? "THE TIME RAN OUT" : "OUT OF HEALTH", SCREEN_W / 2, 186, 3.2f, rgb565(240, 240, 245), true);
+    drawVectorText("OUT OF HEALTH", SCREEN_W / 2, 186, 3.2f, rgb565(240, 240, 245), true);
   }
   // the end of game bonuses, one line at a time
   char b[80];
@@ -4071,7 +4147,7 @@ static void drawMap() {
     if (ri.visited)   // its equipment: grey not searched, green nothing, gold something found
       for (int k = 0; k < ri.decorN; k++) {
         int dx = x0 + RW / 2 - (ri.decorN - 1) * 7 + k * 14;
-        uint16_t c = !ri.searched[k] ? rgb565(80, 88, 104) : (ri.holds[k] ? rgb565(255, 210, 70) : rgb565(80, 230, 120));
+        uint16_t c = !ri.searched[k] ? rgb565(80, 88, 104) : (ri.holds[k] ? rgb565(255, 210, 70) : (ri.docs[k] ? rgb565(255, 90, 70) : rgb565(80, 230, 120)));
         fillRect(dx - 4, y0 + RH - 15, dx + 4, y0 + RH - 8, c);
       }
     if (ri.visited && ri.gen) {   // a power generator: its lamp, red off, green on
@@ -4542,6 +4618,8 @@ static void newGame() {
   onTitle = false;
   score = 0;
   itemsFound = 0;
+  docsFound = 0;
+  docShowT = 0;
   health = HEALTH_MAX;
   hurtFlashT = 0;
   timeLeft = GAME_SECONDS;
@@ -4623,7 +4701,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
 
   if (gameOver != END_NONE) {           // the game is over: X (after a moment) to the high scores, or the title
     gameOverT += dt;
-    if (gameOverT > 2.2f && (pressed & BTN_JUMP)) {
+    if (gameOverShownT() > 2.2f && (pressed & BTN_JUMP)) {
       afterGame();
       liftHum.store(0, std::memory_order_relaxed);
       droneHum.store(0, std::memory_order_relaxed);
@@ -4687,6 +4765,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (msgT > 0) msgT -= dt;
     if (nothingShowT > 0) nothingShowT -= dt;
     if (itemShowT > 0) itemShowT -= dt;
+    if (docShowT > 0) docShowT -= dt;
     for (int i = 0; i < MAX_POPS; i++)
       if (popT[i] > 0) popT[i] -= dt;
     if (leverT >= 0) leverT += dt;
@@ -4738,8 +4817,18 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mode == MODE_ROOM && powerPanelT > 0 && !mapOn) drawPowerPanel();
   if (termOn && mode == MODE_ROOM) drawTerminal();
   if (mode == MODE_SHAFT) drawPanel();
+  if (gameOver == END_TIME) {            // the power has failed: the lights flicker and go, night vision comes on
+    gfxClip(HUD_H, PLAY_Y1);
+    if (gameOverT < POWER_OUT_SECONDS) {
+      if (((int)(gameOverT * 14)) & 1) dimRoom();
+    } else if (!(mode == MODE_ROOM && lightsOut)) {
+      nightVision();
+      drawGoggleReadout();
+    }
+  }
   if (mode == MODE_ROOM && !termOn) drawScorePops();
-  if (itemShowT > 0 && mode == MODE_ROOM && !mapOn) drawItemPanel();
+  if (itemShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawItemPanel();
+  if (docShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawDocPanel();
   if (mapOn) drawMap();
   else if (itemShowT <= 0 && !briefingOn && !settingsOn) drawMessage();
   if (briefingOn && !mapOn) drawBriefing();

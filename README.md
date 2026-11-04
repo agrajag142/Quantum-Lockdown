@@ -1,12 +1,12 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 019: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 020: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
 on the walls (warning lights, fans, coolant tubes...), and room hazards:
-electrified floors, dark rooms, security cameras and drones; 36 QUANTUM
+electrified floors, dark rooms, security cameras and drones; 18 QUANTUM
 DRIVES to find, 3 power generators, QUANTUM CONTROL with its drive bay and
 main computer, and the sub basement it unlocks (reaching it wins, for now),
 and a top 5 high score table.
@@ -61,8 +61,9 @@ bookshelf and coat stand; new, a desk with a computer (its screen scrolling),
 a steel cupboard and a computer rack (its lamps winking, tapes turning).
 
 Each column of rooms has its own wall colour (teal, maroon, olive, navy,
-purple, rust, forest green, mustard, plum - `wallColours` in `src/game.cpp`). 36 of them, anywhere, have
-a QUANTUM DRIVE in them; the other 92 have nothing.
+purple, rust, forest green, mustard, plum - `wallColours` in `src/game.cpp`). 18 of them, anywhere, have
+a QUANTUM DRIVE in them, and 5 others (each in a different room) TOP SECRET
+DOCUMENTS; the rest have nothing.
 
 - Searching a piece (hold Square) scores **100**. A piece is searched once:
   after that Square there just says SEARCHED. Each piece remembers how far it
@@ -71,7 +72,11 @@ a QUANTUM DRIVE in them; the other 92 have nothing.
 - Finding a drive shows **QUANTUM DRIVE FOUND** (a picture of the drive) and
   scores **200** more. He carries the drives until he loads them into the
   drive bay in QUANTUM CONTROL.
-- Searched pieces get a tick: green for nothing, gold for a find. On the map
+- Finding **TOP SECRET DOCUMENTS** shows their panel (a folder stamped TOP
+  SECRET, as NUCLEAR MISSION's) and scores bonus points: **1000, 1500, 2000,
+  2500 and 5000**, in the order found. They are only for points.
+- Searched pieces get a tick: green for nothing, gold for a drive, red for
+  documents. On the map
   each room you've been in shows its pieces the same way (grey: not searched).
 
 ## On screen
@@ -125,7 +130,9 @@ a QUANTUM DRIVE in them; the other 92 have nothing.
   the wall (a white case with a red cross). Search one (hold Square) and the
   health bar is full again; each kit works once (it hangs open after), and
   not while the bar is already full. The map marks a room's unused kit.
-- **The clock:** 15 minutes from the start. At 0:00 the game is over. It is
+- **The clock:** 15 minutes from the start. At 0:00 the power fails: the
+  generators wind down, the lights flicker and go out, his night vision comes
+  on, and **MISSION FAILED - POWER FAILURE** comes up: the game is over. It is
   red in the last minute. The map (Options) pauses it, and everything else.
 - **Game over:** why, the score, what was found; X goes back to the title.
 
@@ -143,7 +150,7 @@ lamp red or green), and the lift area's panel counts them.
 
 A room of its own in the middle column of the map (between lifts E and F), on
 a random row, one level high, with a door at the bottom on each side. Its
-equipment is NUCLEAR MISSION's LCC, with the new **QUANTUM DRIVE BAY** (36
+equipment is NUCLEAR MISSION's LCC, with the new **QUANTUM DRIVE BAY** (18
 slots and a counter) on the left; the main computer and its printer in the
 middle, a display over it (the countdown, once there is power), and on the
 right the reel to reel tape units, the fan and three computer racks. The map always shows it (in
@@ -155,9 +162,9 @@ purple).
   - Without all 3 generators on: a NO POWER panel, with a picture of a
     generator and how many are on.
   - With power: the close-up of the computer (as NUCLEAR MISSION's launch
-    computer). It boots, checks the drive bay, and with fewer than 36 drives
+    computer). It boots, checks the drive bay, and with fewer than 18 drives
     loaded stops at **UNABLE TO BOOT** (X logs off).
-  - With all 36 loaded it boots to a menu: UP / DOWN to choose, X or Square to
+  - With all 18 loaded it boots to a menu: UP / DOWN to choose, X or Square to
     pick. Most items only show a page (core status, temporal field, personnel
     files...). **UNLOCK SUB BASEMENT LIFT ACCESS** names a lift shaft, picked
     at random from those that go down to the bottom floor. LOG OFF to leave.
@@ -254,7 +261,7 @@ The settings for these are at the top of `src/game.cpp` (`CAM_...`, `DRONE_...`,
 `ELEC_...`, the numbers of rooms). One hazard at most in a room; 9 rooms (30%, room 1 among them) have none.
 
 `sim/check_layout.cpp` lays out 2000 complexes and checks the counts (128
-pieces, 4 or 5 a room, 36 finds, 5 first aid kits, 2-6 rooms a column, the
+pieces, 4 or 5 a room, 18 drives, 5 documents, 5 first aid kits, 2-6 rooms a column, the
 hazard rooms), that every piece stands on its platform clear
 of the lifts, that no two overlap, and that every electrified room has its sign. `sim/check_rooms.cpp` checks that every
 layout can be crossed with every door combination and every spot reached:
