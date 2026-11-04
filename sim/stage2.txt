@@ -1,6 +1,7 @@
 # From the end of stage 1 into stage 2 (seed 1): the settings' JUMP TO STAGE 2,
 # the QUANTUMLOOP sign, STAGE 1 COMPLETE, stage 2's briefing, the power switch,
-# the doors, the journey, the arrival station, stage 2's lift area.
+# the doors, the journey, the arrival station, stage 2's lift area: lift A up to
+# its first level (the maintenance man's, seed 1: he runs).
 seed 1
 hold NONE 30
 tap JUMP
@@ -39,3 +40,6 @@ hold NONE 300
 hold LEFT 400
 hold NONE 30
 shot 77_stage2_lift_area
+hold UP 20
+hold NONE 140
+shot 78_lift_a_up

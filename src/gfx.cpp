@@ -2,6 +2,10 @@
 
 #include "gfx.h"
 #include "agent_rig.h"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#include "people.h"   // (the other people: drawPersonU)
+#pragma GCC diagnostic pop
 
 #include <string.h>
 
@@ -368,4 +372,10 @@ static void agCirclePx(int cx, int cy, int r, uint16_t c) { pxCircle(cx + 0.5f, 
 
 void drawAgentU(const AgentPose &p, float x, float floorY, int facing, float scale) {
   agentDraw(p, x * UNIT_K, floorY * UNIT_K, facing, scale * UNIT_K, agPolyPx, agCirclePx);
+}
+
+// One of the other people (people.h), in units like the agent
+void drawPersonU(const AgentPose &p, float x, float floorY, int facing, float scale, int kind) {
+  int mx, my;
+  personDraw(p, x * UNIT_K, floorY * UNIT_K, facing, scale * UNIT_K, (uint8_t)kind, agPolyPx, agCirclePx, mx, my);
 }

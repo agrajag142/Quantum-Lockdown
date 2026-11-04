@@ -1,0 +1,22 @@
+# Stage 2's lab (seed 1): lift A, the maintenance man at level 1 (floor 5) - he runs, he's knocked
+# out, searched (his card, his overalls), binned; then all access through a lab room.
+seed 1
+hold NONE 30
+lab 0 6 5
+hold NONE 30
+shot 80_lab_arrival_floor
+hold UP 20
+hold NONE 160
+shot 81_maintenance_man_runs
+hold NONE 200
+walkto 140
+shot 82_cornered
+tap JUMP
+hold NONE 70
+shot 83_knocked_out
+tap USE
+hold NONE 120
+shot 84_disguised
+tap USE
+hold NONE 260
+shot 85_binned

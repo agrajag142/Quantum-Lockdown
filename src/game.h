@@ -28,6 +28,7 @@ void gameDebugPos(float *x, float *y, int *state);
 void gameDebugRoom(int tpl, bool topL, bool topR, int hazard = 0);   // (the PC test build: straight into a layout; hazard 1 electric, 2 dark)
 void gameDebugControl(int drives, int gens);   // (the PC test build: QUANTUM CONTROL, with drives in hand and generators on)
 void gameDebugShaft(int s, int f);             // (the PC test build: a lift shaft at a floor; -1s: the sub basement's)
+void gameDebugStage2(int s, int f, int wk);   // (the PC test build: the stage 2 lab, lift s at floor f (0 the top level, 6 the QUANTUMLOOP's))
 void gameDebugGenerator(int n);                // (the PC test build: the room with generator n)
 
 #endif // GAME_H

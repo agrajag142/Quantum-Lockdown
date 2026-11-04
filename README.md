@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 022: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 023: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -9,7 +9,9 @@ on the walls (warning lights, fans, coolant tubes...), and room hazards:
 electrified floors, dark rooms, security cameras and drones; 18 QUANTUM
 DRIVES to find, 3 power generators, QUANTUM CONTROL with its drive bay and
 main computer, the sub basement it unlocks and the QUANTUMLOOP to stage 2,
-and a top 5 high score table.
+stage 2's QUANTUM LAB (six lifts, 21 rooms, card readers, the kitchen and
+its chef, the maintenance man to knock out, search and hide in a bin), and a
+top 5 high score table.
 
 ## What's different from NUCLEAR MISSION's PS5 port
 
@@ -199,13 +201,85 @@ Going in ends stage 1:
    counting down to arrival, a deep rumble - about 20 seconds
    (`RIDE_SECONDS`). Fade to black again.
 5. **The arrival station**: the same, its board saying ARRIVED STAGE 2 and
-   QUANTUM LAB with an arrow. He steps out, the doors close: head left.
-6. **Stage 2's lift area** (LIFT Q, FLOOR Q1): a wall on the left, nothing
-   else yet, and the lift doesn't move. The mini map and the Options map say
-   STAGE 2 - no map yet.
+   QUANTUM LAB with an arrow. He steps out, the doors close: head left, into
+   lift A at its lowest stop (LEVEL Q).
 
 MISSION COMPLETE isn't reached any more for now; the game ends with the
-clock, health, or QUIT TO TITLE.
+clock, health, the maintenance man being found, or QUIT TO TITLE.
+
+## Stage 2: the QUANTUM LAB
+
+The lift areas have NUCLEAR MISSION's LAB look: white walls in panels, the
+air-conditioning duct with the red and black stripe under it, glass rails
+along white walkways, and a glass-backed white lift car with a blue light.
+
+**The layout** (always the same; `layOutStage2`): six lifts side by side,
+A to F. Each has a room on its right at each of its levels, counted from the
+top level down - lift A 6 rooms (levels 6 to 1), B 5, C 4, D 3, E 2, F 1:
+
+```
+ level 6   A[ ]B[ ]C[ ]D[ ]E[ ]F[ ]
+ level 5   A[ ]B[ ]C[ ]D[ ]E[ ]
+ level 4   A[ ]B[ ]C[ ]D[ ]
+ level 3   A[ ]B[ ]C[ ]
+ level 2   A[ ]B[ ]
+ level 1   A[ ]
+ level Q   A[QUANTUMLOOP]
+```
+
+A room's left door is at the end of its lift's right walkway; its right door
+(where the next lift comes down that far) at the end of the next lift's left
+walkway - so the bottom room of each column is a dead end. Rooms are one
+level and empty for now (they'll be built up one at a time), except the
+kitchen.
+
+**Card readers**: every door into a room has a reader beside it, with its
+access level (L1 to L5) under it - red lamp and a shut white door with a red
+band while his card isn't good enough (walking into it: ACCESS LEVEL n
+REQUIRED), green and open once it is. Once he has been in a room its doors
+stay open. Lift A's rooms are level 1 (the kitchen) and 2 to 5 at random;
+lift B's level 2, C's 3, D's 4, E's and F's 5.
+
+**Signs**: each door has a sign beside it saying what's through it. Lift A's
+six rooms are, in a random order each game: KITCHEN, MEDICAL BAY, SECURITY,
+ADMIN, CLEANING and STORE ROOM (the sixth name, for now). The rest say LAB
+and where they are (LAB B4...).
+
+**On every left walkway**: a green **first aid cabinet** (Square under it:
+full health, once - then it hangs open, empty). **Lift A's** left walkways
+also have a **bin** big enough for a man, and lift A's left walkways are dead
+ends (no door).
+
+**The maintenance man** waits for lift A at one of its six levels (random),
+on the left walkway by the call buttons. When the car stops at his level he
+starts, and runs for the end of the walkway, where he cowers. He's slower
+than you: get close and press **X** to knock him out. The clock in the
+middle of the top bar becomes **BODY FOUND IN 1:00**, counting down (red;
+flashing and beeping in the last ten seconds); at zero: MISSION FAILED, the
+body was found. Then, beside him:
+
+1. **Square**: search him - his **level 1 access card** and his overalls:
+   you're disguised as maintenance (blue overalls, hi-vis band, cap).
+2. **Square** again: the bin - you lift him over your shoulder, carry him to
+   the bin, lid up, tip him in, lid down. The top bar shows the mission's
+   countdown again.
+
+Points: 500 for the knock out, 1000 for the search, 500 for the bin.
+
+**The kitchen** (access level 1): two levels - the cooking on the floor (a
+double fridge, the range with its ovens, pans and extractor hood, a steel
+prep table with utensils hanging over it, the sink and a shelf of plates, a
+white-tiled wall) and the stores on a deck above (racks of boxes, tins,
+sacks of flour and rice, jars, a pallet of bottled water), reached by the
+lift pad on the left. **The chef** walks one of two paths back and forth -
+the floor (fridge to sink) or the deck (along the racks) - pausing at each
+end to work. Coming in, he's on one of them, with his back to you, walking
+away. He doesn't notice you yet (for testing).
+
+**The panel** in stage 2: LIFT A..F and the level; ROOMS (of 21), ACCESS
+CARD, DISGUISE, FIRST AID LEFT, SCORE. The mini map and the Options map show
+the lifts and rooms (filled once visited; the Options map with the names,
+access levels and which are locked).
 
 ## End of game bonus
 
@@ -321,6 +395,8 @@ pauses the game and the clock:
   high scores)
 - **JUMP TO STAGE 2** (for testing): straight to the sub basement's lift
   area at the end of stage 1 (unlocked), ready to go into the station
+- **ALL ACCESS (TEST)** ON / OFF (for testing stage 2): every card reader
+  opens (the panel's ACCESS CARD says ALL (TEST))
 - **QUIT TO TITLE** (X twice): drops the game there and then, no score
 - **RESUME** (or Triangle again)
 
@@ -330,8 +406,8 @@ pauses the game and the clock:
 | --- | --- |
 | X (Cross), on the title | start a new game |
 | D-pad or left stick | run left / right; up / down rides the lift car or a lift pad, or calls a pad to you |
-| Cross | somersault |
-| Square or Circle | hold to search equipment |
+| Cross | somersault (stage 2, close to the maintenance man: knock him out) |
+| Square or Circle | hold to search equipment (stage 2: search the maintenance man, put him in the bin, a first aid cabinet) |
 | Options or touchpad | the map (shows every room and where its doors lead), and pauses the game |
 | Triangle | the settings (pauses the game); on the map: lay out a new complex |
 
@@ -366,6 +442,7 @@ mission2/build.sh sim mission2/sim/hazards.txt   # an electrified floor (and a s
 mission2/build.sh sim mission2/sim/cameras_drone.txt   # caught on camera, two cameras, the drone
 mission2/build.sh sim mission2/sim/control.txt         # a generator, QUANTUM CONTROL, the computer, the sub basement
 mission2/build.sh sim mission2/sim/stage2.txt          # JUMP TO STAGE 2, the station, the QUANTUMLOOP, stage 2's lift area
+mission2/build.sh sim mission2/sim/lab.txt             # the lab: the maintenance man runs, knocked out, searched, binned
 mission2/build.sh sim my_script.txt       # your own script (see sim/sim_main.cpp for the commands)
 ```
 

@@ -24,6 +24,10 @@
 #include "gfx.h"
 #include "agent_rig.h"
 #include "rooms_wide.h"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#include "people.h"            // (the kinds of people: stage 2's chef and maintenance man)
+#pragma GCC diagnostic pop
 #include "scream_sound.h"
 #include <sys/stat.h>
 
@@ -35,7 +39,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "022"
+#define GAME_VERSION      "023"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -86,7 +90,21 @@
 #define SUB_ROOM          (ROOM_COUNT + 1)  // the sub basement's room: the QUANTUMLOOP station (under a lift shaft, once unlocked)
 #define ARRIVAL_ROOM      (ROOM_COUNT + 2)  // stage 2: where the QUANTUMLOOP arrives
 #define ALL_ROOMS         (ROOM_COUNT + 3)
-#define S2_FLOOR          0        // stage 2's lift area: the floor it is at (no other stops yet)
+#define S2_LIFTS          6        // stage 2, the QUANTUM LAB: lifts A..F...
+#define S2_LEVELS         6        // ...lift A has a room on its right at each of the 6 levels, B 5, C 4, D 3, E 2, F 1
+#define S2_ROOMS          21       // (6 + 5 + 4 + 3 + 2 + 1)
+#define S2_ARRIVAL        S2_LEVELS  // lift A's floor under level 1: the QUANTUMLOOP's arrival station, on its right
+#define BODY_FOUND_SECONDS 60      // the maintenance man knocked out: the countdown to his body being found...
+                                   // ...in the bin, it goes back to the mission's countdown
+#define WK_HOME_X         470      // the maintenance man waits for lift A here (on its left walkway)...
+#define WK_CORNER_X       66       // ...and runs to the end of it, and cowers there
+#define WK_RUN_SPEED      125.0f   // (he runs at about 230)
+#define KNOCK_RANGE       85       // X this close to him: knocked out
+#define BIN_X             330      // lift A's left walkways: the bin (big enough for a man)...
+#define BIN_H             104
+#define AID_X             170      // ...and every walkway on the left: the first aid cabinet (once each)
+#define KITCHEN_DECK_Y    360      // the kitchen: its storage deck (the floor is the cooking)
+#define CHEF_SPEED        62.0f
 #define RIDE_SECONDS      20.0f    // the QUANTUMLOOP journey
 #define LOOP_POWER_X      500      // the station: the QUANTUMLOOP's power switch...
 #define LOOP_DOOR_X       800      // ...and its doors (the middle of the portal)
@@ -196,6 +214,45 @@ static float loopPowerT = 9;           // seconds since (its lights coming on)
 static float loopDoorT = 0;            // its doors: 0 shut ... 1 open
 static int loopDoorDir = 0;            // +1 opening, -1 closing
 static std::atomic<int> rideHum{0};    // the journey's rumble
+
+// ---- stage 2: the QUANTUM LAB. Lifts A..F side by side; a room on the right of each lift at its
+// levels (from the top level down: A 6, B 5 ... F 1). A room's left door is on its lift's right
+// walkway, its right door (where the next lift comes down that far) on the next lift's left one;
+// each door has a card reader (access level 1..5: once in, always open). In rooms[0..20].
+enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE };
+static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM" };
+static int8_t s2Room[S2_LIFTS][S2_LEVELS];   // the room on the right of each lift at each level (-1 none)
+static uint8_t s2Kind[S2_ROOMS], s2Lvl[S2_ROOMS];   // what it is, the access level its doors need
+static bool s2Aid[S2_LIFTS][S2_LEVELS];      // each left walkway's first aid cabinet: used
+static int s2Card = 0;                       // his access card's level (0: none)
+static bool s2Disguised = false;             // in the maintenance man's overalls
+static bool s2AllAccess = false;             // (the settings, for testing: every door opens)
+static float s2BumpT = 0;                    // (ACCESS LEVEL n REQUIRED: not over and over)
+enum WorkerState : uint8_t { WK_WAIT, WK_SPOT, WK_RUN, WK_COWER, WK_FALL, WK_DOWN, WK_STRIPPED, WK_BINNED };
+static uint8_t wkState = WK_WAIT;            // the maintenance man, waiting for lift A at one of its levels
+static int wkFloor = 0, wkFace = 1;
+static float wkX = WK_HOME_X, wkT = 0;
+static float bodyT = -1;                     // >= 0: seconds till his body is found
+static uint8_t s2Act = 0;                    // what he is doing instead of moving: 1 knocking him out, 2 searching him, 3 into the bin
+static float s2ActT = 0, binPT = 0;
+static int binPhase = 0;
+static bool bodyCarried = false;
+static int chefPath = 0, chefDir = 1;        // the kitchen's chef: on one of two paths (0 the floor, 1 the deck), back and forth
+static float chefX = 0, chefT = 0, chefPause = 0;
+
+// Does lift s stop at floor f? Is there a walkway on this side (0 left)?
+static bool s2Stops(int s, int f) { return s >= 0 && s < S2_LIFTS && ((f >= 0 && f <= S2_LEVELS - 1 - s) || (s == 0 && f == S2_ARRIVAL)); }
+static bool s2Foyer(int s, int f, int side) { return s2Stops(s, f) && (f != S2_ARRIVAL || side == 1); }
+static int s2CardLevel() { return s2AllAccess ? 5 : s2Card; }
+static bool s2Locked(int idx) { return idx >= 0 && idx < S2_ROOMS && !rooms[idx].visited && s2CardLevel() < s2Lvl[idx]; }
+static void s2LevelName(int f, char *b, int n) {
+  if (f == S2_ARRIVAL) snprintf(b, n, "Q");
+  else snprintf(b, n, "%d", S2_LEVELS - f);
+}
+static void s2RoomName(int idx, char *b, int n) {
+  if (s2Kind[idx] != LK_LAB) snprintf(b, n, "%s", labKindName[s2Kind[idx]]);
+  else snprintf(b, n, "LAB %c%d", 'A' + rooms[idx].col, S2_LEVELS - rooms[idx].row);
+}
 // Quantum drives: found and carried, and loaded into the drive bay in QUANTUM CONTROL
 static int drivesCarried = 0, drivesLoaded = 0;
 static float leverT = -1;                  // >= 0: the lever of this room's generator going up (seconds)
@@ -217,7 +274,12 @@ static char shaftLetter(int s) { return (char)('A' + s); }
 // -1 (a wall). right: the room to the right of the shaft (through its left
 // door), else the one to the left (through its right door).
 static int roomOff(int s, int f, bool right) {
-  if (stage == 2) return (right && f == S2_FLOOR) ? ARRIVAL_ROOM : -1;   // (stage 2's lift area: the arrival room on its right, nothing else yet)
+  if (stage == 2) {                    // the QUANTUM LAB
+    if (!s2Stops(s, f)) return -1;
+    if (f == S2_ARRIVAL) return right ? ARRIVAL_ROOM : -1;
+    if (right) return s2Room[s][f];
+    return s > 0 ? s2Room[s - 1][f] : -1;
+  }
   if (f == SUB_FLOOR) return (right && subUnlocked && s == subShaft) ? SUB_ROOM : -1;
   if (f < 0 || f >= FLOORS) return -1;
   int c = right ? s : s - 1, r = f / 2;
@@ -360,6 +422,52 @@ static void layOut(uint32_t seed) {
   memset(shaftSeen, 0, sizeof(shaftSeen));
 }
 
+// Stage 2's lab: its rooms (in rooms[0..20]), what they are and their access levels; the
+// maintenance man's level
+static void layOutStage2() {
+  rngState = layoutSeed * 2246822519u + 991u;
+  int n = 0;
+  for (int s = 0; s < S2_LIFTS; s++)
+    for (int f = 0; f < S2_LEVELS; f++) {
+      s2Room[s][f] = -1;
+      s2Aid[s][f] = false;
+      if (f > S2_LEVELS - 1 - s) continue;
+      RoomInfo &ri = rooms[n];
+      memset(&ri, 0, sizeof(ri));
+      ri.row = (int8_t)f;
+      ri.col = (int8_t)s;
+      ri.seed = (uint16_t)rnd32();
+      ri.noRightDoor = f > S2_LEVELS - 2 - s;   // (the next lift doesn't come down this far)
+      s2Kind[n] = LK_LAB;
+      s2Lvl[n] = (uint8_t)(s + 1 > 5 ? 5 : s + 1);   // lift B's rooms level 2 ... E's and F's level 5
+      s2Room[s][f] = (int8_t)n++;
+    }
+  // lift A's six rooms, in a random order: the kitchen (level 1: the maintenance man's card), the rest 2..5
+  uint8_t kinds[S2_LEVELS] = { LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE };
+  for (int i = S2_LEVELS - 1; i > 0; i--) {
+    int j = rnd(i + 1);
+    uint8_t k = kinds[i];
+    kinds[i] = kinds[j];
+    kinds[j] = k;
+  }
+  for (int f = 0; f < S2_LEVELS; f++) {
+    int idx = s2Room[0][f];
+    s2Kind[idx] = kinds[f];
+    s2Lvl[idx] = (uint8_t)(kinds[f] == LK_KITCHEN ? 1 : 2 + rnd(4));
+  }
+  memset(roomAt, -1, sizeof(roomAt));
+  wkFloor = rnd(S2_LEVELS);
+  wkState = WK_WAIT;
+  wkX = WK_HOME_X;
+  wkFace = 1;
+  wkT = 0;
+  bodyT = -1;
+  s2Card = 0;
+  s2Disguised = false;
+  s2Act = 0;
+  bodyCarried = false;
+}
+
 // ============================================================ where we are
 enum Mode : uint8_t { MODE_SHAFT, MODE_ROOM };
 static Mode mode = MODE_SHAFT;
@@ -486,7 +594,7 @@ static int health = HEALTH_MAX;
 static float hurtFlashT = 0;           // the health bar flashes after a hurt
 static float timeLeft = GAME_SECONDS;
 static bool koGetUp = false;           // knocked down by a drop: he gets up where he is (else back to the door)
-enum EndReason : uint8_t { END_NONE, END_TIME, END_HEALTH, END_WIN };
+enum EndReason : uint8_t { END_NONE, END_TIME, END_HEALTH, END_WIN, END_BODY };
 static EndReason gameOver = END_NONE;
 static float gameOverT = 0;
 static float playT = 0;                // time played (seconds of play: not the map, not the opening)
@@ -2011,9 +2119,335 @@ static void drawLoopStation(bool arrival) {
   fillCircle(cx + 30, 474, 3, on ? rgb565(80, 255, 140) : rgb565(220, 40, 30));
 }
 
+// ============================================================ painting: stage 2's lab (NUCLEAR MISSION's LAB look)
+// The air-conditioning duct along the top
+static void labDuctBand(int x0, int x1, int yd0, int yd1) {
+  uint16_t body = rgb565(156, 162, 170), hi = rgb565(196, 202, 210), lo = rgb565(98, 104, 112), flange = rgb565(124, 130, 138);
+  fillRect(x0, yd0, x1, yd1, body);
+  fillRect(x0, yd0, x1, yd0 + 2, hi);
+  fillRect(x0, yd1 - 3, x1, yd1, lo);
+  for (int x = x0 + 50; x < x1; x += 110) {
+    fillRect(x, yd0 - 2, x + 6, yd1 + 2, flange);
+    fillRect(x + 1, yd0 - 2, x + 2, yd1 + 2, hi);
+    for (int y = yd0 + 8; y < yd1 - 4; y += 12) {
+      fillCircle(x - 5, y, 1, lo);
+      fillCircle(x + 11, y, 1, lo);
+    }
+  }
+  for (int x = x0 + 20; x < x1; x += 110) fillRect(x, (yd0 + yd1) / 2, x + 18, (yd0 + yd1) / 2 + 1, lo);
+}
+
+// The red and black stripe under it
+static void labStripe(int x0, int x1, int y0, int y1) {
+  fillRect(x0, y0, x1, y1, rgb565(20, 20, 22));
+  int h = y1 - y0 + 1;
+  for (int x = x0 - 40; x < x1 + 40; x += 36) {
+    int xs[4] = { x, x + 18, x + 18 + h, x + h };
+    int ys[4] = { y0, y0, y1 + 1, y1 + 1 };
+    for (int k = 0; k < 4; k++) xs[k] = clampv(xs[k], x0, x1 + 1);
+    fillPolygon(xs, ys, 4, rgb565(200, 30, 30));
+  }
+}
+
+// A glass rail: steel posts, glass panels, a chrome top rail (fy: the floor it stands on)
+static void labRail(int x0, int x1, int fy) {
+  uint16_t glass = rgb565(204, 226, 234), sheen = rgb565(236, 246, 250), post = rgb565(150, 156, 166), chrome = rgb565(222, 226, 232);
+  fillRect(x0, fy - 46, x1, fy - 4, glass);
+  for (int x = x0 + 10; x < x1 - 10; x += 75) {
+    drawLine(x + 8, fy - 8, x + 30, fy - 44, sheen, true);
+    drawLine(x + 20, fy - 8, x + 34, fy - 30, sheen, false);
+  }
+  for (int x = x0; x <= x1; x += 75) fillRect(x, fy - 50, x + 3, fy - 1, post);
+  fillRect(x0, fy - 52, x1, fy - 48, chrome);
+  fillRect(x0, fy - 52, x1, fy - 51, rgb565(250, 250, 252));
+  fillRect(x0, fy - 5, x1, fy - 3, post);
+}
+
+// The green first aid cabinet on the wall (its middle at x, y): shut, or open and empty
+static void labFirstAid(int x, int y, bool used) {
+  fillRect(x - 24, y - 20, x + 24, y + 20, rgb565(20, 130, 70));
+  fillRect(x - 24, y - 20, x + 24, y - 18, rgb565(80, 190, 120));
+  fillRect(x - 24, y + 17, x + 24, y + 20, rgb565(12, 90, 48));
+  if (used) {                                // the door hanging open, nothing inside
+    fillRect(x - 20, y - 16, x + 20, y + 16, rgb565(40, 46, 44));
+    fillRect(x - 20, y + 2, x + 20, y + 3, rgb565(90, 96, 94));
+    int dx[4] = { x - 24, x - 44, x - 44, x - 24 }, dy[4] = { y - 20, y - 26, y + 26, y + 20 };
+    fillPolygon(dx, dy, 4, rgb565(30, 150, 84));
+    fillRect(x - 38, y - 4, x - 30, y + 4, rgb565(220, 224, 226));
+  } else {
+    fillRect(x - 4, y - 13, x + 4, y + 13, rgb565(250, 250, 250));
+    fillRect(x - 13, y - 4, x + 13, y + 4, rgb565(250, 250, 250));
+    fillRect(x + 18, y - 4, x + 21, y + 4, rgb565(200, 206, 210));
+  }
+  drawVectorText("FIRST AID", x, y + 32, 1.3f, rgb565(20, 110, 60), false);
+}
+
+// White wall panels from y0 to y1, x0..x1 (seams, a dado line, the skirting at the bottom)
+static void labWall(int x0, int x1, int y0, int y1) {
+  uint16_t wall = rgb565(226, 230, 234), seam = rgb565(198, 204, 212), skirt = rgb565(186, 192, 200);
+  fillRect(x0, y0, x1, y1, wall);
+  for (int x = (x0 / 100 + 1) * 100; x < x1; x += 100) fillRect(x, y0, x + 1, y1, seam);
+  if (y1 - y0 > 120) fillRect(x0, y1 - 63, x1, y1 - 62, seam);
+  fillRect(x0, y1 - 11, x1, y1, skirt);
+}
+
+// The white floor slab at fy (to y1)
+static void labFloor(int x0, int x1, int fy, int y1) {
+  fillRect(x0, fy, x1, y1, rgb565(196, 200, 208));
+  fillRect(x0, fy, x1, fy + 2, rgb565(244, 246, 250));
+  fillRect(x0, fy + 11, x1, fy + 13, rgb565(150, 156, 164));
+  if (y1 > fy + 14) fillRect(x0, fy + 14, x1, y1, rgb565(90, 96, 106));
+}
+
+// The lift's call buttons beside the shaft (x: the plate's middle, fy: the floor)
+static void labCallButtons(int x, int fy) {
+  fillRect(x - 9, fy - 112, x + 9, fy - 72, rgb565(150, 156, 166));
+  fillRect(x - 7, fy - 110, x + 7, fy - 74, rgb565(60, 66, 76));
+  fillCircle(x, fy - 101, 4, rgb565(200, 206, 214));
+  fillCircle(x, fy - 84, 4, rgb565(200, 206, 214));
+  fillCircle(x, fy - 101, 2, rgb565(90, 200, 255));
+}
+
+// A room's side (stage 2): a white frame, the doorway (dark) and a green EXIT lamp, or a plain wall
+static void paintLabSide(bool right, int doorY, bool door) {
+  int bx0 = right ? SCREEN_W - 16 : 0, bx1 = right ? SCREEN_W - 1 : 15;
+  fillRect(bx0, HUD_H, bx1, ROOM_FLOOR_Y - 1, rgb565(178, 184, 194));
+  fillRect(right ? bx0 : bx1 - 2, HUD_H, right ? bx0 + 2 : bx1, ROOM_FLOOR_Y - 1, rgb565(236, 238, 242));
+  if (!door) return;
+  int x0 = right ? SCREEN_W - 30 : 0, x1 = right ? SCREEN_W - 1 : 29, top = doorY - DOOR_H;
+  fillRect(x0, top, x1, doorY - 1, rgb565(40, 46, 56));
+  int fx0 = right ? x0 - 10 : x1 + 1, fx1 = fx0 + 9;
+  fillRect(fx0, top - 12, fx1, doorY - 1, rgb565(180, 186, 194));
+  fillRect(right ? fx0 : fx1 - 2, top - 12, right ? fx0 + 2 : fx1, doorY - 1, rgb565(236, 238, 242));
+  fillRect(x0, top - 12, x1, top - 1, rgb565(180, 186, 194));
+  int lx = right ? SCREEN_W - 36 : 6, ly = top - 34;
+  fillRect(lx, ly, lx + 30, ly + 16, rgb565(20, 60, 30));
+  fillRect(lx + 3, ly + 3, lx + 27, ly + 13, rgb565(60, 220, 110));
+}
+
+// ---- the kitchen: cooking on the floor, its stores on the deck above
+static void paintFridge(int x0, int x1, int fy) {
+  int top = fy - 236;
+  fillRect(x0, top, x1, fy - 1, rgb565(196, 202, 210));
+  fillRect(x0, top, x1, top + 3, rgb565(232, 236, 240));
+  fillRect(x0, top, x0 + 3, fy - 1, rgb565(226, 230, 236));
+  fillRect(x1 - 3, top, x1, fy - 1, rgb565(150, 156, 166));
+  int mid = (x0 + x1) / 2;
+  fillRect(mid - 1, top + 24, mid + 1, fy - 12, rgb565(130, 136, 146));
+  fillRect(x0, top + 18, x1, top + 22, rgb565(150, 156, 166));
+  fillRect(mid - 12, top + 70, mid - 7, top + 150, rgb565(110, 116, 126));   // the handles
+  fillRect(mid + 7, top + 70, mid + 12, top + 150, rgb565(110, 116, 126));
+  fillRect(x0 + 14, top + 5, x0 + 50, top + 15, rgb565(20, 30, 40));          // its readout
+  drawVectorText("3C", x0 + 32, top + 10, 1.2f, rgb565(90, 220, 255), false);
+  fillRect(x0 + 6, fy - 12, x1 - 6, fy - 1, rgb565(60, 64, 72));
+}
+
+static void paintRange(int x0, int x1, int fy) {
+  int top = fy - 92;
+  // the extractor hood above it, its duct up to the deck
+  int hx[4] = { x0 - 10, x1 + 10, x1 - 40, x0 + 40 }, hy[4] = { top - 128, top - 128, top - 178, top - 178 };
+  fillPolygon(hx, hy, 4, rgb565(178, 184, 194));
+  fillRect(x0 - 10, top - 128, x1 + 10, top - 120, rgb565(150, 156, 166));
+  fillRect((x0 + x1) / 2 - 40, KITCHEN_DECK_Y + PLAT_T, (x0 + x1) / 2 + 40, top - 178, rgb565(196, 202, 210));
+  for (int x = x0 + 4; x < x1 - 4; x += 10) fillRect(x, top - 126, x + 4, top - 122, rgb565(90, 96, 106));
+  // the steel splashback, the range
+  fillRect(x0 + 6, top - 110, x1 - 6, top - 1, rgb565(206, 212, 220));
+  for (int y = top - 100; y < top; y += 22) fillRect(x0 + 6, y, x1 - 6, y, rgb565(176, 182, 192));
+  fillRect(x0, top, x1, fy - 1, rgb565(150, 156, 166));
+  fillRect(x0, top, x1, top + 8, rgb565(40, 42, 48));
+  for (int x = x0 + 20; x < x1 - 10; x += 32) fillCircle(x, top + 20, 5, rgb565(40, 42, 48));   // the knobs
+  int ow = (x1 - x0 - 30) / 2;
+  for (int k = 0; k < 2; k++) {                // two ovens
+    int ox0 = x0 + 10 + k * (ow + 10), ox1 = ox0 + ow;
+    fillRect(ox0, top + 34, ox1, fy - 10, rgb565(120, 126, 136));
+    fillRect(ox0 + 10, top + 46, ox1 - 10, fy - 22, rgb565(30, 26, 24));
+    fillRect(ox0 + 12, top + 48, ox1 - 12, top + 52, rgb565(250, 140, 50));   // the glow inside
+    fillRect(ox0 + 6, top + 38, ox1 - 6, top + 41, rgb565(220, 224, 230));    // the handle
+  }
+  // pans on the burners
+  int sx = x0 + 40;
+  fillRect(sx - 26, top - 54, sx + 26, top - 1, rgb565(176, 182, 192));        // the stock pot
+  fillRect(sx - 30, top - 58, sx + 30, top - 52, rgb565(150, 156, 166));
+  fillRect(sx - 34, top - 40, sx - 26, top - 36, rgb565(60, 64, 72));
+  fillRect(sx + 26, top - 40, sx + 34, top - 36, rgb565(60, 64, 72));
+  int fx = (x0 + x1) / 2 + 10;
+  fillRect(fx - 30, top - 12, fx + 30, top - 1, rgb565(40, 42, 48));          // the frying pan
+  fillRect(fx + 30, top - 10, fx + 74, top - 6, rgb565(30, 30, 34));
+  int px = x1 - 46;
+  fillRect(px - 20, top - 30, px + 20, top - 1, rgb565(196, 120, 70));         // a copper saucepan
+  fillRect(px - 20, top - 32, px + 20, top - 28, rgb565(226, 150, 96));
+  fillRect(px - 52, top - 26, px - 20, top - 22, rgb565(150, 90, 50));
+}
+
+static void paintPrepCounter(int x0, int x1, int fy) {
+  int top = fy - 82;
+  // the rail of utensils on the wall above it
+  fillRect(x0 + 10, top - 138, x1 - 10, top - 134, rgb565(160, 166, 176));
+  for (int k = 0, x = x0 + 30; x < x1 - 20; x += 36, k++) {
+    fillRect(x - 1, top - 134, x + 1, top - 110, rgb565(120, 126, 136));
+    if (k % 3 == 0) fillCircle(x, top - 96, 14, rgb565(60, 62, 68));                  // a pan
+    else if (k % 3 == 1) { fillRect(x - 2, top - 110, x + 2, top - 70, rgb565(170, 176, 186)); fillCircle(x, top - 70, 7, rgb565(170, 176, 186)); }   // a ladle
+    else { fillRect(x - 6, top - 110, x + 6, top - 80, rgb565(196, 202, 210)); fillRect(x - 2, top - 80, x + 2, top - 66, rgb565(80, 56, 36)); }     // a cleaver
+  }
+  // the steel table: legs, a shelf of pots underneath
+  fillRect(x0, top, x1, top + 8, rgb565(214, 220, 228));
+  fillRect(x0, top + 6, x1, top + 9, rgb565(150, 156, 166));
+  fillRect(x0 + 6, top + 9, x0 + 12, fy - 1, rgb565(150, 156, 166));
+  fillRect(x1 - 12, top + 9, x1 - 6, fy - 1, rgb565(150, 156, 166));
+  fillRect(x0 + 6, fy - 26, x1 - 6, fy - 22, rgb565(176, 182, 192));
+  for (int x = x0 + 30; x < x1 - 30; x += 56) fillRect(x - 18, fy - 52, x + 18, fy - 27, rgb565(186, 192, 202));
+  // on top: a chopping board, a knife, vegetables, a bowl
+  fillRect(x0 + 30, top - 6, x0 + 110, top - 1, rgb565(176, 132, 84));
+  fillRect(x0 + 60, top - 9, x0 + 100, top - 7, rgb565(220, 224, 230));
+  fillCircle(x0 + 140, top - 9, 9, rgb565(210, 40, 36));
+  fillCircle(x0 + 160, top - 8, 8, rgb565(220, 50, 40));
+  fillCircle(x0 + 186, top - 12, 12, rgb565(110, 190, 70));
+  int bx = x1 - 50;
+  int bxs[4] = { bx - 30, bx + 30, bx + 20, bx - 20 }, bys[4] = { top - 26, top - 26, top - 1, top - 1 };
+  fillPolygon(bxs, bys, 4, rgb565(236, 236, 230));
+  fillCircle(bx - 8, top - 28, 6, rgb565(240, 190, 60));
+  fillCircle(bx + 8, top - 29, 6, rgb565(250, 150, 40));
+}
+
+static void paintSink(int x0, int x1, int fy) {
+  int top = fy - 90;
+  fillRect(x0, top - 150, x1, top - 146, rgb565(176, 182, 192));             // a shelf of plates
+  for (int x = x0 + 12; x < x1 - 8; x += 14) fillRect(x, top - 186, x + 6, top - 150, rgb565(246, 246, 242));
+  fillRect(x0, top, x1, fy - 1, rgb565(176, 182, 192));                      // the unit, its doors
+  fillRect(x0, top, x1, top + 6, rgb565(220, 226, 232));
+  int mid = (x0 + x1) / 2;
+  fillRect(mid - 1, top + 10, mid + 1, fy - 6, rgb565(140, 146, 156));
+  fillRect(mid - 14, top + 30, mid - 9, top + 50, rgb565(110, 116, 126));
+  fillRect(mid + 9, top + 30, mid + 14, top + 50, rgb565(110, 116, 126));
+  fillRect(x0 + 16, top + 1, x0 + 96, top + 4, rgb565(70, 76, 86));          // the basin
+  int tx = x0 + 56;                                                         // the tap
+  fillRect(tx - 3, top - 44, tx + 3, top - 1, rgb565(210, 216, 224));
+  fillRect(tx - 3, top - 44, tx + 26, top - 38, rgb565(210, 216, 224));
+  fillRect(tx + 20, top - 38, tx + 26, top - 30, rgb565(210, 216, 224));
+  fillRect(x1 - 70, top - 40, x1 - 10, top - 1, rgb565(150, 156, 166));      // the dish rack
+  for (int x = x1 - 64; x < x1 - 14; x += 10) fillRect(x, top - 52, x + 5, top - 4, rgb565(246, 246, 242));
+}
+
+static void paintBox(int x0, int y1, int w, int h, int tone) {                 // a cardboard box standing on y1
+  int r = 176 - tone * 14, g = 128 - tone * 10, b = 74 - tone * 6;
+  fillRect(x0, y1 - h, x0 + w, y1 - 1, rgb565(r, g, b));
+  fillRect(x0, y1 - h, x0 + w, y1 - h + 2, rgb565(r + 30, g + 26, b + 20));
+  fillRect(x0 + w / 2 - 4, y1 - h, x0 + w / 2 + 4, y1 - h / 2, rgb565(r + 40, g + 36, b + 34));   // the tape
+  if (w > 40) fillRect(x0 + 6, y1 - h / 2 + 4, x0 + 26, y1 - h / 2 + 14, rgb565(240, 240, 232));    // a label
+}
+
+static void paintRack(int x0, int x1, int fy, int seed) {                     // shelving on the deck, full of stores
+  uint16_t post = rgb565(150, 156, 166);
+  int top = fy - 186;
+  fillRect(x0, top, x0 + 5, fy - 1, post);
+  fillRect(x1 - 5, top, x1, fy - 1, post);
+  for (int k = 0; k < 3; k++) {
+    int sy = fy - 6 - k * 62;
+    fillRect(x0, sy, x1, sy + 4, rgb565(176, 182, 192));
+    int x = x0 + 10, n = 0;
+    while (x < x1 - 30) {
+      int what = (seed + k * 3 + n * 7) % 5, w;
+      if (what <= 1) { w = 44 + (n % 2) * 14; paintBox(x, sy, w, 40 + (n % 3) * 6, (n + k) % 3); }
+      else if (what == 2) {                                                 // tins
+        w = 40;
+        for (int c = 0; c < 3; c++) {
+          fillRect(x + c * 13, sy - 22, x + c * 13 + 11, sy - 1, rgb565(170, 176, 186));
+          fillRect(x + c * 13, sy - 16, x + c * 13 + 11, sy - 8, (c + k) % 2 ? rgb565(200, 50, 40) : rgb565(240, 190, 50));
+        }
+      } else if (what == 3) {                                               // a sack
+        w = 46;
+        int sx[6] = { x + 4, x + 42, x + 46, x + 40, x + 6, x }, syy[6] = { sy - 50, sy - 50, sy - 20, sy - 1, sy - 1, sy - 20 };
+        fillPolygon(sx, syy, 6, rgb565(222, 210, 176));
+        drawVectorText(n % 2 ? "RICE" : "FLOUR", x + 23, sy - 26, 1.1f, rgb565(120, 96, 60), false);
+      } else {                                                              // jars
+        w = 36;
+        for (int c = 0; c < 3; c++) {
+          fillRect(x + c * 12, sy - 26, x + c * 12 + 10, sy - 1, rgb565(200, 220, 226));
+          fillRect(x + c * 12 + 1, sy - 18, x + c * 12 + 9, sy - 2, (c % 2) ? rgb565(200, 90, 40) : rgb565(120, 160, 60));
+          fillRect(x + c * 12, sy - 30, x + c * 12 + 10, sy - 26, rgb565(140, 100, 60));
+        }
+      }
+      x += w + 10;
+      n++;
+    }
+  }
+}
+
+static void paintKitchen() {
+  int dy = KITCHEN_DECK_Y;
+  // white tiles under the deck (behind the cooking)
+  fillRect(224, dy + PLAT_T, SCREEN_W - 1, ROOM_FLOOR_Y - 1, rgb565(238, 240, 242));
+  for (int y = dy + PLAT_T + 30; y < ROOM_FLOOR_Y; y += 30) fillRect(224, y, SCREEN_W - 1, y, rgb565(206, 212, 218));
+  for (int x = 240; x < SCREEN_W; x += 30) fillRect(x, dy + PLAT_T, x, ROOM_FLOOR_Y - 1, rgb565(206, 212, 218));
+  fillRect(224, ROOM_FLOOR_Y - 11, SCREEN_W - 1, ROOM_FLOOR_Y - 1, rgb565(186, 192, 200));
+  for (int x = 300; x < SCREEN_W - 40; x += 230) fillRect(x, dy + PLAT_T + 1, x + 90, dy + PLAT_T + 4, rgb565(250, 252, 255));   // lights under the deck
+  paintFridge(250, 400, ROOM_FLOOR_Y);
+  paintRange(440, 700, ROOM_FLOOR_Y);
+  paintPrepCounter(740, 990, ROOM_FLOOR_Y);
+  paintSink(1030, 1190, ROOM_FLOOR_Y);
+  // the deck: its stores, then the slab and its glass rail
+  paintRack(270, 520, dy, 1);
+  paintRack(560, 800, dy, 4);
+  paintBox(830, dy, 60, 54, 0);                // boxes stacked on the deck
+  paintBox(900, dy, 54, 46, 2);
+  paintBox(846, dy - 54, 50, 42, 1);
+  fillRect(820, dy - 8, 960, dy - 1, rgb565(150, 110, 70));   // a pallet of bottled water
+  for (int x = 912; x < 956; x += 11) {
+    fillRect(x, dy - 70, x + 9, dy - 9, rgb565(120, 180, 230));
+    fillRect(x + 2, dy - 76, x + 7, dy - 70, rgb565(40, 90, 200));
+  }
+  paintRack(990, 1240, dy, 2);
+  fillRect(224, dy, SCREEN_W - 1, dy + PLAT_T - 1, rgb565(196, 200, 208));
+  fillRect(224, dy, SCREEN_W - 1, dy + 2, rgb565(244, 246, 250));
+  fillRect(224, dy + PLAT_T - 3, SCREEN_W - 1, dy + PLAT_T - 1, rgb565(150, 156, 166));
+  drawVectorText("KITCHEN", 1020, 120, 5.0f, rgb565(60, 72, 96), true);
+  drawVectorText("STORES", 1020, 160, 2.2f, rgb565(110, 120, 140), false);
+}
+
+// A stage 2 room: white walls, the duct and stripe along the top; then what is in it (the kitchen; the rest empty for now)
+static void paintLabRoom() {
+  int idx = curRoom;
+  fillRect(0, HUD_H, SCREEN_W - 1, CEIL_Y - 1, rgb565(214, 218, 224));
+  for (int x = 40; x < SCREEN_W - 40; x += 180) fillRect(x, CEIL_Y - 8, x + 70, CEIL_Y - 4, rgb565(250, 252, 255));
+  labStripe(0, SCREEN_W - 1, CEIL_Y, CEIL_Y + 12);
+  labDuctBand(0, SCREEN_W - 1, CEIL_Y + 16, CEIL_Y + 58);
+  labWall(0, SCREEN_W - 1, CEIL_Y + 61, ROOM_FLOOR_Y - 1);
+  if (s2Kind[idx] == LK_KITCHEN) {
+    paintKitchen();
+  } else {
+    char b[24];
+    s2RoomName(idx, b, sizeof(b));
+    drawVectorText(b, SCREEN_W / 2, 300, 5.0f, rgb565(60, 72, 96), true);
+    snprintf(b, sizeof(b), "ACCESS LEVEL %d", s2Lvl[idx]);
+    drawVectorText(b, SCREEN_W / 2, 346, 2.2f, rgb565(110, 120, 140), false);
+  }
+  for (int i = 0; i < liftCount; i++) {        // a lift pad's shaft: a glass tube in a white frame
+    const Lift &l = lifts[i];
+    int top = shaftTop(l), bottom = l.stops[l.stopCount - 1];
+    fillRect(l.x0, top, l.x1 - 1, bottom - 1, rgb565(184, 206, 218));
+    for (int y = top + 20; y < bottom - 20; y += 90) drawLine(l.x0 + 12, y + 40, l.x1 - 14, y, rgb565(222, 238, 246), true);
+    fillRect(l.x0, top, l.x0 + 4, bottom - 1, rgb565(236, 238, 242));
+    fillRect(l.x1 - 5, top, l.x1 - 1, bottom - 1, rgb565(170, 176, 186));
+    fillRect(l.x0 - 4, top - 14, l.x1 + 3, top, rgb565(214, 218, 224));
+    fillRect(l.x0 - 4, top - 3, l.x1 + 3, top, rgb565(70, 170, 255));
+    for (int k = 0; k < l.stopCount; k++) {
+      fillRect(l.x0 - 6, l.stops[k] - 2, l.x0 - 1, l.stops[k] + 2, rgb565(200, 30, 30));
+      fillRect(l.x1, l.stops[k] - 2, l.x1 + 5, l.stops[k] + 2, rgb565(200, 30, 30));
+    }
+  }
+  labFloor(0, SCREEN_W - 1, ROOM_FLOOR_Y, PLAY_Y1);
+  paintLabSide(false, doorYL, true);
+  paintLabSide(true, doorYR, !rooms[idx].noRightDoor);
+}
+
 static void paintRoom() {
   gfxTarget = roomBg;
   gfxClipAll();
+  if (stage == 2 && curRoom < S2_ROOMS) {    // the lab's rooms
+    paintLabRoom();
+    gfxTarget = g_frame;
+    return;
+  }
   if (curRoom >= ROOM_COUNT) {               // QUANTUM CONTROL, the sub basement: their own
     if (curRoom == CONTROL_ROOM) paintControlRoom();
     else paintLoopStation(curRoom == ARRIVAL_ROOM);
@@ -2226,12 +2660,232 @@ static void drawVent(int fy, int cy) {
   fillPolygonF(xs, ys, 4, rgb565(110, 116, 128));
 }
 
+// ---- stage 2's lift areas: NUCLEAR MISSION's LAB walkways
+//                                torso head  armN elbN  armF elbF  legN  kneeN  legF  kneeF  footN footF spin plant lift
+static const AgentPose PERSON_IDLE = {  2,   0,   38,  48,   30,  58,    3,   -3,   -3,   -2,     0,    0,   0,   1,   0 };
+static const AgentPose PERSON_LIE  = {  0,   0,   20,  10,  -10,  15,    0,    0,    6,   -4,     0,    0, -90,   0, -53 };
+
+// Walking, as NUCLEAR MISSION's people do (t: seconds)
+static void personWalk(AgentPose &p, float t) {
+  p = PERSON_IDLE;
+  float s = sinf(t * 7.0f);
+  p.legN = 18 * s; p.kneeN = -10 - 10 * fmaxf(0, s);
+  p.legF = -18 * s; p.kneeF = -10 - 10 * fmaxf(0, -s);
+  p.armN = -16 * s; p.elbowN = 20; p.armF = 16 * s; p.elbowF = 20;
+  p.plant = 1;
+}
+
+static bool binLidUp() {
+  return s2Act == 3 && ((binPhase == 2 && binPT >= 0.15f) || (binPhase == 3 && binPT < 0.25f));
+}
+
+// The bin (big enough for a man): its front and lid
+static void drawBinFront(bool lidUp, int fy) {
+  int top = fy - BIN_H, x0 = BIN_X - 40, x1 = BIN_X + 40;
+  fillRect(x0, top, x1, fy - 8, rgb565(60, 110, 70));
+  fillRect(x0, top, x0 + 4, fy - 8, rgb565(90, 150, 100));
+  fillRect(x1 - 4, top, x1, fy - 8, rgb565(40, 80, 50));
+  for (int y = top + 16; y < fy - 16; y += 22) fillRect(x0, y, x1, y + 2, rgb565(44, 84, 52));
+  fillRect(BIN_X - 18, top + 30, BIN_X + 18, top + 44, rgb565(230, 230, 220));
+  drawVectorText("WASTE", BIN_X, top + 37, 1.2f, rgb565(40, 70, 46), false);
+  fillCircle(x0 + 12, fy - 7, 7, rgb565(30, 30, 34));
+  fillCircle(x1 - 12, fy - 7, 7, rgb565(30, 30, 34));
+  if (lidUp) {                               // hinged at the back, standing up
+    int lx[4] = { x1 + 4, x1 - 4, x1 - 12, x1 - 4 }, ly[4] = { top, top - 2, top - 80, top - 78 };
+    fillPolygon(lx, ly, 4, rgb565(50, 96, 60));
+    fillRect(x0, top - 3, x1, top, rgb565(20, 30, 22));
+  } else {
+    fillRect(x0 - 4, top - 9, x1 + 4, top, rgb565(50, 96, 60));
+    fillRect(BIN_X - 10, top - 13, BIN_X + 10, top - 9, rgb565(40, 70, 46));
+  }
+}
+
+// The maintenance man, on his walkway (fy: its floor on screen)
+static void drawWorker(int fy) {
+  if (wkState == WK_BINNED || bodyCarried) return;
+  AgentPose p = PERSON_IDLE;
+  int kind = wkState == WK_STRIPPED ? PK_MAINT_UNDIES : PK_MAINT;
+  float t = wkT;
+  switch (wkState) {
+    case WK_WAIT:                            // waiting for the lift: looking up at it now and then, tapping a foot
+      p.head = fmodf(clockT, 5.0f) < 2.0f ? -12 : 4;
+      p.armN = 20; p.elbowN = 70; p.armF = 16; p.elbowF = 74;
+      p.footN = fmodf(clockT, 0.8f) < 0.4f ? 10 : 0;
+      break;
+    case WK_SPOT:                            // he sees him: a start, hands up
+      p.armN = 150; p.elbowN = 40; p.armF = 140; p.elbowF = 50;
+      p.head = -10;
+      p.torso = -8;
+      break;
+    case WK_RUN:
+      agentSample(ANIM_RUN, t * (WK_RUN_SPEED / (RUN_SPEED * AGENT_SCALE)) * 1.6f, p);
+      break;
+    case WK_COWER:                           // cornered: crouched, arms over his head, shaking
+      p.legN = 80; p.kneeN = -120; p.legF = 50; p.kneeF = -100;
+      p.torso = 30 + 2 * sinf(clockT * 30); p.head = 20;
+      p.armN = 150; p.elbowN = 110; p.armF = 140; p.elbowF = 120;
+      p.plant = 1;
+      break;
+    case WK_FALL: {
+      float f = fminf(1.0f, t / 0.5f);
+      agentLerp(PERSON_IDLE, PERSON_LIE, f * f, p);
+      p.spin = -90 * f * f;
+      break;
+    }
+    default:                                 // out cold
+      p = PERSON_LIE;
+      break;
+  }
+  drawPersonU(p, wkX, (float)fy, wkFace, AGENT_SCALE, kind);
+  if (wkState == WK_SPOT) drawVectorTextW("!", wkX, fy - 196, 5.0f, rgb565(255, 70, 50), 3.0f);
+  if (wkState == WK_DOWN || wkState == WK_STRIPPED) {   // out cold: stars going round
+    for (int k = 0; k < 3; k++) {
+      float a = clockT * 3 + k * 2.09f;
+      fillCircle((int)(wkX - wkFace * 70 + cosf(a) * 18), (int)(fy - 40 + sinf(a) * 6), 3, rgb565(255, 230, 90));
+    }
+  }
+}
+
+// The lab's lift car: a glass-backed white cabin
+static void drawLabCar() {
+  int cx0 = SHAFT_X0 + 8, cx1 = SHAFT_X1 - 9, fy = CAR_FLOOR_Y, top = fy - 192;
+  for (int y = top + 12; y < fy; y++) {     // the glass back, lighter at the top
+    int k = (y - top) * 40 / 192;
+    fillRect(cx0 + 6, y, cx1 - 6, y, rgb565(170 - k, 206 - k, 222 - k));
+  }
+  drawLine(cx0 + 16, fy - 20, cx0 + 52, top + 30, rgb565(226, 242, 248), true);
+  drawLine(cx0 + 34, fy - 20, cx0 + 64, top + 70, rgb565(216, 236, 244), false);
+  fillRect(cx0, top, cx1, top + 11, rgb565(238, 240, 244));
+  fillRect(cx0, top + 9, cx1, top + 11, rgb565(70, 170, 255));
+  fillRect(cx0, top + 12, cx0 + 5, fy - 1, rgb565(232, 236, 240));
+  fillRect(cx1 - 5, top + 12, cx1, fy - 1, rgb565(232, 236, 240));
+  fillRect(cx0 + 5, top + 12, cx0 + 6, fy - 1, rgb565(170, 176, 186));
+  fillRect(cx1 - 6, top + 12, cx1 - 5, fy - 1, rgb565(170, 176, 186));
+  fillRect(cx0 + 6, fy - 72, cx1 - 6, fy - 69, rgb565(222, 226, 232));
+  int n = 0;                                 // the buttons: one a stop
+  for (int f = 0; f <= S2_ARRIVAL; f++) n += s2Stops(curShaft, f);
+  fillRect(cx1 - 18, top + 60, cx1 - 8, top + 66 + n * 12, rgb565(40, 44, 52));
+  for (int f = 0, k = 0; f <= S2_ARRIVAL; f++) {
+    if (!s2Stops(curShaft, f)) continue;
+    fillCircle(cx1 - 13, top + 68 + k * 12, 3, f == carFloor ? rgb565(90, 200, 255) : rgb565(140, 146, 156));
+    k++;
+  }
+  fillRect(cx0, fy, cx1, fy + 13, rgb565(206, 210, 218));
+  fillRect(cx0, fy, cx1, fy + 2, rgb565(246, 248, 250));
+  labStripe(cx0, cx1, fy + 9, fy + 13);
+  uint16_t lamp = carMoving ? rgb565(255, 170, 40) : rgb565(70, 170, 255);
+  fillRect((cx0 + cx1) / 2 - 8, top + 3, (cx0 + cx1) / 2 + 8, top + 6, lamp);
+}
+
+// A door at the far end of a walkway: shut (with the level its reader wants) or open; a sign beside it
+static void drawLabDoor(int side, int fy, int cy, int room) {
+  bool locked = s2Locked(room);
+  int x0 = side ? SCREEN_W - 22 : 0, x1 = side ? SCREEN_W - 1 : 21, top = fy - 168;
+  fillRect(side ? x0 - 8 : x1 + 1, top - 10, side ? x0 - 1 : x1 + 8, fy - 1, rgb565(180, 186, 194));
+  fillRect(x0, top - 10, x1, top - 1, rgb565(180, 186, 194));
+  if (locked) {
+    fillRect(x0, top, x1, fy - 1, rgb565(236, 238, 242));
+    fillRect(x0, top + 70, x1, top + 82, rgb565(200, 30, 30));
+  } else {
+    fillRect(x0, top, x1, fy - 1, rgb565(40, 46, 56));
+  }
+  char b[24];
+  int px0 = side ? SCREEN_W - 330 : 70, px1 = side ? SCREEN_W - 70 : 330;   // the sign: what is through it
+  if (room == ARRIVAL_ROOM) snprintf(b, sizeof(b), "QUANTUMLOOP");
+  else s2RoomName(room, b, sizeof(b));
+  fillRect(px0, cy + 28, px1, cy + 66, rgb565(40, 52, 76));
+  fillRect(px0 + 3, cy + 31, px1 - 3, cy + 63, rgb565(56, 72, 104));
+  drawVectorText(b, (px0 + px1) / 2, cy + 47, 2.6f, rgb565(240, 244, 250), true);
+  int ax = side ? px1 + 26 : px0 - 26, ay = cy + 47, d = side ? 1 : -1;   // an arrow to the door
+  int axs[3] = { ax + d * 12, ax - d * 6, ax - d * 6 }, ays[3] = { ay, ay - 11, ay + 11 };
+  fillPolygon(axs, ays, 3, rgb565(255, 220, 80));
+  if (room == ARRIVAL_ROOM) return;
+  int lx = side ? x0 - 30 : x1 + 14;         // the card reader beside it
+  fillRect(lx, fy - 94, lx + 14, fy - 70, rgb565(50, 54, 62));
+  fillRect(lx + 3, fy - 90, lx + 11, fy - 86, locked ? rgb565(255, 50, 40) : rgb565(60, 230, 110));
+  snprintf(b, sizeof(b), "L%d", s2Lvl[room]);
+  drawVectorText(b, lx + 7, fy - 58, 1.6f, locked ? rgb565(200, 30, 30) : rgb565(30, 150, 70), true);
+}
+
+// The lift area in stage 2: dark space, the shaft, and at each of this lift's levels its walkways
+// (white walls, duct, the stripe, glass rails), doors with card readers, first aid, bins
+static void drawLabShaft() {
+  auto screenY = [](int f) { return (int)lroundf(CAR_FLOOR_Y + (f * LEVEL_GAP - carWorldY)); };
+  int ts = topStop(curShaft), bs = bottomStop(curShaft);
+  fillRect(0, HUD_H, SCREEN_W - 1, PANEL_Y - 1, rgb565(14, 16, 22));
+  for (int x = 60; x < SCREEN_W; x += 150) fillRect(x, HUD_H, x + 5, PANEL_Y - 1, rgb565(22, 26, 34));
+  int capY = screenY(ts) - CORR_H - 100, pitY = screenY(bs) + 40;
+  // the shaft: steel rails down a dark well
+  fillRect(SHAFT_X0, HUD_H, SHAFT_X1 - 1, PANEL_Y - 1, rgb565(20, 24, 32));
+  fillRect(SHAFT_X0, HUD_H, SHAFT_X0 + 5, PANEL_Y - 1, rgb565(210, 214, 222));
+  fillRect(SHAFT_X1 - 6, HUD_H, SHAFT_X1 - 1, PANEL_Y - 1, rgb565(210, 214, 222));
+  fillRect(SHAFT_X0 + 6, HUD_H, SHAFT_X0 + 7, PANEL_Y - 1, rgb565(120, 126, 136));
+  fillRect(SHAFT_X1 - 8, HUD_H, SHAFT_X1 - 7, PANEL_Y - 1, rgb565(120, 126, 136));
+  float off = fmodf(carWorldY, 60.0f);
+  for (int k = -1; k < 12; k++) {
+    int y = (int)lroundf(HUD_H + k * 60 - off);
+    if (y > capY && y < pitY) drawLine(SHAFT_X0 + 10, y, SHAFT_X1 - 11, y, rgb565(36, 42, 54), false);
+  }
+  for (int L = 0; L <= S2_ARRIVAL; L++) {
+    if (!s2Stops(curShaft, L)) continue;
+    int fy = screenY(L), cy = fy - CORR_H;
+    if (fy + 40 < HUD_H || cy - 100 > PANEL_Y) continue;
+    char name[12];
+    s2LevelName(L, name, sizeof(name));
+    for (int side = 0; side < 2; side++) {
+      if (!s2Foyer(curShaft, L, side)) continue;
+      int x0 = side ? SHAFT_X1 : 0, x1 = side ? SCREEN_W - 1 : SHAFT_X0 - 1;
+      labDuctBand(x0, x1, cy - 92, cy - 38);
+      labStripe(x0, x1, cy - 34, cy - 20);
+      fillRect(x0, cy - 19, x1, cy, rgb565(214, 218, 224));
+      fillRect(x0, cy - 2, x1, cy, rgb565(170, 176, 184));
+      for (int x = x0 + 40; x < x1 - 40; x += 110) fillRect(x, cy - 6, x + 50, cy - 3, rgb565(250, 252, 255));
+      labWall(x0, x1, cy + 1, fy - 1);
+      int room = roomOff(curShaft, L, side == 1);
+      if (room >= 0) drawLabDoor(side, fy, cy, room);
+      else {                                   // the end of the walkway: a wall
+        int ex = side ? SCREEN_W - 14 : 0;
+        fillRect(ex, cy + 1, ex + 13, fy - 1, rgb565(186, 192, 200));
+        fillRect(side ? ex : ex + 11, cy + 1, side ? ex + 2 : ex + 13, fy - 1, rgb565(236, 238, 242));
+      }
+      labRail(x0, x1, fy);
+      labFloor(x0, x1, fy, fy + 22);
+      for (int x = x0; x < x1; x += 40) fillRect(x, fy + 22, x + 3, fy + 34, rgb565(70, 76, 86));
+      drawVectorText(name, side ? SHAFT_X1 + 70 : SHAFT_X0 - 70, cy + 34, 5.0f, rgb565(60, 72, 96), true);
+      labCallButtons(side ? SHAFT_X1 + 28 : SHAFT_X0 - 28, fy);
+      if (side == 0 && L != S2_ARRIVAL) labFirstAid(AID_X, fy - 92, s2Aid[curShaft][L]);
+      if (side == 0 && curShaft == 0 && L != S2_ARRIVAL) drawBinFront(L == wkFloor && binLidUp(), fy);
+    }
+    // the shaft's edges at this floor (red)
+    if (s2Foyer(curShaft, L, 0)) fillRect(SHAFT_X0 - 8, fy, SHAFT_X0 - 1, fy + 5, rgb565(200, 30, 30));
+    fillRect(SHAFT_X1, fy, SHAFT_X1 + 7, fy + 5, rgb565(200, 30, 30));
+    if (curShaft == 0 && L == wkFloor) drawWorker(fy);
+  }
+  // the head of the shaft and its bottom
+  if (capY >= HUD_H) {
+    fillRect(SHAFT_X0, HUD_H, SHAFT_X1 - 1, capY, rgb565(150, 156, 166));
+    labStripe(SHAFT_X0, SHAFT_X1 - 1, capY - 12, capY);
+  }
+  if (pitY <= PANEL_Y) {
+    fillRect(SHAFT_X0, pitY, SHAFT_X1 - 1, PANEL_Y - 1, rgb565(30, 32, 38));
+    fillRect(SHAFT_X0, pitY, SHAFT_X1 - 1, pitY + 3, rgb565(80, 86, 96));
+  }
+  int cableTop = capY > HUD_H ? capY : HUD_H;
+  drawLine(SHAFT_X0 + 30, cableTop, SHAFT_X0 + 30, CAR_FLOOR_Y - 192, rgb565(190, 196, 206), false);
+  drawLine(SHAFT_X1 - 31, cableTop, SHAFT_X1 - 31, CAR_FLOOR_Y - 192, rgb565(190, 196, 206), false);
+  drawLabCar();
+}
+
 // A door on this side of the shaft at the car's floor? (side 0 = left)
 static bool sideDoor(int side) { return roomOff(curShaft, carFloor, side == 1) >= 0; }
 
 // The shaft: walls on both sides, and a catwalk out to each door - only at
 // the floors where there is one. The car stays put on screen; all this scrolls.
 static void drawShaftScene() {
+  if (stage == 2) {                    // the QUANTUM LAB's lift areas
+    drawLabShaft();
+    return;
+  }
   uint16_t deck = rgb565(80, 86, 98), deckHi = rgb565(150, 156, 168), truss = rgb565(54, 60, 72);
   uint16_t beam = rgb565(60, 66, 78), lamp = rgb565(255, 220, 140), rail = rgb565(110, 116, 130);
   auto screenY = [](int f) { return (int)lroundf(CAR_FLOOR_Y + (f * LEVEL_GAP - carWorldY)); };
@@ -2326,9 +2980,14 @@ static void drawShaftScene() {
 // The two rooms that aren't random: one level, just the floor
 static const WideRoom controlRoomT = { "QUANTUM CONTROL", 1, { { 0, SCREEN_W, ROOM_FLOOR_Y } }, 0, {}, 0, {}, 0, {}, 640, 0 };
 static const WideRoom subRoomT = { "SUB BASEMENT", 1, { { 0, SCREEN_W, ROOM_FLOOR_Y } }, 0, {}, 0, {}, 0, {}, 640, 0 };
+// Stage 2's: an empty lab room (one level), the kitchen (the floor, a deck for its stores, a lift pad up to it)
+static const WideRoom labRoomT = { "LAB", 1, { { 0, SCREEN_W, ROOM_FLOOR_Y } }, 0, {}, 0, {}, 0, {}, 640, 300 };
+static const WideRoom kitchenT = { "KITCHEN", 2, { { 0, SCREEN_W, ROOM_FLOOR_Y }, { 220, SCREEN_W, KITCHEN_DECK_Y } },
+                                   1, { { 140, 220, { KITCHEN_DECK_Y, ROOM_FLOOR_Y }, 2 } }, 0, {}, 0, {}, 1020, 120 };
 static const WideRoom &roomTemplate(int idx) {
   if (idx == CONTROL_ROOM) return controlRoomT;
   if (idx == SUB_ROOM || idx == ARRIVAL_ROOM) return subRoomT;
+  if (stage == 2 && idx < S2_ROOMS) return s2Kind[idx] == LK_KITCHEN ? kitchenT : labRoomT;
   return wideRooms[rooms[idx].tpl];
 }
 
@@ -2364,7 +3023,8 @@ static void buildRoom(int idx, bool fromLeft) {
   signX = t.signX;
   signY = t.signY;
   placeDecor(ri, t);
-  placeOrnaments(ri);
+  if (stage == 2 && idx < S2_ROOMS) ornCount = 0;   // (the lab: none of stage 1's lights and fans)
+  else placeOrnaments(ri);
 }
 
 static void placeAgent(float x, float y, int facing) {
@@ -2448,6 +3108,14 @@ static void enterRoom(int idx, bool fromLeft) {
     c.view = 0;
   }
   resetHazardsForEntry(fromLeft);
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_KITCHEN) {   // the chef: on one of his paths, walking away from the door
+    chefPath = fxRnd(0, 2);
+    float a = chefPath ? 420.0f : 330.0f, b = chefPath ? 1180.0f : 1100.0f;
+    chefDir = fromLeft ? 1 : -1;
+    chefX = fromLeft ? a + 140 : b - 140;
+    chefPause = 0;
+    chefT = 0;
+  }
 }
 
 static void enterShaft(int s, int f, bool fromLeft) {
@@ -2478,8 +3146,13 @@ static void leaveThroughEdge(bool right) {
     enterShaft(subShaft, SUB_FLOOR, false);
     return;
   }
-  if (curRoom == ARRIVAL_ROOM) {            // stage 2: out to its lift area
-    enterShaft(0, S2_FLOOR, false);
+  if (curRoom == ARRIVAL_ROOM) {            // stage 2: out to lift A, under its first level
+    enterShaft(0, S2_ARRIVAL, false);
+    return;
+  }
+  if (stage == 2) {                         // a lab room: its lift on the left, the next one on the right
+    if (right) enterShaft(ri.col + 1, ri.row, true);
+    else enterShaft(ri.col, ri.row, false);
     return;
   }
   if (right) enterShaft(ri.col + 1, ri.row * 2 + (ri.topR ? 0 : 1), true);
@@ -2566,18 +3239,23 @@ static float headroom(float x0, float x1, float y) {
 static bool inCar(float x) { return mode == MODE_SHAFT && x > SHAFT_X0 + 14 && x < SHAFT_X1 - 14; }
 
 static bool exitOpen(bool right) {
-  if (mode == MODE_SHAFT) return !carMoving && roomOff(curShaft, carFloor, right) >= 0;
+  if (mode == MODE_SHAFT) {
+    int r = roomOff(curShaft, carFloor, right);
+    return !carMoving && r >= 0 && !(stage == 2 && s2Locked(r));   // (stage 2: the card reader)
+  }
   if (right && rooms[curRoom].noRightDoor) return false;
   if (!right && curRoom == SUB_ROOM && stage == 2) return false;   // (stage 2 begun: no way back up)
   return fabsf(agY - (right ? doorYR : doorYL)) < 0.5f;
 }
 
+// A walkway on this side of the shaft (stage 2: on both sides at most levels, a door or not)
+static bool sideWalk(int side) { return stage == 2 ? s2Foyer(curShaft, carFloor, side) : sideDoor(side); }
 static float edgeMin() {
-  if (mode == MODE_SHAFT && !sideDoor(0)) return SHAFT_X0 + 20;   // no door on this side: the wall
+  if (mode == MODE_SHAFT && !sideWalk(0)) return SHAFT_X0 + 20;   // no door on this side: the wall
   return 34.0f * myScale;
 }
 static float edgeMax() {
-  if (mode == MODE_SHAFT && !sideDoor(1)) return SHAFT_X1 - 20;
+  if (mode == MODE_SHAFT && !sideWalk(1)) return SHAFT_X1 - 20;
   return SCREEN_W - 34.0f * myScale;
 }
 
@@ -2940,6 +3618,277 @@ static void useLoopDoor() {
   sfxPlay(SFX_DOORS);
 }
 
+// ---- stage 2: card readers, first aid on the walkways, the maintenance man, the chef
+// Walked into a door his card won't open: what it needs
+static void s2Bump(bool right) {
+  if (stage != 2 || mode != MODE_SHAFT || s2BumpT > 0) return;
+  int r = roomOff(curShaft, carFloor, right);
+  if (r < 0 || !s2Locked(r)) return;
+  char b[48];
+  snprintf(b, sizeof(b), "ACCESS LEVEL %d REQUIRED", s2Lvl[r]);
+  showMsg(b, 2.0f);
+  sfxPlay(SFX_DENIED);
+  s2BumpT = 1.5f;
+}
+
+static bool onWalkway() { return stage == 2 && mode == MODE_SHAFT && !carMoving && fabsf(agY - CAR_FLOOR_Y) < 0.5f; }
+static bool atWorker() {                     // close enough to knock him out
+  return onWalkway() && curShaft == 0 && carFloor == wkFloor && wkState <= WK_COWER && fabsf(agX - wkX) < KNOCK_RANGE;
+}
+static bool atBody() {                       // beside him, out cold (to search him, then to bin him)
+  return onWalkway() && curShaft == 0 && carFloor == wkFloor && (wkState == WK_DOWN || wkState == WK_STRIPPED) && fabsf(agX - wkX) < 100;
+}
+static bool atFoyerAid() {
+  return onWalkway() && carFloor != S2_ARRIVAL && s2Foyer(curShaft, carFloor, 0) && fabsf(agX - AID_X) < 45;
+}
+static void useFoyerAid() {
+  bool &used = s2Aid[curShaft][carFloor];
+  if (used) {
+    showMsg("THE FIRST AID CABINET IS EMPTY", 2.0f);
+    sfxPlay(SFX_CLUNK);
+  } else if (health >= HEALTH_MAX) {
+    showMsg("HEALTH FULL", 1.6f);
+  } else {
+    used = true;
+    health = HEALTH_MAX;
+    nKitsUsed++;
+    showMsg("HEALTH RESTORED", 2.0f);
+    sfxPlay(SFX_FANFARE);
+  }
+}
+
+static void startS2Act(int what) {
+  s2Act = (uint8_t)what;
+  s2ActT = 0;
+  binPhase = 0;
+  binPT = 0;
+  agFacing = wkX < agX ? -1 : 1;
+  agState = ST_IDLE;
+  agVX = 0;
+  sfxPlay(SFX_CLICK);
+}
+
+// What he does instead of moving: knocking the maintenance man out, searching him (his card, his
+// overalls), and carrying him to the bin (NUCLEAR MISSION's). The pose is set here.
+static void updateS2Act(float dt) {
+  float before = s2ActT;
+  s2ActT += dt;
+  float t = s2ActT;
+  AgentPose &p = shownPose;
+  p = PERSON_IDLE;
+  if (s2Act == 1) {                          // the knock out: arm up and down
+    if (t < 0.25f) {
+      float k = t / 0.25f;
+      p.armN = 30 + 140 * k; p.elbowN = 50;
+      p.torso = -4 * k;
+    } else if (t < 0.42f) {
+      float k = (t - 0.25f) / 0.17f;
+      p.armN = 170 - 110 * k; p.elbowN = 50 - 40 * k;
+      p.torso = -4 + 14 * k;
+    } else {
+      p.armN = 50; p.elbowN = 20; p.torso = 6;
+    }
+    if (before < 0.33f && t >= 0.33f) {    // down he goes: the countdown to him being found
+      wkState = WK_FALL;
+      wkT = 0;
+      sfxPlay(SFX_HIT);
+      sfxPlay(SFX_CLUNK);
+      addScore(500, wkX, CAR_FLOOR_Y - 170);
+      bodyT = BODY_FOUND_SECONDS;
+    }
+    if (t >= 0.9f) {
+      s2Act = 0;
+      showMsg("HE'LL BE FOUND IN 1 MINUTE - SEARCH HIM", 3.5f);
+      setState(ST_IDLE, 0.2f);
+    }
+  } else if (s2Act == 2) {                   // searching him: crouched over him, then changing
+    p.legN = 80; p.kneeN = -120; p.legF = 50; p.kneeF = -100;
+    p.torso = 30 + 6 * sinf(t * 12); p.armN = 70 + 30 * sinf(t * 9); p.elbowN = 40; p.armF = 60; p.elbowF = 40;
+    p.plant = 1;
+    if ((int)(before / SEARCH_BEEP_SECONDS) != (int)(t / SEARCH_BEEP_SECONDS) && t < 1.1f) sfxPlay(SFX_BEEP);
+    if (before < 1.1f && t >= 1.1f) {      // his card, his overalls
+      s2Card = s2Card > 1 ? s2Card : 1;
+      s2Disguised = true;
+      wkState = WK_STRIPPED;
+      sfxPlay(SFX_FOUND);
+    }
+    if (t >= 1.7f) {
+      s2Act = 0;
+      addScore(1000, agX, CAR_FLOOR_Y - 170);
+      sfxPlay(SFX_FANFARE);
+      showMsg("LEVEL 1 ACCESS CARD - DISGUISED AS MAINTENANCE", 4.0f);
+      setState(ST_IDLE, 0.2f);
+    }
+  } else if (s2Act == 3) {                   // into the bin with him
+    binPT += dt;
+    const float target = BIN_X - 58;
+    switch (binPhase) {
+      case 0:                                // crouch and lift him
+        agFacing = wkX < agX ? -1 : 1;
+        p.legN = 80; p.kneeN = -120; p.legF = 50; p.kneeF = -100;
+        p.torso = 30; p.armN = 80; p.elbowN = 30; p.armF = 70; p.elbowF = 30;
+        p.plant = 1;
+        if (binPT >= 0.7f) { binPhase = 1; binPT = 0; bodyCarried = true; sfxPlay(SFX_CLUNK); }
+        break;
+      case 1: {                              // carry him over to the bin
+        int dir = target > agX ? 1 : -1;
+        agFacing = dir;
+        agX += dir * 130.0f * dt;
+        float sn = sinf(binPT * 9.0f);
+        p.legN = 20 * sn; p.kneeN = -12 - 12 * fmaxf(0, sn);
+        p.legF = -20 * sn; p.kneeF = -12 - 12 * fmaxf(0, -sn);
+        p.armN = 160; p.elbowN = 50; p.armF = 150; p.elbowF = 50;
+        p.plant = 1;
+        if ((dir > 0 && agX >= target) || (dir < 0 && agX <= target)) { agX = target; binPhase = 2; binPT = 0; }
+        if ((int)((binPT - dt) * 4) != (int)(binPT * 4)) sfxPlay(SFX_STEP);
+        break;
+      }
+      case 2:                                // lid up, and in he goes
+        agFacing = 1;
+        p.armN = 160 - 40 * fminf(1.0f, binPT / 0.8f); p.elbowN = 30; p.armF = 150 - 40 * fminf(1.0f, binPT / 0.8f); p.elbowF = 30;
+        p.torso = 10 * fminf(1.0f, binPT / 0.8f);
+        if (binPT - dt < 0.15f && binPT >= 0.15f) sfxPlay(SFX_CLUNK);
+        if (binPT >= 0.85f && bodyCarried) { bodyCarried = false; wkState = WK_BINNED; sfxPlay(SFX_LAND); }
+        if (binPT >= 1.0f) { binPhase = 3; binPT = 0; }
+        break;
+      default:                               // the lid comes down: the countdown is the mission's again
+        p.armN = 60; p.elbowN = 20; p.torso = 4;
+        if (binPT - dt < 0.25f && binPT >= 0.25f) sfxPlay(SFX_CLUNK);
+        if (binPT >= 0.6f) {
+          s2Act = 0;
+          bodyT = -1;
+          addScore(500, BIN_X, CAR_FLOOR_Y - 150);
+          showMsg("HIDDEN IN THE BIN - NOBODY WILL FIND HIM", 3.0f);
+          setState(ST_IDLE, 0.2f);
+        }
+        break;
+    }
+  }
+  held = pressed = 0;
+}
+
+// The maintenance man: waiting for lift A; when the car stops at his level he runs for the end of
+// the walkway and cowers there
+static void updateWorker(float dt) {
+  wkT += dt;
+  bool here = mode == MODE_SHAFT && curShaft == 0 && carFloor == wkFloor && !carMoving;
+  switch (wkState) {
+    case WK_WAIT:
+      if (here) {
+        wkState = WK_SPOT;
+        wkT = 0;
+        wkFace = 1;
+      }
+      break;
+    case WK_SPOT:
+      if (wkT >= 0.45f) {
+        wkState = WK_RUN;
+        wkT = 0;
+        wkFace = -1;
+      }
+      break;
+    case WK_RUN: {
+      float p0 = fmodf((wkT - dt) * 2.6f, 1.0f), p1 = fmodf(wkT * 2.6f, 1.0f);
+      if (p1 < p0 && here) sfxPlay(SFX_STEP);
+      wkX -= WK_RUN_SPEED * dt;
+      if (wkX <= WK_CORNER_X) {
+        wkX = WK_CORNER_X;
+        wkState = WK_COWER;
+        wkT = 0;
+        wkFace = 1;
+      }
+      break;
+    }
+    case WK_FALL:
+      if (wkT >= 0.5f) wkState = WK_DOWN;
+      break;
+  }
+}
+
+// The kitchen's chef: back and forth along his path, a pause at each end (busy at the counter, the shelves)
+static void updateChef(float dt) {
+  chefT += dt;
+  float a = chefPath ? 420.0f : 330.0f, b = chefPath ? 1180.0f : 1100.0f;
+  if (chefPause > 0) {
+    chefPause -= dt;
+    if (chefPause <= 0) chefDir = -chefDir;
+    return;
+  }
+  chefX += chefDir * CHEF_SPEED * dt;
+  if ((chefDir > 0 && chefX >= b) || (chefDir < 0 && chefX <= a)) {
+    chefX = clampv(chefX, a, b);
+    chefPause = 1.8f;
+  }
+}
+
+static void drawChef() {
+  AgentPose p;
+  if (chefPause > 0) {                       // busy: reaching forward, working
+    p = PERSON_IDLE;
+    p.armN = 70 + 12 * sinf(chefT * 8); p.elbowN = 50; p.armF = 60 + 10 * sinf(chefT * 8 + 1.5f); p.elbowF = 56;
+    p.torso = 8;
+    p.head = 10;
+  } else {
+    personWalk(p, chefT);
+  }
+  drawPersonU(p, chefX, chefPath ? (float)KITCHEN_DECK_Y : (float)ROOM_FLOOR_Y, chefDir, AGENT_SCALE, PK_CHEF);
+}
+
+// The maintenance man over his shoulder, or going into the bin (drawn after him)
+static void drawCarriedBody() {
+  if (s2Act != 3 || !(bodyCarried || binPhase == 2)) return;
+  if (binPhase == 2 && !bodyCarried) { drawBinFront(true, CAR_FLOOR_Y); return; }
+  float x = agX - agFacing * 6, y = agY - 100;
+  if (binPhase == 2) {                       // up and over the rim, and down inside
+    float k = fminf(1.0f, binPT / 0.85f), top = CAR_FLOOR_Y - BIN_H;
+    if (k < 0.5f) {
+      float e = k / 0.5f;
+      x = x + (BIN_X - x) * e;
+      y = y + ((top - 26) - y) * e;
+    } else {
+      float e = (k - 0.5f) / 0.5f;
+      x = BIN_X;
+      y = (top - 26) + 90 * e * e;
+    }
+  }
+  AgentPose b = PERSON_LIE;
+  if (binPhase == 2) b.spin = -90 - 70 * fminf(1.0f, binPT / 0.85f);
+  drawPersonU(b, x, y, agFacing, AGENT_SCALE, PK_MAINT_UNDIES);
+  if (binPhase == 2) drawBinFront(true, CAR_FLOOR_Y);
+}
+
+// What X / SQUARE would do here (stage 2's lift areas)
+static void drawS2Prompts() {
+  if (s2Act || agState != ST_IDLE || gameOver != END_NONE) return;
+  const char *t = NULL;
+  float x = agX;
+  if (atWorker()) t = "X: KNOCK OUT";
+  else if (atBody()) t = wkState == WK_DOWN ? "SQUARE: SEARCH" : "SQUARE: INTO THE BIN";
+  else if (atFoyerAid() && !s2Aid[curShaft][carFloor]) t = "SQUARE: FIRST AID";
+  if (!t) return;
+  float w = vectorTextWidth(t, 2.4f);
+  x = clampv(x, w / 2 + 24, SCREEN_W - w / 2 - 24);
+  blendRect((int)(x - w / 2 - 10), CAR_FLOOR_Y - 196, (int)(x + w / 2 + 10), CAR_FLOOR_Y - 172, 0, 0, 0, 0.55f);
+  drawVectorText(t, x, CAR_FLOOR_Y - 184, 2.4f, rgb565(255, 220, 120), true);
+}
+
+// Each frame of play in stage 2
+static void updateStage2(float dt) {
+  if (s2BumpT > 0) s2BumpT -= dt;
+  updateWorker(dt);
+  if (mode == MODE_ROOM && curRoom < S2_ROOMS && s2Kind[curRoom] == LK_KITCHEN) updateChef(dt);
+  if (bodyT >= 0) {                          // he'll be found
+    float was = bodyT;
+    bodyT -= dt;
+    if (bodyT <= 10 && (int)ceilf(was) != (int)ceilf(bodyT)) sfxPlay(SFX_WARN);
+    if (bodyT <= 0) {
+      bodyT = 0;
+      sfxPlay(SFX_ALARM);
+      endGame(END_BODY);
+    }
+  }
+}
+
 static void updateAgent(float dt) {
   bool L = held & BTN_LEFT, R = held & BTN_RIGHT;
   int want = (R && !L) ? 1 : ((L && !R) ? -1 : 0);
@@ -2966,9 +3915,15 @@ static void updateAgent(float dt) {
         setState(ST_LIFT, 0.1f);
       } else if (upDown != 0 && agLift < 0 && mode == MODE_ROOM && summonLift()) {
         // (the pad is on its way: he waits)
+      } else if ((pressed & BTN_JUMP) && atWorker()) {
+        startS2Act(1);                  // stage 2: knock the maintenance man out
       } else if (pressed & BTN_JUMP) {
         if (want) agFacing = want;
         startJump();
+      } else if ((pressed & BTN_USE) && atBody()) {
+        startS2Act(wkState == WK_DOWN ? 2 : 3);   // ...search him, then into the bin with him
+      } else if ((pressed & BTN_USE) && atFoyerAid()) {
+        useFoyerAid();                  // ...the walkway's first aid cabinet
       } else if ((pressed & BTN_USE) && atLoopPower()) {
         useLoopPower();                 // the QUANTUMLOOP's power...
       } else if ((pressed & BTN_USE) && atLoopDoor()) {
@@ -2996,10 +3951,16 @@ static void updateAgent(float dt) {
         agFacing = want;
         bool blocked = (want > 0) ? (agX >= edgeMax() && !exitOpen(true)) : (agX <= edgeMin() && !exitOpen(false));
         if (!blocked) setState(ST_RUN, BLEND_SECONDS);
+        else s2Bump(want > 0);          // (stage 2: a door his card won't open)
       }
       break;
 
     case ST_RUN: {
+      if ((pressed & BTN_JUMP) && atWorker()) {
+        setState(ST_IDLE, 0.1f);
+        startS2Act(1);
+        break;
+      }
       if (pressed & BTN_JUMP) {
         startJump();
         break;
@@ -3014,6 +3975,7 @@ static void updateAgent(float dt) {
       if (agX > SCREEN_W + 6 && exitOpen(true)) { leaveThroughEdge(true); return; }
       bool openSide = (agFacing > 0) ? exitOpen(true) : exitOpen(false);
       if (!openSide && (agX <= edgeMin() || agX >= edgeMax())) {
+        s2Bump(agFacing > 0);
         agX = clampv(agX, edgeMin(), edgeMax());
         setState(ST_IDLE, 0.15f);
         break;
@@ -4160,10 +5122,17 @@ static void drawHud() {
   float w = vectorTextWidth(b, 2.6f);
   drawVectorText(b, 24 + w / 2, HUD_H / 2, 2.6f, rgb565(240, 240, 245), true);
   // the clock (red in the last minute, flashing in the last ten seconds)
+  if (bodyT >= 0) {                      // stage 2: the maintenance man will be found (in the bin: the mission's clock again)
+    int bs = (int)ceilf(bodyT);
+    snprintf(b, sizeof(b), "BODY FOUND IN %d:%02d", bs / 60, bs % 60);
+    bool fl = bs <= 10 && fmodf(clockT, 0.5f) < 0.25f;
+    drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 2.8f, fl ? rgb565(120, 30, 24) : rgb565(255, 70, 50), true);
+  } else {
   int secs = (int)ceilf(timeLeft > 0 ? timeLeft : 0);
   snprintf(b, sizeof(b), "%d:%02d", secs / 60, secs % 60);
   bool lastMin = secs <= 60, flash = secs <= 10 && fmodf(clockT, 0.5f) < 0.25f;
   drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 3.2f, flash ? rgb565(120, 30, 24) : (lastMin ? rgb565(255, 70, 50) : rgb565(255, 190, 70)), true);
+  }
   // the health bar
   int hx1 = SCREEN_W - 26, hx0 = hx1 - 200, hy0 = HUD_H / 2 - 8, hy1 = HUD_H / 2 + 8;
   drawVectorText("HEALTH", hx0 - 50, HUD_H / 2, 2.2f, rgb565(170, 178, 196), false);
@@ -4194,6 +5163,66 @@ static void drawArrowKey(int cx, int cy, bool up, bool lit) {
   fillPolygon(xs, ys, 7, lit ? rgb565(255, 220, 80) : rgb565(150, 130, 60));
 }
 
+// Stage 2's map: lifts A..F, the rooms on their right (filled once he's been in), the corridors
+// between; him blinking. big: the OPTIONS map (names, access levels)
+static void drawLabMap(int x0, int y0, int x1, int y1, bool big, uint16_t ink, uint16_t paper) {
+  int RW = big ? 128 : 54, SW = big ? 40 : 16, RH = big ? 50 : 12, GAP = big ? 20 : 6;
+  int mw = S2_LIFTS * (RW + SW), mh = (S2_LEVELS + 1) * RH + S2_LEVELS * GAP;
+  int left = (x0 + x1 - mw) / 2, top = (y0 + y1 - mh) / 2;
+  auto rowY = [&](int f) { return top + f * (RH + GAP); };
+  auto shaftX = [&](int s) { return left + s * (RW + SW) + SW / 2; };
+  for (int s = 0; s < S2_LIFTS; s++) {
+    int lo = topStop(s), hi = bottomStop(s);
+    int x = shaftX(s);
+    fillRect(x - (big ? 2 : 1), rowY(lo) + 2, x + (big ? 2 : 1), rowY(hi) + RH - 2, ink);
+    if (big) {
+      char b[2] = { (char)('A' + s), 0 };
+      drawVectorText(b, x, rowY(lo) - 22, 3.0f, ink, true);
+    }
+  }
+  for (int f = 0; f <= S2_ARRIVAL; f++)
+    for (int s = 0; s < S2_LIFTS; s++) {
+      int idx = f == S2_ARRIVAL ? (s == 0 ? ARRIVAL_ROOM : -1) : s2Room[s][f];
+      if (idx < 0) continue;
+      int rx = shaftX(s) + SW / 2 + 2, ry = rowY(f), cyy = ry + RH / 2;
+      int rx1 = rx + RW - 4;
+      bool seen = idx == ARRIVAL_ROOM || rooms[idx].visited;
+      fillRect(shaftX(s), cyy - (big ? 1 : 0), rx, cyy + (big ? 1 : 0), ink);            // the corridor from its lift...
+      if (idx != ARRIVAL_ROOM && !rooms[idx].noRightDoor) fillRect(rx1, cyy - (big ? 1 : 0), shaftX(s + 1), cyy + (big ? 1 : 0), ink);   // ...and to the next
+      if (seen) fillRect(rx, ry, rx1, ry + RH - 1, ink);
+      else drawRectOutline(rx, ry, rx1, ry + RH - 1, ink, big ? 2 : 1);
+      if (big) {
+        char b[24];
+        if (idx == ARRIVAL_ROOM) snprintf(b, sizeof(b), "QUANTUMLOOP");
+        else if (seen || s2Kind[idx] != LK_LAB) s2RoomName(idx, b, sizeof(b));
+        else snprintf(b, sizeof(b), "LEVEL %d", s2Lvl[idx]);
+        drawVectorText(b, (rx + rx1) / 2.0f, cyy - (idx == ARRIVAL_ROOM ? 0 : 8), 1.5f, seen ? paper : ink, false);
+        if (idx != ARRIVAL_ROOM) {
+          snprintf(b, sizeof(b), s2Locked(idx) ? "LOCKED L%d" : "L%d", s2Lvl[idx]);
+          drawVectorText(b, (rx + rx1) / 2.0f, cyy + 12, 1.3f, seen ? paper : ink, false);
+        }
+      } else if (idx != ARRIVAL_ROOM && s2Kind[idx] == LK_KITCHEN) {
+        drawVectorText("K", (rx + rx1) / 2.0f, (float)cyy, 1.2f, seen ? paper : ink, false);
+      }
+    }
+  if (fmodf(clockT, 0.6f) < 0.4f) {           // him
+    float x, y;
+    if (mode == MODE_SHAFT) {
+      x = (float)shaftX(curShaft);
+      float f = carWorldY / LEVEL_GAP;
+      int f0 = (int)f;
+      y = rowY(f0) + RH / 2 + (rowY(f0 + 1) - rowY(f0)) * (f - f0);
+    } else {
+      int c = curRoom == ARRIVAL_ROOM ? 0 : rooms[curRoom].col, r = curRoom == ARRIVAL_ROOM ? S2_ARRIVAL : rooms[curRoom].row;
+      x = shaftX(c) + SW / 2 + 2 + (RW - 4) / 2.0f;
+      y = rowY(r) + RH / 2.0f;
+    }
+    int d = big ? 7 : 3;
+    fillRect((int)x - d, (int)y - d, (int)x + d, (int)y + d, rgb565(250, 250, 240));
+    drawRectOutline((int)x - d - 1, (int)y - d - 1, (int)x + d + 1, (int)y + d + 1, big ? rgb565(255, 70, 50) : ink, 1);
+  }
+}
+
 static void drawMiniMap(int x0, int y0, int x1, int y1) {
   // the screen: a black bezel, a striped frame, yellow inside
   fillRect(x0, y0, x1, y1, rgb565(10, 10, 12));
@@ -4221,9 +5250,8 @@ static void drawMiniMap(int x0, int y0, int x1, int y1) {
     }
   int gx0 = fx0 + 8, gy0 = fy0 + 8, gx1 = fx1 - 8, gy1 = fy1 - 8;
   fillRect(gx0, gy0, gx1, gy1, rgb565(236, 206, 64));            // the screen: yellow
-  if (stage == 2) {                                               // (stage 2: no map yet)
-    drawVectorText("STAGE 2", (gx0 + gx1) / 2, (gy0 + gy1) / 2 - 14, 4.0f, rgb565(40, 30, 10), true);
-    drawVectorText("QUANTUM LAB", (gx0 + gx1) / 2, (gy0 + gy1) / 2 + 28, 2.4f, rgb565(40, 30, 10), true);
+  if (stage == 2) {                                               // the QUANTUM LAB
+    drawLabMap(gx0, gy0, gx1, gy1, false, rgb565(40, 30, 10), rgb565(236, 206, 64));
     return;
   }
   // the complex, scaled into the screen: the rooms you've been in, the shafts as far as you've seen them
@@ -4275,10 +5303,13 @@ static void drawPanel() {
   // on the left: where you are, and the car's arrows
   bevelBox(20, PANEL_Y + 16, 372, SCREEN_H - 18, rgb565(70, 78, 120));
   char b[40];
-  if (stage == 2) snprintf(b, sizeof(b), "LIFT Q");
-  else snprintf(b, sizeof(b), "LIFT %c", shaftLetter(curShaft));
+  snprintf(b, sizeof(b), "LIFT %c", shaftLetter(curShaft));
   drawVectorText(b, 150, PANEL_Y + 62, 4.2f, rgb565(255, 220, 80), true);
-  if (stage == 2) snprintf(b, sizeof(b), "FLOOR Q%d", carFloor + 1);
+  if (stage == 2) {
+    char n[12];
+    s2LevelName(carFloor, n, sizeof(n));
+    snprintf(b, sizeof(b), "LEVEL %s", n);
+  }
   else if (carFloor == SUB_FLOOR) snprintf(b, sizeof(b), "FLOOR SB");
   else snprintf(b, sizeof(b), "FLOOR %d", carFloor + 1);
   drawVectorText(b, 150, PANEL_Y + 112, 3.4f, rgb565(230, 236, 245), true);
@@ -4298,6 +5329,27 @@ static void drawPanel() {
     drawVectorText(label, lx + vectorTextWidth(label, 2.4f) / 2, y, 2.4f, rgb565(190, 200, 220), false);
     drawVectorText(value, SCREEN_W - 44 - vectorTextWidth(value, 2.8f) / 2, y, 2.8f, col, true);
   };
+  if (stage == 2) {                            // the lab: rooms, his card, his disguise, the cabinets left
+    seen = 0;
+    int aid = 0;
+    for (int i = 0; i < S2_ROOMS; i++) seen += rooms[i].visited;
+    for (int s2 = 0; s2 < S2_LIFTS; s2++)
+      for (int f = 0; f < S2_LEVELS; f++) aid += s2Stops(s2, f) && !s2Aid[s2][f];
+    snprintf(b, sizeof(b), "%d/%d", seen, S2_ROOMS);
+    line("ROOMS", b, PANEL_Y + 38, rgb565(240, 240, 245));
+    if (s2AllAccess) snprintf(b, sizeof(b), "ALL (TEST)");
+    else if (s2Card > 0) snprintf(b, sizeof(b), "LEVEL %d", s2Card);
+    else snprintf(b, sizeof(b), "NONE");
+    line("ACCESS CARD", b, PANEL_Y + 68, rgb565(90, 220, 255));
+    line("DISGUISE", s2Disguised ? "OVERALLS" : "NONE", PANEL_Y + 98, rgb565(255, 220, 80));
+    snprintf(b, sizeof(b), "%d", aid);
+    line("FIRST AID LEFT", b, PANEL_Y + 128, rgb565(120, 230, 140));
+    snprintf(b, sizeof(b), "%ld", score);
+    line("SCORE", b, PANEL_Y + 158, rgb565(240, 240, 245));
+    snprintf(b, sizeof(b), "V%s  FPS %d", GAME_VERSION, (int)lroundf(fpsShown));
+    drawVectorText(b, (lx + SCREEN_W - 44) / 2, PANEL_Y + 184, 1.5f, rgb565(150, 160, 186), false);
+    return;
+  }
   snprintf(b, sizeof(b), "%d/%d", seen, ROOM_COUNT);
   line("ROOMS", b, PANEL_Y + 38, rgb565(240, 240, 245));
   snprintf(b, sizeof(b), "%d/%d", itemsFound, ITEMS_HIDDEN);
@@ -4333,6 +5385,10 @@ static void drawGameOver() {
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(120, 20, 14), 8.0f);
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(255, 70, 50), 3.0f);
     drawVectorText("POWER FAILURE - THE GENERATORS HAVE SHUT DOWN", SCREEN_W / 2, 186, 3.0f, rgb565(240, 240, 245), true);
+  } else if (gameOver == END_BODY) {
+    drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(120, 20, 14), 8.0f);
+    drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(255, 70, 50), 3.0f);
+    drawVectorText("THE MAINTENANCE MAN'S BODY WAS FOUND", SCREEN_W / 2, 186, 3.0f, rgb565(240, 240, 245), true);
   } else {
     drawVectorTextW("GAME OVER", SCREEN_W / 2, 120, 8.0f, rgb565(120, 20, 14), 8.0f);
     drawVectorTextW("GAME OVER", SCREEN_W / 2, 120, 8.0f, rgb565(255, 70, 50), 3.0f);
@@ -4361,9 +5417,10 @@ static void drawGameOver() {
     int ps = (int)playT;
     snprintf(b, sizeof(b), "SCORE %ld     TIME PLAYED %d:%02d", score, ps / 60, ps % 60);
     drawVectorText(b, SCREEN_W / 2, 528, 4.0f, rgb565(255, 190, 70), true);
-    int seen = 0;
-    for (int i = 0; i < ROOM_COUNT; i++) seen += rooms[i].visited;
-    snprintf(b, sizeof(b), "%d OF %d QUANTUM DRIVES   %d OF %d ROOMS", itemsFound, ITEMS_HIDDEN, seen, ROOM_COUNT);
+    int seen = 0, total = stage == 2 ? S2_ROOMS : ROOM_COUNT;
+    for (int i = 0; i < total; i++) seen += rooms[i].visited;
+    if (stage == 2) snprintf(b, sizeof(b), "%d OF %d QUANTUM DRIVES   %d OF %d LAB ROOMS", itemsFound, ITEMS_HIDDEN, seen, total);
+    else snprintf(b, sizeof(b), "%d OF %d QUANTUM DRIVES   %d OF %d ROOMS", itemsFound, ITEMS_HIDDEN, seen, ROOM_COUNT);
     drawVectorText(b, SCREEN_W / 2, 572, 2.4f, rgb565(170, 178, 196), false);
   }
   if (gameOverT > 2.2f && fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X", SCREEN_W / 2, 640, 3.6f, rgb565(240, 240, 245), true);
@@ -4382,10 +5439,10 @@ static void drawMessage() {
 static void drawMap() {
   gfxClipAll();
   blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 4, 6, 10, 0.88f);
-  if (stage == 2) {                                               // (stage 2: no map yet)
-    drawVectorText("STAGE 2 - THE QUANTUM LAB", SCREEN_W / 2, 300, 4.0f, rgb565(120, 220, 255), true);
-    drawVectorText("NO MAP OF THIS AREA YET", SCREEN_W / 2, 360, 2.8f, rgb565(200, 206, 220), false);
-    drawVectorText("OPTIONS: BACK TO THE GAME", SCREEN_W / 2, 662, 2.2f, rgb565(200, 206, 220), true);
+  if (stage == 2) {                                               // the QUANTUM LAB
+    drawVectorText("THE QUANTUM LAB", SCREEN_W / 2, 72, 4.0f, rgb565(120, 220, 255), true);
+    drawLabMap(60, 100, SCREEN_W - 60, 640, true, rgb565(150, 210, 240), rgb565(10, 20, 30));
+    drawVectorText("OPTIONS: BACK TO THE GAME", SCREEN_W / 2, 680, 2.2f, rgb565(200, 206, 220), true);
     return;
   }
   const int RW = 96, SW = 30, RH = 60, GAP = 22;
@@ -4542,6 +5599,7 @@ static void updateScene(float dt) {
         scene = SC_STAGE2_BRIEF;
         sceneT = 0;
         stage = 2;
+        layOutStage2();                  // (the lab's rooms take the place of stage 1's)
       }
       break;
     case SC_STAGE2_BRIEF:
@@ -4822,7 +5880,7 @@ static void drawEntry() {
 
 // ============================================================ the settings (Triangle), STAGE 1's briefing
 #define SETTINGS_FILE QL_DATA_DIR "/settings.bin"
-#define SETTINGS_ITEMS 5
+#define SETTINGS_ITEMS 6
 static void loadSettings() {
   FILE *f = fopen(SETTINGS_FILE, "rb");
   if (!f) return;
@@ -4875,11 +5933,14 @@ static void updateSettings() {
   } else if (settingsSel == 2 && go) {             // JUMP TO STAGE 2 (for testing): the sub basement's lift
     jumpToStage2();
     sfxPlay(SFX_CLICK);
-  } else if (settingsSel == 3 && go) {             // QUIT TO TITLE: X twice
+  } else if (settingsSel == 3 && (go || side)) {   // ALL ACCESS (for testing stage 2): every card reader opens
+    s2AllAccess = !s2AllAccess;
+    sfxPlay(SFX_CLICK);
+  } else if (settingsSel == 4 && go) {             // QUIT TO TITLE: X twice
     if (quitConfirm) quitToTitle();
     else quitConfirm = true;
     sfxPlay(SFX_CLICK);
-  } else if (settingsSel == 4 && go) {             // RESUME
+  } else if (settingsSel == 5 && go) {             // RESUME
     settingsOn = false;
     sfxPlay(SFX_CLICK);
   }
@@ -4888,24 +5949,26 @@ static void updateSettings() {
 static void drawSettings() {
   gfxClipAll();
   blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 2, 4, 8, 0.72f);
-  int x0 = 330, y0 = 130, x1 = 950, y1 = 600;
+  int x0 = 330, y0 = 100, x1 = 950, y1 = 640;
   fillRect(x0, y0, x1, y1, rgb565(12, 16, 26));
   drawRectOutline(x0, y0, x1, y1, rgb565(90, 220, 255), 3);
   drawVectorText("SETTINGS", SCREEN_W / 2, y0 + 40, 4.4f, rgb565(90, 220, 255), true);
   drawVectorText("GAME PAUSED", SCREEN_W / 2, y0 + 82, 2.2f, rgb565(255, 190, 70), false);
   for (int i = 0; i < SETTINGS_ITEMS; i++) {
     int y = y0 + 140 + i * 58;
+    int item = i;
     bool sel = i == settingsSel;
     if (sel) fillRect(x0 + 24, y - 22, x1 - 24, y + 22, rgb565(36, 60, 90));
     uint16_t c = sel ? rgb565(255, 230, 120) : rgb565(220, 226, 236);
-    const char *label = i == 0 ? "STAGE MUSIC" : i == 1 ? "ELEVATOR MUSIC" : i == 2 ? "JUMP TO STAGE 2" : i == 3 ? (quitConfirm ? "X AGAIN TO QUIT" : "QUIT TO TITLE") : "RESUME";
-    if (i <= 1) {
-      bool on = musicOn[i == 0 ? 1 : 0].load();
+    const char *label = i == 0 ? "STAGE MUSIC" : i == 1 ? "ELEVATOR MUSIC" : i == 2 ? "JUMP TO STAGE 2" : i == 3 ? "ALL ACCESS (TEST)" :
+                        i == 4 ? (quitConfirm ? "X AGAIN TO QUIT" : "QUIT TO TITLE") : "RESUME";
+    if (item <= 1 || item == 3) {
+      bool on = item == 3 ? s2AllAccess : musicOn[i == 0 ? 1 : 0].load();
       drawVectorText(label, x0 + 50 + vectorTextWidth(label, 3.0f) / 2, y, 3.0f, c, true);
       const char *v = on ? "ON" : "OFF";
       drawVectorText(v, x1 - 60 - vectorTextWidth(v, 3.0f) / 2, y, 3.0f, on ? rgb565(100, 240, 140) : rgb565(255, 90, 70), true);
     } else {
-      drawVectorText(label, SCREEN_W / 2, y, 3.0f, i == 3 && quitConfirm ? rgb565(255, 90, 70) : c, true);
+      drawVectorText(label, SCREEN_W / 2, y, 3.0f, i == 4 && quitConfirm ? rgb565(255, 90, 70) : c, true);
     }
   }
   drawVectorText("UP / DOWN: CHOOSE    X: CHANGE    TRIANGLE: BACK", SCREEN_W / 2, y1 - 26, 1.8f, rgb565(150, 158, 176), false);
@@ -5149,6 +6212,10 @@ static void newGame() {
   loopDoorDir = 0;
   powerPanelT = 0;
   leverT = -1;
+  s2Act = 0;
+  bodyT = -1;
+  s2Card = 0;
+  s2Disguised = bodyCarried = false;
   for (int i = 0; i < MAX_POPS; i++) popT[i] = 0;
   msgT = 0;
 }
@@ -5329,8 +6396,12 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (termOn) {                        // at the main computer: the controller works the menu
       if (gameOver == END_NONE) updateTerminal(dt);
     } else {
-      if (introT < 0) updateAgent(dt);
+      if (introT < 0) {
+        if (s2Act) updateS2Act(dt);      // (stage 2: knocking out, searching, binning the maintenance man)
+        else updateAgent(dt);
+      }
       if (introT < 0) updateHazards(dt);
+      if (stage == 2 && gameOver == END_NONE && scene == SC_NONE) updateStage2(dt);
     }
   }
 
@@ -5345,6 +6416,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     for (int i = 0; i < liftCount; i++) drawLiftPad(lifts[i]);
     drawDecorAnim();
     if (curRoom == CONTROL_ROOM) drawControlRoomAnim();
+    if (stage == 2 && curRoom < S2_ROOMS && s2Kind[curRoom] == LK_KITCHEN) drawChef();
     if (curRoom == SUB_ROOM || curRoom == ARRIVAL_ROOM) drawLoopStation(curRoom == ARRIVAL_ROOM);
     if (curHazard == HZ_ELECTRIC && elecState == 1 && flickerDim(elecT)) dimRoom();
     if (curHazard == HZ_DARK && !lightsOut && ((darkT > 0.25f && darkT < 0.35f) || (darkT > 0.5f && darkT < 0.56f))) dimRoom();
@@ -5356,7 +6428,14 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     drawShaftScene();
   }
   gfxClip(introT >= 0 && introT < 1.9f ? CAR_FLOOR_Y - CORR_H + 1 : HUD_H, mode == MODE_SHAFT ? PANEL_Y - 1 : PLAY_Y1);   // (in the duct: hidden)
-  if (scene != SC_RIDE) drawAgentU(shownPose, agX, agY, agFacing, myScale);
+  if (scene != SC_RIDE) {
+    if (stage == 2 && s2Disguised) drawPersonU(shownPose, agX, agY, agFacing, myScale, PK_MAINT);   // in the maintenance man's overalls
+    else drawAgentU(shownPose, agX, agY, agFacing, myScale);
+  }
+  if (mode == MODE_SHAFT && stage == 2) {
+    drawCarriedBody();
+    drawS2Prompts();
+  }
   gfxClip(HUD_H, PLAY_Y1);
   if (mode == MODE_ROOM && lightsOut) {   // dark: the goggles' view, then what glows, the search bars over it
     nightVision();
@@ -5477,6 +6556,19 @@ void gameDebugShaft(int s, int f) {
       if (isStop(s, k)) f = k;
   }
   enterShaft(s, f, true);
+}
+// For the PC test build: stage 2's lab, at lift s level f (S2_ARRIVAL: the QUANTUMLOOP's floor); wk >= 0: the maintenance man's level
+void gameDebugStage2(int s, int f, int wk) {
+  briefingOn = settingsOn = false;
+  if (onTitle) layOut(layoutSeed);
+  onTitle = false;
+  introT = -1;
+  stage = 2;
+  scene = SC_NONE;
+  layOutStage2();
+  if (wk >= 0) wkFloor = wk;
+  enterShaft(s, f, true);
+  placeAgent((SHAFT_X0 + SHAFT_X1) / 2.0f, CAR_FLOOR_Y, 1);
 }
 // For the PC test build: a generator's room (n: 0, 1, 2), in by its left door
 void gameDebugGenerator(int n) {

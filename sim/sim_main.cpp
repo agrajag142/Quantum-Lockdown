@@ -142,6 +142,11 @@ int main(int argc, char **argv) {
     } else if (!strcmp(cmd, "shaft")) {     // shaft S F: into lift shaft S (0 = A; -1 the sub basement's) at floor F (-1 its lowest)
       gameDebugShaft(atoi(a), n);
       step(0);
+    } else if (!strcmp(cmd, "lab")) {       // lab S F W: stage 2's lab, lift S (0 = A) at floor F (0 the top level, 6 the QUANTUMLOOP's), the maintenance man on floor W (0 the top level; -1 random)
+      int s = 0, f = 6, w = -1;
+      sscanf(line, "%*s %d %d %d", &s, &f, &w);
+      gameDebugStage2(s, f, w);
+      step(0);
     } else if (!strcmp(cmd, "gen")) {       // gen N: the room with power generator N (0..2)
       gameDebugGenerator(atoi(a));
       step(0);

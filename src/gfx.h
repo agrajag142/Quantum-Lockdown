@@ -94,5 +94,6 @@ float vectorTextWidth(const char *text, float size);
 // ---- the agent (and the people) through agent_rig.h, at full resolution
 struct AgentPose;
 void drawAgentU(const AgentPose &p, float x, float floorY, int facing, float scale);
+void drawPersonU(const AgentPose &p, float x, float floorY, int facing, float scale, int kind);   // people.h's kinds
 
 #endif // GFX_H
