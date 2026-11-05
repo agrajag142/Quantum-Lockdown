@@ -24,7 +24,7 @@
 
 #include "agent_rig.h"
 
-enum PersonKind : uint8_t { PK_NONE, PK_GUARD, PK_OFFICER, PK_COMMANDER, PK_SCIENTIST, PK_STRIPPED, PK_DISGUISE, PK_SECURITY, PK_SCI_DIM, PK_SENIOR, PK_ADVANCED, PK_FIGHTER, PK_RADSUIT, PK_CHEF, PK_MAINT, PK_MAINT_UNDIES, PK_CLEANER };   // (QUANTUM LOCKDOWN: the kitchen's chef, the maintenance man, him in his vest and shorts)   // PK_FIGHTER: the guard, bare-headed, no rifle (SL1R4)
+enum PersonKind : uint8_t { PK_NONE, PK_GUARD, PK_OFFICER, PK_COMMANDER, PK_SCIENTIST, PK_STRIPPED, PK_DISGUISE, PK_SECURITY, PK_SCI_DIM, PK_SENIOR, PK_ADVANCED, PK_FIGHTER, PK_RADSUIT, PK_CHEF, PK_MAINT, PK_MAINT_UNDIES, PK_CLEANER, PK_NURSE, PK_PATIENT };   // (QUANTUM LOCKDOWN: the kitchen's chef, the maintenance man, him in his vest and shorts)   // PK_FIGHTER: the guard, bare-headed, no rifle (SL1R4)
 
 struct PersonLook {
   uint16_t suit, suitFar, shade, trouser, trouserFar, boot, bootFar, skin, skinFar, hair;
@@ -84,6 +84,13 @@ static const PersonLook PL_CLEANER = {   // a cleaner: teal tunic, navy trousers
   agentRgb(70, 166, 172), agentRgb(44, 112, 118), agentRgb(58, 142, 148), agentRgb(46, 52, 78), agentRgb(28, 32, 50),
   agentRgb(30, 30, 34), agentRgb(18, 18, 22), agentRgb(200, 150, 116), agentRgb(150, 110, 86), agentRgb(50, 36, 26) };
 
+static const PersonLook PL_NURSE = {     // a nurse: light blue scrubs
+  agentRgb(120, 176, 226), agentRgb(80, 124, 170), agentRgb(100, 154, 204), agentRgb(120, 176, 226), agentRgb(80, 124, 170),
+  agentRgb(236, 236, 240), agentRgb(180, 180, 186), agentRgb(224, 182, 150), agentRgb(170, 134, 108), agentRgb(140, 90, 50) };
+static const PersonLook PL_PATIENT = {   // a patient: a hospital gown, bare legs
+  agentRgb(196, 218, 232), agentRgb(150, 172, 188), agentRgb(176, 200, 216), agentRgb(214, 170, 138), agentRgb(164, 128, 102),
+  agentRgb(214, 170, 138), agentRgb(164, 128, 102), agentRgb(214, 170, 138), agentRgb(164, 128, 102), agentRgb(80, 60, 40) };
+
 static inline bool personIsLab(uint8_t kind) {
   return kind == PK_SCIENTIST || kind == PK_STRIPPED || kind == PK_DISGUISE || kind == PK_SCI_DIM || kind == PK_SENIOR || kind == PK_ADVANCED;
 }
@@ -136,7 +143,7 @@ static void personDraw(const AgentPose &p, float x, float floorY, int facing, fl
                         (kind == PK_SCIENTIST) ? PL_SCIENTIST : (kind == PK_STRIPPED) ? PL_STRIPPED :
                         (kind == PK_DISGUISE) ? PL_DISGUISE : (kind == PK_RADSUIT) ? PL_RADSUIT : (kind == PK_SECURITY) ? PL_SECURITY :
                         (kind == PK_SCI_DIM) ? PL_SCI_DIM : (kind == PK_SENIOR) ? PL_SENIOR : (kind == PK_ADVANCED) ? PL_ADVANCED :
-                        (kind == PK_CHEF) ? PL_CHEF : (kind == PK_MAINT) ? PL_MAINT : (kind == PK_MAINT_UNDIES) ? PL_MAINT_UNDIES : (kind == PK_CLEANER) ? PL_CLEANER : PL_COMMANDER;
+                        (kind == PK_CHEF) ? PL_CHEF : (kind == PK_MAINT) ? PL_MAINT : (kind == PK_MAINT_UNDIES) ? PL_MAINT_UNDIES : (kind == PK_CLEANER) ? PL_CLEANER : (kind == PK_NURSE) ? PL_NURSE : (kind == PK_PATIENT) ? PL_PATIENT : PL_COMMANDER;
   bool coat = (kind == PK_SCIENTIST || kind == PK_DISGUISE || kind == PK_SCI_DIM || kind == PK_SENIOR || kind == PK_ADVANCED);
   AgentJoints j;
   agentSolve(p, j);
@@ -239,6 +246,16 @@ static void personDraw(const AgentPose &p, float x, float floorY, int facing, fl
     agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, APRON, 4, agentRgb(150, 110, 190));
     static const float TAG[][2] = { { 25.0f, 3.0f }, { 28.0f, 3.0f }, { 28.0f, 7.0f }, { 25.0f, 7.0f } };
     agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, TAG, 4, agentRgb(250, 250, 250));
+  } else if (kind == PK_NURSE) {
+    static const float VNECK[][2] = { { 26.0f, 3.0f }, { 33.0f, 2.0f }, { 33.0f, 7.0f }, { 29.0f, 7.0f } };
+    agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, VNECK, 4, L.skin);
+    static const float WATCH[][2] = { { 20.0f, 3.0f }, { 23.0f, 3.0f }, { 23.0f, 7.0f }, { 20.0f, 7.0f } };   // the fob watch
+    agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, WATCH, 4, agentRgb(240, 240, 244));
+    static const float POCKET[][2] = { { 10.0f, 2.0f }, { 16.0f, 2.0f }, { 16.0f, 7.4f }, { 10.0f, 7.4f } };
+    agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, POCKET, 4, agentRgb(96, 150, 200));
+  } else if (kind == PK_PATIENT) {
+    static const float TIES[][2] = { { 12.0f, -7.4f }, { 14.0f, -7.4f }, { 14.0f, -5.0f }, { 12.0f, -5.0f } };
+    agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, TIES, 4, agentRgb(150, 172, 188));
   } else if (kind == PK_STRIPPED) {
     static const float BTNS[][2] = { { 4.0f, 6.4f }, { 31.0f, 5.4f }, { 31.0f, 6.4f }, { 4.0f, 7.2f } };
     agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, BTNS, 4, agentRgb(120, 154, 184));
@@ -330,6 +347,11 @@ static void personDraw(const AgentPose &p, float x, float floorY, int facing, fl
       agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, PLEAT, 4, agentRgb(214, 214, 210));
       static const float BAND[][2] = { { 5.4f, -9.0f }, { 9.0f, -9.4f }, { 9.0f, 9.4f }, { 5.4f, 9.0f } };
       agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, BAND, 4, agentRgb(226, 226, 222));
+    } else if (kind == PK_NURSE) {     // a small white cap
+      static const float NCAP[][2] = { { 7.0f, -7.0f }, { 11.0f, -5.0f }, { 11.0f, 4.0f }, { 7.0f, 5.0f } };
+      agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, NCAP, 4, agentRgb(250, 250, 250));
+      static const float NCROSS[][2] = { { 8.4f, -1.4f }, { 9.8f, -1.4f }, { 9.8f, 1.4f }, { 8.4f, 1.4f } };
+      agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, NCROSS, 4, agentRgb(220, 40, 40));
     } else if (kind == PK_CLEANER) {   // hair tied back in a bun
       static const float BUN[][2] = { { 2.0f, -8.0f }, { 6.0f, -12.0f }, { 1.0f, -15.0f }, { -3.0f, -12.0f }, { -2.0f, -8.0f } };
       agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, BUN, 5, L.hair);
@@ -359,7 +381,7 @@ static void personDraw(const AgentPose &p, float x, float floorY, int facing, fl
   float dx = j.wrX[0] - j.elbX[0], dy = j.wrY[0] - j.elbY[0];
   float l = sqrtf(dx * dx + dy * dy);
   if (l > 0.01f) { dx /= l; dy /= l; }
-  if (personIsLab(kind) || kind == PK_FIGHTER || kind == PK_RADSUIT || kind == PK_CHEF || kind == PK_MAINT || kind == PK_MAINT_UNDIES || kind == PK_CLEANER) {
+  if (personIsLab(kind) || kind == PK_FIGHTER || kind == PK_RADSUIT || kind == PK_CHEF || kind == PK_MAINT || kind == PK_MAINT_UNDIES || kind == PK_CLEANER || kind == PK_NURSE || kind == PK_PATIENT) {
     xf.apply(j.wrX[0], j.wrY[0], mx, my);                              // (no weapon)
   } else if (kind == PK_GUARD) {
     float sx = j.wrX[0] - dx * 20.0f, sy = j.wrY[0] - dy * 20.0f;      // stock

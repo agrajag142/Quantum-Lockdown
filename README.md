@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 024: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 025: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -10,7 +10,8 @@ electrified floors, dark rooms, security cameras and drones; 18 QUANTUM
 DRIVES to find, 3 power generators, QUANTUM CONTROL with its drive bay and
 main computer, the sub basement it unlocks and the QUANTUMLOOP to stage 2,
 stage 2's QUANTUM LAB (six lifts, 21 rooms, card readers, the kitchen and
-its chef, the cleaning room and its two cleaners, people who get suspicious,
+its chef and a knife, the cleaning room and its two cleaners, the medical
+bay, the security room and its armed guards, people who get suspicious,
 the maintenance man to knock out, search and hide in a bin), and a top 5 high
 score table.
 
@@ -187,7 +188,7 @@ Going in ends stage 1:
 1. **STAGE 1 COMPLETE**: the stage 1 bonus, worked out as at the end of the
    game (minutes left x 500, 1000 each for no electrocution, drone hits, pit
    falls, camera catches, first aid). The incidents are then counted afresh
-   for stage 2; the clock carries on from where it is.
+   for stage 2, and stage 2's countdown starts again at 15:00.
 2. **STAGE 2**: GET TO THE QUANTUM LAB AND DISABLE THE QUANTUM CORE (and
    `assets/stage2.mod` starts, if STAGE MUSIC is on). X to play.
 3. **The station** (after the picture: QUANTUMLOOP TRANSPORT SYSTEM, the
@@ -292,16 +293,43 @@ cabinet, boxes. The top: crates and boxes, and mops and brooms hanging on the
 wall. **Two cleaners** (teal tunics, mops) walk their paths: one on the floor,
 one on the middle level - both walking away from you as you come in.
 
-**Searching**: everything in the kitchen (8 things) and the cleaning room
-(16) can be searched like stage 1's equipment - hold Square; 100 points the
-first time. There's nothing in any of it yet (NOTHING).
+**The medical bay**: two levels (lift pad on the left). Downstairs: visitors'
+seats, the NURSE STATION (its front is drawn over the nurse, who walks a short
+path behind it), and behind it a bed with an unconscious patient, a
+ventilator and a heart monitor. Upstairs, the ward: four beds, each with an
+unconscious patient under a blanket, a heart monitor (its trace sweeping) and
+a drip, and the medicine cabinet. The doctor (white coat) walks the ward.
+One of the five patients, at random, has the **level 2 access card** (search
+him: ACCESS CARD LEVEL 2 FOUND).
+
+**The security room**: one level. A wall of 24 CCTV screens high up (people
+walking corridors, scan lines, recording lamps), two gun racks of rifles,
+lockers, the SECURITY desk (NUCLEAR MISSION's GR1 style, its front drawn over
+the guard behind it), a filing cabinet and seats. **Three guards** with
+pistols: one at the desk (turning to look one way, then the other, every few
+seconds) and two walking the room. Guards get suspicious twice as fast (a
+point every 0.35 seconds) and at one point short of five they draw and
+**shoot**: 10 health, 30 seconds, knocked down - you come round in the lift
+area outside the door you came in by.
+
+**The knife**: in one of the kitchen's 8 things, at random (KNIFE FOUND).
+With it, X close to someone in a lab room (on your level, within 80 units;
+the prompt says X: KNIFE) kills them: they fall and stay down where they fell,
+can't see you any more, and are still there when you come back. 500 points.
+The panel's KNIFE line shows whether you have it.
+
+**Searching**: everything in the kitchen (8 things), the cleaning room (16),
+the medical bay (9, the patients included) and the security room (6) can be
+searched like stage 1's equipment - hold Square; 100 points the first time.
+Apart from the knife and the level 2 card, there's nothing in them yet
+(NOTHING).
 
 **Suspicion** (as in NUCLEAR MISSION): someone who is facing you, on your
 level and within 330 units gets suspicious if you're looking at them, or if
 they see you searching. They stop where they are and stare, with a **?** over
 their head going redder, and the **SUSPICION** meter at the top left (five
-pips, in any room with people in it) fills: a point every 0.7 seconds,
-twice as fast while you search. Look away (face the other way) and stop
+pips, in any room with people in it) fills: a point every 0.7 seconds (the
+guards 0.35), twice as fast while you search. Look away (face the other way) and stop
 searching, and it goes back to nothing and they carry on. Five points and
 you're **RECOGNISED**: hands up, 30 seconds off the clock, and you're put
 out in the lift area by the door you came in by. (The disguise doesn't
