@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 026: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 027: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -164,18 +164,32 @@ DOWN and X:
 1. **DOWNLOAD FACILITY BLUEPRINT**: the files come down one by one with a
    progress bar (about 3 seconds, 500 points), then BLUEPRINT DOWNLOADED -
    POWER GENERATOR LOCATIONS ARE NOW SHOWN ON YOUR MAP.
-2. **FACILITY STATUS**: generators online, time to the power failure, drives
+2. **QUANTUM DRIVE SCAN**: needs all 3 power generators on - otherwise
+   ERROR: NOT ENOUGH POWER (how many are online, TURN ON ALL THE POWER
+   GENERATORS). With the power, it scans the complex room by room, a room
+   every half second (15 seconds in all): the last rooms scanned listed
+   (CLEAR or DRIVE DETECTED), a TIME REMAINING countdown, a radar sweep with
+   a blip for each find, a progress bar; a beep for each room, a ping for a
+   find. Then SCAN COMPLETE - n ROOMS WITH QUANTUM DRIVES TO FIND ARE NOW
+   SHOWN ON YOUR MAP. It can be run again (the clock keeps running while it
+   scans).
+3. **FACILITY STATUS**: generators online, time to the power failure, drives
    missing, where the main computer is.
-3. **MAINTENANCE LOG**: what happened (the generators tripped, the drives
+4. **MAINTENANCE LOG**: what happened (the generators tripped, the drives
    pulled from the bay...).
-4. **LOG OFF**. The first time you log off after downloading the blueprint,
-   the Options map opens by itself.
+5. **LOG OFF**. The first time you log off after downloading the blueprint,
+   and the first time after a drive scan, the Options map opens by itself.
 
 With the blueprint, the **Options map** shows the three generators' rooms
 in **yellow** (green once that generator is on), with their generator icon,
 whether you've been in them or not, and a line at the bottom saying so. The
 lift area's **mini map** shows them as orange boxes with a G (green once
 on). The terminal can be logged into again any time.
+
+After the drive scan, the rooms that still have a quantum drive to find show
+in **blue** on the Options map (with a drive icon; a yellow strip as well if
+it's a generator's room too) and as blue boxes with a Q on the mini map. A
+room drops off as soon as its drive is found.
 
 ## QUANTUM CONTROL
 

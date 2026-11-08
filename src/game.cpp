@@ -39,7 +39,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "026"
+#define GAME_VERSION      "027"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -221,6 +221,8 @@ static bool shaftSeen[SHAFTS][FLOORS + 1];
 static bool subUnlocked = false;
 static bool blueprint = false;             // the facility blueprint downloaded: the generators' rooms shown on the maps
 static bool bpMapShown = false;            // (logging off after the download: the map, once)
+static bool driveScan = false;             // the QUANTUM DRIVE SCAN run: rooms with drives still to find shown on the maps
+static bool scanMapShown = false;
 static int subShaft = -1;
 // The stages, and the scenes between them
 static int stage = 1;
@@ -411,7 +413,7 @@ static void layOut(uint32_t seed) {
   roomAt[controlRow][CONTROL_COL] = (int8_t)CONTROL_ROOM;
   subUnlocked = false;
   subShaft = -1;
-  blueprint = bpMapShown = false;
+  blueprint = bpMapShown = driveScan = scanMapShown = false;
   // the rooms with one more piece of equipment, to make EQUIPMENT_TOTAL
   for (int extra = EQUIPMENT_TOTAL - ROOM_COUNT * (EQUIPMENT_TOTAL / ROOM_COUNT); extra > 0;) {
     RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
@@ -4119,9 +4121,17 @@ static void useConsole() {
 }
 
 // ---- the facility terminal: logged into, DOWNLOAD FACILITY BLUEPRINT (the generators on the maps)
-enum FtPage : uint8_t { FT_LOGIN, FT_MENU, FT_DOWNLOAD, FT_DONE, FT_STATUS, FT_LOG };
-#define FT_ITEMS 4
-static const char *const ftItems[FT_ITEMS] = { "DOWNLOAD FACILITY BLUEPRINT", "FACILITY STATUS", "MAINTENANCE LOG", "LOG OFF" };
+enum FtPage : uint8_t { FT_LOGIN, FT_MENU, FT_DOWNLOAD, FT_DONE, FT_STATUS, FT_LOG, FT_NOPOWER, FT_SCAN, FT_SCAN_DONE };
+#define FT_ITEMS 5
+static const char *const ftItems[FT_ITEMS] = { "DOWNLOAD FACILITY BLUEPRINT", "QUANTUM DRIVE SCAN", "FACILITY STATUS", "MAINTENANCE LOG", "LOG OFF" };
+#define SCAN_ROOM_SECONDS 0.5f               // the drive scan: a room every half second (30 rooms: 15 seconds)
+// A room with a quantum drive in it still to find
+static bool driveLeftIn(int i) {
+  if (i < 0 || i >= ROOM_COUNT) return false;
+  for (int k = 0; k < MAX_DECOR; k++)
+    if (rooms[i].holds[k] && !rooms[i].searched[k]) return true;
+  return false;
+}
 #define FT_LOGIN_SECONDS 2.4f
 #define FT_DOWNLOAD_SECONDS 2.8f
 static void useFacilityTerminal() {
@@ -4137,6 +4147,10 @@ static void ftLogOff() {
   sfxPlay(SFX_KEY);
   if (blueprint && !bpMapShown) {          // the first time after the download: the map, the generators' rooms marked
     bpMapShown = true;
+    mapOn = true;
+  }
+  if (driveScan && !scanMapShown) {        // ...and after the drive scan: the drives' rooms
+    scanMapShown = true;
     mapOn = true;
   }
 }
@@ -4156,8 +4170,12 @@ static void updateFacilityTerminal(float dt) {
         sfxPlay(SFX_KEY);
         termT = 0;
         if (termSel == 0) termPage = blueprint ? FT_DONE : FT_DOWNLOAD;
-        else if (termSel == 1) termPage = FT_STATUS;
-        else if (termSel == 2) termPage = FT_LOG;
+        else if (termSel == 1) {               // the drive scan: only with all the generators on
+          if (generatorsOn() < GENERATORS) { termPage = FT_NOPOWER; sfxPlay(SFX_DENIED); }
+          else { termPage = FT_SCAN; sfxPlay(SFX_POWERUP); }
+        }
+        else if (termSel == 2) termPage = FT_STATUS;
+        else if (termSel == 3) termPage = FT_LOG;
         else ftLogOff();
       }
       break;
@@ -4171,6 +4189,18 @@ static void updateFacilityTerminal(float dt) {
         sfxPlay(SFX_FANFARE);
       }
       break;
+    case FT_SCAN: {                          // room by room: a beep each, a ping where a drive is still hidden
+      int r0 = (int)(was / SCAN_ROOM_SECONDS), r1 = (int)(termT / SCAN_ROOM_SECONDS);
+      if (r1 != r0 && r0 < ROOM_COUNT) sfxPlay(driveLeftIn(r0) ? SFX_FOUND : SFX_BEEP);
+      if ((int)(was * 1.25f) != (int)(termT * 1.25f)) sfxPlay(SFX_KEY);   // (the sweep)
+      if (termT >= ROOM_COUNT * SCAN_ROOM_SECONDS + 0.4f) {
+        driveScan = true;
+        termPage = FT_SCAN_DONE;
+        termT = 0;
+        sfxPlay(SFX_FANFARE);
+      }
+      break;
+    }
     default:                                 // a page: back to the menu
       if (go && termT > 0.4f) { termPage = FT_MENU; termT = 0; sfxPlay(SFX_KEY); }
       break;
@@ -6113,10 +6143,11 @@ static void drawFacilityTerminal() {
           fillRect(TX0 + 20, yy - 18, TX1 - 20, yy + 18, rgb565(70, 220, 120));
           drawTextLeft(b, lx + 12, yy, 3.0f, dark, true);
         } else {
-          drawTextLeft(b, lx + 12, yy, 3.0f, i == 0 ? y : g, true);
+          drawTextLeft(b, lx + 12, yy, 3.0f, i <= 1 ? y : g, true);
         }
       }
       if (blueprint) drawTextLeft("BLUEPRINT ON YOUR MAP", lx + 560, TY0 + 130, 1.8f, gd, false);
+      if (driveScan) drawTextLeft("DRIVES ON YOUR MAP", lx + 560, TY0 + 176, 1.8f, gd, false);
       drawTextLeft("UP / DOWN TO CHOOSE    X TO SELECT", lx, TY1 - 22, 1.8f, gd, false);
       break;
     case FT_DOWNLOAD: {
@@ -6141,6 +6172,71 @@ static void drawFacilityTerminal() {
       drawVectorText("THEIR ROOMS ARE MARKED IN YELLOW", mid, TY0 + 280, 2.4f, g, false);
       if (cur) drawTextLeft("PRESS X TO RETURN", lx, TY1 - 30, 2.2f, gd, false);
       break;
+    case FT_NOPOWER: {
+      uint16_t red = rgb565(255, 90, 70);
+      drawVectorText("QUANTUM DRIVE SCAN", mid, TY0 + 100, 3.4f, g, true);
+      drawVectorText("ERROR: NOT ENOUGH POWER", mid, TY0 + 170, 4.0f, red, true);
+      snprintf(b, sizeof(b), "POWER GENERATORS ONLINE: %d OF %d", generatorsOn(), GENERATORS);
+      drawVectorText(b, mid, TY0 + 236, 2.6f, red, false);
+      drawVectorText("TURN ON ALL THE POWER GENERATORS", mid, TY0 + 290, 2.6f, y, true);
+      drawVectorText("TO RUN THE SCAN", mid, TY0 + 324, 2.6f, y, true);
+      if (cur) drawTextLeft("PRESS X TO RETURN", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+    }
+    case FT_SCAN: {
+      int done = clampv((int)(termT / SCAN_ROOM_SECONDS), 0, ROOM_COUNT);
+      int found = 0;
+      for (int i = 0; i < done; i++) found += driveLeftIn(i);
+      int secs = (int)ceilf(fmaxf(0, ROOM_COUNT * SCAN_ROOM_SECONDS - termT));
+      drawTextLeft("QUANTUM DRIVE SCAN", lx, TY0 + 84, 3.0f, g, true);
+      snprintf(b, sizeof(b), "TIME REMAINING  0:%02d", secs);
+      drawTextLeft(b, lx + 470, TY0 + 84, 2.6f, y, true);
+      for (int k = 0; k < 7; k++) {          // the last rooms scanned
+        int i = done - 7 + k;
+        if (i < 0) continue;
+        bool hit = driveLeftIn(i);
+        snprintf(b, sizeof(b), "ROOM %02d ...... %s", i + 1, hit ? "DRIVE DETECTED" : "CLEAR");
+        drawTextLeft(b, lx + 10, TY0 + 130 + k * 30, 2.2f, hit ? y : gd, hit);
+      }
+      if (done < ROOM_COUNT && cur) {
+        snprintf(b, sizeof(b), "ROOM %02d ...... SCANNING", done + 1);
+        drawTextLeft(b, lx + 10, TY0 + 130 + 7 * 30, 2.2f, g, true);
+      }
+      // the sweep: a radar circle, its arm going round, a blip for each find
+      float cx = TX1 - 150, cy = TY0 + 230, R = 90;
+      for (int ring = 1; ring <= 3; ring++)
+        for (int a = 0; a < 48; a++) {
+          float t0 = a * 6.2832f / 48, t1 = (a + 1) * 6.2832f / 48, rr = R * ring / 3;
+          drawLine((int)(cx + cosf(t0) * rr), (int)(cy + sinf(t0) * rr), (int)(cx + cosf(t1) * rr), (int)(cy + sinf(t1) * rr), gd, false);
+        }
+      float arm = termT * 5.0f;
+      for (int k = 0; k < 6; k++) {
+        float a = arm - k * 0.08f;
+        drawLine((int)cx, (int)cy, (int)(cx + cosf(a) * R), (int)(cy + sinf(a) * R), k == 0 ? g : gd, k == 0);
+      }
+      for (int i = 0, n = 0; i < done; i++)
+        if (driveLeftIn(i)) {
+          float a = i * 2.39996f, rr = 25 + (n++ % 3) * 22;
+          fillCircle((int)(cx + cosf(a) * rr), (int)(cy + sinf(a) * rr), 4, y);
+        }
+      float k = fminf(1.0f, termT / (ROOM_COUNT * SCAN_ROOM_SECONDS));
+      drawRectOutline((int)lx, TY0 + 370, (int)lx + 604, TY0 + 392, g, 1);
+      fillRect((int)lx + 2, TY0 + 372, (int)lx + 2 + (int)(600 * k), TY0 + 390, g);
+      snprintf(b, sizeof(b), "%d OF %d ROOMS   %d WITH DRIVES", done, ROOM_COUNT, found);
+      drawTextLeft(b, lx + 520, TY0 + 346, 2.0f, g, false);
+      break;
+    }
+    case FT_SCAN_DONE: {
+      int n = 0;
+      for (int i = 0; i < ROOM_COUNT; i++) n += driveLeftIn(i);
+      drawVectorText("SCAN COMPLETE", mid, TY0 + 110, 4.4f, g, true);
+      snprintf(b, sizeof(b), "%d ROOMS WITH QUANTUM DRIVES TO FIND", n);
+      drawVectorText(b, mid, TY0 + 180, 3.0f, y, true);
+      drawVectorText("ARE NOW SHOWN ON YOUR MAP", mid, TY0 + 220, 3.0f, y, true);
+      drawVectorText("THEIR ROOMS ARE MARKED IN BLUE", mid, TY0 + 280, 2.4f, g, false);
+      if (cur) drawTextLeft("PRESS X TO RETURN", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+    }
     case FT_STATUS: {
       int n = 0;
       for (int i = 0; i < ROOM_COUNT; i++) n += rooms[i].gen && rooms[i].genOn;
@@ -6166,7 +6262,7 @@ static void drawFacilityTerminal() {
       if (cur) drawTextLeft("PRESS X TO RETURN", lx, TY1 - 30, 2.2f, gd, false);
       break;
   }
-  if (cur && termPage != FT_DONE) fillRect(TX1 - 44, TY1 - 34, TX1 - 30, TY1 - 22, g);
+  if (cur && termPage != FT_DONE && termPage != FT_SCAN_DONE && termPage != FT_NOPOWER && termPage != FT_SCAN) fillRect(TX1 - 44, TY1 - 34, TX1 - 30, TY1 - 22, g);
 }
 
 // Stage 2's map: lifts A..F, the rooms on their right (filled once he's been in), the corridors
@@ -6279,6 +6375,12 @@ static void drawMiniMap(int x0, int y0, int x1, int y1) {
     int rx = left + SW + ri.col * (RW + SW), ry = top + ri.row * (RH + GAP);
     if (i == CONTROL_ROOM && !ri.visited) {   // QUANTUM CONTROL: always marked (an outline till he has been in)
       drawRectOutline(rx + 2, ry, rx + RW - 3, ry + RH - 1, ink, 2);
+      continue;
+    }
+    if (driveScan && driveLeftIn(i)) {         // the drive scan: rooms with a drive to find, blue
+      fillRect(rx + 2, ry, rx + RW - 3, ry + RH - 1, rgb565(40, 110, 235));
+      drawRectOutline(rx + 2, ry, rx + RW - 3, ry + RH - 1, ink, 1);
+      drawVectorText(blueprint && ri.gen ? "QG" : "Q", rx + RW / 2.0f, ry + RH / 2.0f, 1.3f, rgb565(240, 246, 255), true);
       continue;
     }
     if (blueprint && ri.gen && i < ROOM_COUNT) {   // the blueprint: the generators' rooms, orange (green once on)
@@ -6494,8 +6596,9 @@ static void drawMap() {
       continue;
     }
     bool bp = blueprint && ri.gen;           // the blueprint: the generators' rooms in yellow (green once on)
-    uint16_t fill = bp ? (ri.genOn ? rgb565(40, 140, 70) : rgb565(230, 196, 40)) : ri.visited ? rgb565(40, 64, 96) : rgb565(22, 26, 34);
-    uint16_t edge = bp ? rgb565(255, 240, 150) : ri.visited ? rgb565(110, 160, 220) : rgb565(70, 78, 96);
+    bool ds = driveScan && driveLeftIn(i);   // the drive scan: rooms with a drive still to find in blue
+    uint16_t fill = ds ? rgb565(40, 110, 235) : bp ? (ri.genOn ? rgb565(40, 140, 70) : rgb565(230, 196, 40)) : ri.visited ? rgb565(40, 64, 96) : rgb565(22, 26, 34);
+    uint16_t edge = bp ? rgb565(255, 240, 150) : ds ? rgb565(150, 200, 255) : ri.visited ? rgb565(110, 160, 220) : rgb565(70, 78, 96);
     fillRect(x0, y0, x0 + RW - 1, y0 + RH - 1, fill);
     drawRectOutline(x0, y0, x0 + RW - 1, y0 + RH - 1, edge, 2);
     uint16_t door = rgb565(80, 230, 120);
@@ -6504,7 +6607,12 @@ static void drawMap() {
     fillRect(x0 + RW - 9, yr - 2, x0 + RW + SW / 2 - 6, yr + 3, door);
     char b[8];
     snprintf(b, sizeof(b), "%d", i + 1);
-    drawVectorText(b, x0 + RW / 2, y0 + RH / 2 - (ri.visited ? 6 : 0), 2.4f, bp ? rgb565(30, 24, 8) : ri.visited ? rgb565(230, 236, 245) : rgb565(110, 118, 136), true);
+    if (ds && bp) fillRect(x0 + 2, y0 + RH - 14, x0 + RW - 3, y0 + RH - 3, ri.genOn ? rgb565(40, 140, 70) : rgb565(230, 196, 40));   // (both: a yellow strip)
+    if (ds) {                                  // a drive's icon
+      fillRect(x0 + 8, y0 + 8, x0 + 20, y0 + 26, rgb565(200, 230, 255));
+      fillRect(x0 + 12, y0 + 11, x0 + 15, y0 + 23, rgb565(30, 80, 200));
+    }
+    drawVectorText(b, x0 + RW / 2, y0 + RH / 2 - (ri.visited ? 6 : 0), 2.4f, ds ? rgb565(240, 246, 255) : bp ? rgb565(30, 24, 8) : ri.visited ? rgb565(230, 236, 245) : rgb565(110, 118, 136), true);
     if (ri.visited)   // its equipment: grey not searched, green nothing, gold something found
       for (int k = 0; k < ri.decorN; k++) {
         int dx = x0 + RW / 2 - (ri.decorN - 1) * 7 + k * 14;
@@ -6567,9 +6675,12 @@ static void drawMap() {
     fillCircle(x, (int)y, 7, blink ? rgb565(255, 190, 70) : rgb565(255, 240, 200));
   }
   int bottom = top + ROWS * RH + (ROWS - 1) * GAP;
-  if (blueprint)   // the facility blueprint: what the yellow means
-    drawVectorText("FACILITY BLUEPRINT: POWER GENERATOR ROOMS IN YELLOW (GREEN ONCE ON)", SCREEN_W / 2, bottom + 64, 2.2f,
-                   blink ? rgb565(255, 220, 80) : rgb565(230, 196, 40), true);
+  if (blueprint || driveScan) {   // the facility terminal's: what the yellow and the blue mean
+    char key[120];
+    snprintf(key, sizeof(key), "%s%s%s", blueprint ? "GENERATOR ROOMS IN YELLOW (GREEN ONCE ON)" : "", blueprint && driveScan ? "     " : "",
+             driveScan ? "QUANTUM DRIVES TO FIND IN BLUE" : "");
+    drawVectorText(key, SCREEN_W / 2, bottom + 64, 2.2f, blink ? rgb565(255, 220, 80) : rgb565(230, 196, 40), true);
+  }
   else
     drawVectorText("EACH ROOM: A DOOR AT THE TOP OR THE BOTTOM ON EACH SIDE (GREEN) - THE LIFTS STOP ONLY AT DOORS", SCREEN_W / 2,
                    bottom + 64, 1.8f, rgb565(150, 158, 176), false);
