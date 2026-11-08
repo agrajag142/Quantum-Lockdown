@@ -39,7 +39,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "029"
+#define GAME_VERSION      "030"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -219,6 +219,21 @@ static int8_t roomAt[ROWS][COLS];          // which room is in each place (-1: n
 static bool shaftSeen[SHAFTS][FLOORS + 1];
 // The way down: the main computer unlocks the sub basement under one lift shaft
 static bool subUnlocked = false;
+// ---- the nuclear launch sites the facility is hacking (the whole game, both stages). One after
+// another they're HACKED (10 minutes for the first, then 6, 5, 4, 3 more); once all five are, or
+// QUANTUM LOCKDOWN is on (the hacked ones are then final), the hacked ones are LAUNCHED in turn
+// (5 minutes, then 4, 3, 2, 1 more), and each LANDS 10 to 15 minutes after its launch. All the
+// launched ones landed: the game is over.
+#define NUKE_SITES 5
+static const char *const siteName[NUKE_SITES] = { "NORTH ATLANTIC", "EASTERN EUROPE", "PACIFIC", "CENTRAL ASIA", "SOUTHERN REGION" };
+static const float HACK_MINUTES[NUKE_SITES] = { 10, 6, 5, 4, 3 };
+static const float LAUNCH_MINUTES[NUKE_SITES] = { 5, 4, 3, 2, 1 };
+#define LAND_MIN_MINUTES 10
+#define LAND_MAX_MINUTES 15
+static int sitesHacked = 0, sitesLaunched = 0;
+static float hackT = 0, launchT = 0;        // seconds into the hack / launch under way
+static float landLeft[NUKE_SITES];          // a launched one: seconds till it lands (<= 0: landed)
+static bool lockdown = false;               // QUANTUM LOCKDOWN (the main computer): no more hacking
 static bool blueprint = false;             // the facility blueprint downloaded: the generators' rooms shown on the maps
 static bool bpMapShown = false;            // (logging off after the download: the map, once)
 static bool driveScan = false;             // the QUANTUM DRIVE SCAN run: rooms with drives still to find shown on the maps
@@ -414,6 +429,9 @@ static void layOut(uint32_t seed) {
   subUnlocked = false;
   subShaft = -1;
   blueprint = bpMapShown = driveScan = scanMapShown = false;
+  sitesHacked = sitesLaunched = 0;
+  hackT = launchT = 0;
+  lockdown = false;
   // the rooms with one more piece of equipment, to make EQUIPMENT_TOTAL
   for (int extra = EQUIPMENT_TOTAL - ROOM_COUNT * (EQUIPMENT_TOTAL / ROOM_COUNT); extra > 0;) {
     RoomInfo &ri = rooms[rnd(ROOM_COUNT)];
@@ -662,7 +680,7 @@ static int health = HEALTH_MAX;
 static float hurtFlashT = 0;           // the health bar flashes after a hurt
 static float timeLeft = GAME_SECONDS;
 static bool koGetUp = false;           // knocked down by a drop: he gets up where he is (else back to the door)
-enum EndReason : uint8_t { END_NONE, END_TIME, END_HEALTH, END_WIN, END_BODY };
+enum EndReason : uint8_t { END_NONE, END_TIME, END_HEALTH, END_WIN, END_BODY, END_NUKES };
 static EndReason gameOver = END_NONE;
 static float gameOverT = 0;
 static float playT = 0;                // time played (seconds of play: not the map, not the opening)
@@ -4066,18 +4084,102 @@ static int generatorsOn() {
 // ============================================================ QUANTUM CONTROL: the drive bay and the main computer
 static float bayStepT = 0;
 static int bayInserted = 0;
-enum TermPage : uint8_t { TP_BOOT, TP_FAIL, TP_MENU, TP_MSG, TP_UNLOCK };
+enum TermPage : uint8_t { TP_BOOT, TP_FAIL, TP_MENU, TP_MSG, TP_UNLOCK, TP_LOCKDOWN };
+static bool lockdownWasOn = false;          // (the lockdown page: it was already on)
 static uint8_t termPage = TP_BOOT;
 static int termKind = 0;                   // 0 the main computer, 1 the facility terminal
 static int termSel = 0, termMsg = 0;
 static float termT = 0;
-#define TERM_ITEMS 8
-#define TERM_UNLOCK 5                  // (the menu item that matters)
+#define TERM_ITEMS 9
+#define TERM_UNLOCK 5                  // (the menu items that matter)
+#define TERM_LOCKDOWN 6
 static const char *const termItems[TERM_ITEMS] = {
   "QUANTUM CORE STATUS", "TEMPORAL FIELD MONITOR", "PERSONNEL FILES", "SECURITY CAMERA NETWORK",
-  "REACTOR COOLANT", "UNLOCK SUB BASEMENT LIFT ACCESS", "COMMUNICATIONS", "LOG OFF" };
+  "REACTOR COOLANT", "UNLOCK SUB BASEMENT LIFT ACCESS", "QUANTUM LOCKDOWN", "COMMUNICATIONS", "LOG OFF" };
 #define BOOT_CHECK 3.0f                // the boot: the drive bay is checked at this point...
 #define BOOT_DONE  4.4f                // ...and with all 36 loaded, the menu comes up here
+
+// The launch sites: hacking, launching, landing (in play time)
+static void updateNukes(float dt) {
+  char b[64];
+  if (!lockdown && sitesHacked < NUKE_SITES) {
+    hackT += dt;
+    if (hackT >= HACK_MINUTES[sitesHacked] * 60) {
+      hackT = 0;
+      snprintf(b, sizeof(b), "NUCLEAR SITE HACKED: %s", siteName[sitesHacked]);
+      showMsg(b, 4.0f);
+      sfxPlay(SFX_ALARM);
+      sitesHacked++;
+    }
+  }
+  bool launching = sitesHacked == NUKE_SITES || lockdown;
+  if (launching && sitesLaunched < sitesHacked) {
+    launchT += dt;
+    if (launchT >= LAUNCH_MINUTES[sitesLaunched] * 60) {
+      launchT = 0;
+      landLeft[sitesLaunched] = 60.0f * (LAND_MIN_MINUTES + (LAND_MAX_MINUTES - LAND_MIN_MINUTES) * (rnd32() % 1000) / 1000.0f);
+      snprintf(b, sizeof(b), "MISSILE LAUNCHED: %s", siteName[sitesLaunched]);
+      showMsg(b, 4.0f);
+      sfxPlay(SFX_ALARM);
+      sitesLaunched++;
+    }
+  }
+  int landed = 0;
+  for (int i = 0; i < sitesLaunched; i++) {
+    if (landLeft[i] > 0) {
+      landLeft[i] -= dt;
+      if (landLeft[i] <= 0) {
+        snprintf(b, sizeof(b), "IMPACT: %s", siteName[i]);
+        showMsg(b, 4.0f);
+        sfxPlay(SFX_SHUTDOWN);
+      }
+    }
+    landed += landLeft[i] <= 0;
+  }
+  if (launching && sitesHacked > 0 && sitesLaunched == sitesHacked && landed == sitesHacked && gameOver == END_NONE) endGame(END_NUKES);
+}
+
+// The left of the panel: the five sites, a box each for HACKED, LAUNCHED, LANDED (yellow, orange,
+// red when done; blinking while its countdown runs), and the countdown under way
+static void drawNukePanel(int x0, int y0, int x1, int y1) {
+  (void)y1;
+  bool blink = fmodf(clockT, 0.8f) < 0.5f;
+  drawVectorText("NUCLEAR SITES", x0 + 14 + vectorTextWidth("NUCLEAR SITES", 1.9f) / 2, y0 + 16, 1.9f, rgb565(255, 220, 80), false);
+  if (lockdown) drawVectorText("LOCKDOWN", x1 - 14 - vectorTextWidth("LOCKDOWN", 1.6f) / 2, y0 + 16, 1.6f, rgb565(120, 230, 140), true);
+  static const char *const head[3] = { "HK", "LN", "LD" };   // (hacked, launched, landed)
+  const int bx0 = x0 + 186, bw = 22, gap = 6;
+  for (int c = 0; c < 3; c++) drawVectorText(head[c], bx0 + c * (bw + gap) + bw / 2.0f, y0 + 38, 1.2f, rgb565(190, 200, 220), false);
+  const uint16_t done[3] = { rgb565(240, 210, 40), rgb565(250, 130, 30), rgb565(230, 40, 30) };
+  char b[16];
+  for (int i = 0; i < NUKE_SITES; i++) {
+    int y = y0 + 58 + i * 26;
+    bool hacked = i < sitesHacked, launched = i < sitesLaunched, landed = launched && landLeft[i] <= 0;
+    bool safe = lockdown && !hacked;
+    drawVectorText(siteName[i], x0 + 14 + vectorTextWidth(siteName[i], 1.35f) / 2, y, 1.35f, safe ? rgb565(110, 120, 140) : rgb565(220, 226, 240), false);
+    bool st[3] = { hacked, launched, landed };
+    int active = -1;
+    float left = 0;
+    if (launched && !landed) { active = 2; left = landLeft[i]; }
+    else if (hacked && !launched && i == sitesLaunched && (sitesHacked == NUKE_SITES || lockdown)) { active = 1; left = LAUNCH_MINUTES[i] * 60 - launchT; }
+    else if (!hacked && !lockdown && i == sitesHacked) { active = 0; left = HACK_MINUTES[i] * 60 - hackT; }
+    for (int c = 0; c < 3; c++) {
+      int bx = bx0 + c * (bw + gap);
+      uint16_t col = st[c] ? done[c] : (active == c && blink ? done[c] : rgb565(44, 48, 62));
+      fillRect(bx, y - 8, bx + bw, y + 8, col);
+      drawRectOutline(bx, y - 8, bx + bw, y + 8, rgb565(130, 138, 160), 1);
+    }
+    if (active >= 0) {
+      int sec = (int)ceilf(fmaxf(0, left));
+      snprintf(b, sizeof(b), "%d:%02d", sec / 60, sec % 60);
+      const uint16_t txt[3] = { rgb565(250, 220, 70), rgb565(255, 160, 70), rgb565(255, 120, 110) };
+      drawVectorText(b, x1 - 14 - vectorTextWidth(b, 1.6f) / 2, y, 1.6f, txt[active], false);
+    } else if (safe) {
+      drawVectorText("SAFE", x1 - 14 - vectorTextWidth("SAFE", 1.6f) / 2, y, 1.6f, rgb565(120, 230, 140), false);
+    } else if (landed) {
+      drawVectorText("HIT", x1 - 14 - vectorTextWidth("HIT", 1.6f) / 2, y, 1.6f, rgb565(255, 120, 110), false);
+    }
+  }
+}
 
 static bool onFloorStill() { return mode == MODE_ROOM && fabsf(agY - ROOM_FLOOR_Y) < 0.5f && agState == ST_IDLE; }
 static bool atConsole() { return curRoom == CONTROL_ROOM && onFloorStill() && fabsf(agX - CONSOLE_X) < 80; }
@@ -4250,6 +4352,17 @@ static void termChoose(int i) {
   if (i == TERM_UNLOCK) {
     unlockSubBasement();
     termPage = TP_UNLOCK;
+    return;
+  }
+  if (i == TERM_LOCKDOWN) {            // QUANTUM LOCKDOWN: the hacked sites are final, no more hacking
+    lockdownWasOn = lockdown;
+    if (!lockdown) {
+      lockdown = true;
+      hackT = 0;
+      sfxPlay(SFX_POWERUP);
+      sfxPlay(SFX_FANFARE);
+    }
+    termPage = TP_LOCKDOWN;
     return;
   }
   termPage = TP_MSG;
@@ -5889,13 +6002,13 @@ static void drawTerminal() {
     case TP_MENU:
       drawTextLeft("WELCOME, OPERATOR. SELECT:", lx, TY0 + 84, 2.4f, g, false);
       for (int i = 0; i < TERM_ITEMS; i++) {
-        int y = TY0 + 122 + i * 38;
+        int y = TY0 + 118 + i * 34;
         snprintf(b, sizeof(b), "%d  %s", i + 1, termItems[i]);
         if (i == termSel) {
-          fillRect(TX0 + 20, y - 16, TX1 - 20, y + 16, rgb565(70, 220, 120));
-          drawTextLeft(b, lx + 12, y, 2.8f, dark, true);
+          fillRect(TX0 + 20, y - 15, TX1 - 20, y + 15, rgb565(70, 220, 120));
+          drawTextLeft(b, lx + 12, y, 2.6f, dark, true);
         } else {
-          drawTextLeft(b, lx + 12, y, 2.8f, i == TERM_UNLOCK ? rgb565(255, 220, 80) : g, true);
+          drawTextLeft(b, lx + 12, y, 2.6f, i == TERM_UNLOCK || i == TERM_LOCKDOWN ? rgb565(255, 220, 80) : g, true);
         }
       }
       drawTextLeft("UP / DOWN TO CHOOSE    X TO SELECT", lx, TY1 - 22, 1.8f, gd, false);
@@ -5908,12 +6021,13 @@ static void drawTerminal() {
         { "SECURITY CAMERA NETWORK", "ALL FEEDS LOST", "NETWORK OVERRIDDEN", "BY DIRECTOR VOSS" },
         { "REACTOR COOLANT", "PUMPS 1 TO 3 ....... ONLINE", "PUMP 4 ............. OFFLINE", "CORE TEMPERATURE ... RISING" },
         { "", "", "", "" },
+        { "", "", "", "" },
         { "COMMUNICATIONS", "SURFACE UPLINK", "JAMMED", "NO CARRIER" },
         { "", "", "", "" },
       };
       int m = termMsg;
       drawTextLeft(msg[m][0], lx, TY0 + 100, 3.4f, g, true);
-      uint16_t c2 = (m == 2 || m == 3 || m == 6) ? red : g;
+      uint16_t c2 = (m == 2 || m == 3 || m == 7) ? red : g;
       for (int k = 1; k < 4; k++) drawTextLeft(msg[m][k], lx + 20, TY0 + 140 + k * 56, 2.8f, k == 1 ? c2 : g, true);
       if (cur) drawTextLeft("PRESS X TO RETURN", lx, TY1 - 30, 2.2f, gd, false);
       break;
@@ -5929,7 +6043,17 @@ static void drawTerminal() {
       if (cur) drawTextLeft("PRESS X TO RETURN", lx, TY1 - 30, 2.2f, gd, false);
       break;
   }
-  if (cur && termPage != TP_UNLOCK) fillRect(TX1 - 44, TY1 - 34, TX1 - 30, TY1 - 22, g);   // the cursor
+  if (termPage == TP_LOCKDOWN) {
+    float mid = (TX0 + TX1) / 2.0f;
+    drawVectorText("QUANTUM LOCKDOWN", mid, TY0 + 100, 4.4f, g, true);
+    drawVectorText(lockdownWasOn ? "ALREADY ACTIVE" : "ENGAGED", mid, TY0 + 150, 3.4f, rgb565(255, 220, 80), true);
+    snprintf(b, sizeof(b), "%d OF %d NUCLEAR SITES HACKED - FINAL", sitesHacked, NUKE_SITES);
+    drawVectorText(b, mid, TY0 + 214, 2.6f, g, false);
+    drawVectorText("NO FURTHER SITES CAN BE HACKED", mid, TY0 + 252, 2.6f, g, false);
+    if (sitesHacked > sitesLaunched) drawVectorText("WARNING: LAUNCH SEQUENCE ACTIVE FOR THE HACKED SITES", mid, TY0 + 310, 2.2f, red, true);
+    if (cur) drawTextLeft("PRESS X TO RETURN", lx, TY1 - 30, 2.2f, gd, false);
+  }
+  if (cur && termPage != TP_UNLOCK && termPage != TP_LOCKDOWN) fillRect(TX1 - 44, TY1 - 34, TX1 - 30, TY1 - 22, g);   // the cursor
 }
 
 // The opening: the grille rattles and falls, he lowers himself out of the
@@ -6124,13 +6248,6 @@ static void bevelBox(int x0, int y0, int x1, int y1, uint16_t face) {
   fillRect(x1 - 2, y0, x1, y1, rgb565(30, 34, 48));
 }
 
-static void drawArrowKey(int cx, int cy, bool up, bool lit) {
-  bevelBox(cx - 34, cy - 26, cx + 34, cy + 26, rgb565(84, 88, 160));
-  int d = up ? -1 : 1;
-  int xs[7] = { cx, cx + 20, cx + 9, cx + 9, cx - 9, cx - 9, cx - 20 };
-  int ys[7] = { cy + d * 16, cy, cy, cy - d * 14, cy - d * 14, cy, cy };
-  fillPolygon(xs, ys, 7, lit ? rgb565(255, 220, 80) : rgb565(150, 130, 60));
-}
 
 static void drawFacilityTerminal() {
   drawTermCase("FT-7 FACILITY TERMINAL");
@@ -6439,23 +6556,10 @@ static void drawPanel() {
   bevelBox(4, PANEL_Y + 4, SCREEN_W - 5, SCREEN_H - 5, face);
   const int mx0 = 390, mx1 = 890;              // the mini map: under the lift, in the middle
   drawMiniMap(mx0, PANEL_Y + 16, mx1, SCREEN_H - 18);
-  // on the left: where you are, and the car's arrows
+  // on the left: the nuclear launch sites
   bevelBox(20, PANEL_Y + 16, 372, SCREEN_H - 18, rgb565(70, 78, 120));
   char b[40];
-  snprintf(b, sizeof(b), "LIFT %c", shaftLetter(curShaft));
-  drawVectorText(b, 150, PANEL_Y + 62, 4.2f, rgb565(255, 220, 80), true);
-  if (stage == 2) {
-    char n[12];
-    s2LevelName(carFloor, n, sizeof(n));
-    snprintf(b, sizeof(b), "LEVEL %s", n);
-  }
-  else if (carFloor == SUB_FLOOR) snprintf(b, sizeof(b), "FLOOR SB");
-  else snprintf(b, sizeof(b), "FLOOR %d", carFloor + 1);
-  drawVectorText(b, 150, PANEL_Y + 112, 3.4f, rgb565(230, 236, 245), true);
-  bool movingUp = carMoving && carFloor * LEVEL_GAP < carWorldY, movingDown = carMoving && !movingUp;
-  drawArrowKey(310, PANEL_Y + 64, true, movingUp);
-  drawArrowKey(310, PANEL_Y + 140, false, movingDown);
-  drawVectorText(carMoving ? "MOVING" : "STOPPED", 150, PANEL_Y + 160, 2.4f, carMoving ? rgb565(255, 190, 70) : rgb565(120, 230, 140), false);
+  drawNukePanel(20, PANEL_Y + 16, 372, SCREEN_H - 18);
   // on the right: the details
   bevelBox(908, PANEL_Y + 16, SCREEN_W - 20, SCREEN_H - 18, rgb565(70, 78, 120));
   int seen = 0, kitsLeft = 0;
@@ -6523,6 +6627,10 @@ static void drawGameOver() {
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(120, 20, 14), 8.0f);
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(255, 70, 50), 3.0f);
     drawVectorText("POWER FAILURE - THE GENERATORS HAVE SHUT DOWN", SCREEN_W / 2, 186, 3.0f, rgb565(240, 240, 245), true);
+  } else if (gameOver == END_NUKES) {
+    drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(120, 20, 14), 8.0f);
+    drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(255, 70, 50), 3.0f);
+    drawVectorText("THE NUCLEAR MISSILES HAVE LANDED", SCREEN_W / 2, 186, 3.0f, rgb565(240, 240, 245), true);
   } else if (gameOver == END_BODY) {
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(120, 20, 14), 8.0f);
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(255, 70, 50), 3.0f);
@@ -7524,6 +7632,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
         hurt(1);
       }
       timeLeft -= dt;
+      updateNukes(dt);
       if (timeLeft > 60) warnSlot = 99;  // (the last minute: an alert and the lights flickering every ten seconds)
       else if (timeLeft > 0) {
         int slot = (int)ceilf(timeLeft / WARN_EVERY);

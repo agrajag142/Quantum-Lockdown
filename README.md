@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 029: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 030: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -107,8 +107,8 @@ DOCUMENTS; the rest have nothing.
   across the top with the lift in the middle, and a panel under it. In the
   panel, under the lift, the **mini map** - a yellow screen in a red-striped
   frame showing the rooms you've been in and the shafts as far as you've
-  ridden them, your place blinking. On its left: the lift and floor, and the
-  car's up / down arrows (lit while it moves). On its right: rooms visited,
+  ridden them, your place blinking. On its left: the nuclear launch sites
+  (see below). On its right: rooms visited,
   objects found, first aid kits left, the version and frame rate.
 - Nothing can be searched in the lift area.
 
@@ -166,6 +166,37 @@ Square): the lever goes up, the lamp turns green and its engine fan starts
 turning (100 points), and **5 minutes** go back on the clock (each one). All 3 must be on before the main computer in QUANTUM
 CONTROL will start. The map marks a generator in a room you've been in (its
 lamp red or green), and the lift area's panel counts them.
+
+## The nuclear launch sites (being tuned)
+
+The facility is hacking five nuclear launch sites - NORTH ATLANTIC, EASTERN
+EUROPE, PACIFIC, CENTRAL ASIA, SOUTHERN REGION - all through the game (both
+stages; the clock is play time, so it stops when the game is paused, on the
+map, in the settings and during the cut scenes). Each goes through three
+stages:
+
+1. **HACKED**, one after another: the first after 10 minutes, the next 6
+   minutes later (16 in all), then 5, 4 and 3 more (21, 25, 28 minutes).
+2. **LAUNCHED**: only once all five are hacked, or QUANTUM LOCKDOWN is on.
+   The hacked sites launch in turn: 5 minutes, then 4, 3, 2, 1 more.
+3. **LANDED**: 10 to 15 minutes (at random) after its launch.
+
+When every launched missile has landed: MISSION FAILED - THE NUCLEAR MISSILES
+HAVE LANDED. Each change is announced (NUCLEAR SITE HACKED: ..., MISSILE
+LAUNCHED: ..., IMPACT: ..., with an alarm).
+
+With nothing stopped, the timeline runs: hacked at 10, 16, 21, 25, 28
+minutes; launched at 33, 37, 40, 42, 43; all landed by about 53 to 58.
+
+**QUANTUM LOCKDOWN** is a new option on the main computer in QUANTUM CONTROL
+(the 7th): it stops the hacking - the sites hacked so far are final, the rest
+are SAFE - and the hacked ones start their launch countdown.
+
+**The panel's left box** (where the lift and floor used to be) shows the five
+sites: a box each for HACKED (HK, yellow), LAUNCHED (LN, orange) and LANDED
+(LD, red), lit once done and blinking while that stage's countdown runs, with
+the countdown on the right (SAFE for a site that can't be hacked any more, HIT
+once landed), and LOCKDOWN at the top once it's on.
 
 ## The facility terminal (the blueprint)
 
