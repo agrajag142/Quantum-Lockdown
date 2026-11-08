@@ -1,5 +1,5 @@
 // Lays out 2000 complexes and checks each: 128 pieces of equipment, 4 or 5 in
-// every room, 18 with a quantum drive in them, 5 with documents (others), 2 to 6 rooms in every column, a room
+// every room, 12 with a quantum drive in them, 5 with documents (others), 2 to 6 rooms in every column, a room
 // in the top left corner, 5 first aid kits in different rooms, every room's
 // pieces placed, standing on a platform clear of the lifts, none overlapping;
 // the hazard rooms (6 electrified, 3 dark, 6 with a camera, 3 with two, 3
@@ -49,8 +49,10 @@ int main() {
       docRooms += here > 0;
     }
     if (docs != DOCUMENTS || docRooms != DOCUMENTS) { bad++; printf("seed %u: %d documents in %d rooms\n", seed, docs, docRooms); }
-    int gens = 0;
+    int gens = 0, terms = 0;
     for (int i = 0; i < ROOM_COUNT; i++) gens += rooms[i].gen;
+    for (int i = 0; i < ROOM_COUNT; i++) terms += rooms[i].term;
+    if (terms != 1 || rooms[0].term) { bad++; printf("seed %u: %d facility terminals (room 1: %d)\n", seed, terms, rooms[0].term); }
     if (gens != GENERATORS || roomAt[rooms[CONTROL_ROOM].row][CONTROL_COL] != CONTROL_ROOM || rooms[CONTROL_ROOM].topL || rooms[CONTROL_ROOM].topR) {
       bad++;
       printf("seed %u: %d generators, QUANTUM CONTROL at row %d\n", seed, gens, rooms[CONTROL_ROOM].row);
@@ -84,7 +86,7 @@ int main() {
       bigFans += ornCount > 0 && [&] { for (int k = 0; k < ornCount; k++) if (orn[k].kind == ORN_BIGFAN) return true; return false; }();
       ornTotal += ornCount;
       placeDecor(rooms[i], wideRooms[rooms[i].tpl]);
-      if (decorCount != rooms[i].decorN + (rooms[i].kit ? 1 : 0) + (rooms[i].gen ? 1 : 0)) {
+      if (decorCount != rooms[i].decorN + (rooms[i].kit ? 1 : 0) + (rooms[i].gen ? 1 : 0) + (rooms[i].term ? 1 : 0)) {
         bad++;
         printf("seed %u room %d: %d of %d pieces placed\n", seed, i + 1, decorCount, rooms[i].decorN);
       }
@@ -111,6 +113,6 @@ int main() {
     }
   }
   printf("wall ornaments: %.1f a room on average, a big fan in %.0f%% of rooms\n", ornTotal / 60000.0, bigFans / 600.0);
-  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), 18 drives (one at most a room), 5 documents (different rooms, not in drive pieces), 5 first aid kits, 2-6 rooms a column, no overlaps, 3 generators, QUANTUM CONTROL in the middle column, at most 2 decorations a room, 6 electrified, 3 dark, 6 one-camera, 3 two-camera, 3 drone rooms, signs up");
+  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), one facility terminal (not room 1), 12 drives (one at most a room), 5 documents (different rooms, not in drive pieces), 5 first aid kits, 2-6 rooms a column, no overlaps, 3 generators, QUANTUM CONTROL in the middle column, at most 2 decorations a room, 6 electrified, 3 dark, 6 one-camera, 3 two-camera, 3 drone rooms, signs up");
   return bad != 0;
 }

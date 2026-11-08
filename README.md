@@ -1,12 +1,12 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 025: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 026: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
 on the walls (warning lights, fans, coolant tubes...), and room hazards:
-electrified floors, dark rooms, security cameras and drones; 18 QUANTUM
+electrified floors, dark rooms, security cameras and drones; 12 QUANTUM
 DRIVES to find, 3 power generators, QUANTUM CONTROL with its drive bay and
 main computer, the sub basement it unlocks and the QUANTUMLOOP to stage 2,
 stage 2's QUANTUM LAB (six lifts, 21 rooms, card readers, the kitchen and
@@ -65,7 +65,7 @@ bookshelf and coat stand; new, a desk with a computer (its screen scrolling),
 a steel cupboard and a computer rack (its lamps winking, tapes turning).
 
 Each column of rooms has its own wall colour (teal, maroon, olive, navy,
-purple, rust, forest green, mustard, plum - `wallColours` in `src/game.cpp`). 18 of them, each in a different room, have
+purple, rust, forest green, mustard, plum - `wallColours` in `src/game.cpp`). 12 of them, each in a different room, have
 a QUANTUM DRIVE in them, and 5 others (each in a different room) TOP SECRET
 DOCUMENTS; the rest have nothing.
 
@@ -151,11 +151,37 @@ turning (100 points), and **5 minutes** go back on the clock (each one). All 3 m
 CONTROL will start. The map marks a generator in a room you've been in (its
 lamp red or green), and the lift area's panel counts them.
 
+## The facility terminal (the blueprint)
+
+One room (at random, never room 1) has the **FACILITY TERMINAL** (FT-7): a
+tall grey console standing on its own, a green screen saying FACILITY /
+LOGIN with a blinking cursor, a keyboard shelf and a blue beacon turning on
+top - nothing else looks like it. Search it (hold Square) to log in: the
+screen fills the view (like the main computer's), the login is typed in
+(MAINTENANCE, a password, ACCESS GRANTED; X skips it), then a menu - UP /
+DOWN and X:
+
+1. **DOWNLOAD FACILITY BLUEPRINT**: the files come down one by one with a
+   progress bar (about 3 seconds, 500 points), then BLUEPRINT DOWNLOADED -
+   POWER GENERATOR LOCATIONS ARE NOW SHOWN ON YOUR MAP.
+2. **FACILITY STATUS**: generators online, time to the power failure, drives
+   missing, where the main computer is.
+3. **MAINTENANCE LOG**: what happened (the generators tripped, the drives
+   pulled from the bay...).
+4. **LOG OFF**. The first time you log off after downloading the blueprint,
+   the Options map opens by itself.
+
+With the blueprint, the **Options map** shows the three generators' rooms
+in **yellow** (green once that generator is on), with their generator icon,
+whether you've been in them or not, and a line at the bottom saying so. The
+lift area's **mini map** shows them as orange boxes with a G (green once
+on). The terminal can be logged into again any time.
+
 ## QUANTUM CONTROL
 
 A room of its own in the middle column of the map (between lifts E and F), on
 a random row, one level high, with a door at the bottom on each side. Its
-equipment is NUCLEAR MISSION's LCC, with the new **QUANTUM DRIVE BAY** (18
+equipment is NUCLEAR MISSION's LCC, with the new **QUANTUM DRIVE BAY** (12
 slots and a counter) on the left; the main computer and its printer in the
 middle, a display over it (the countdown, once there is power), and on the
 right the reel to reel tape units, the fan and three computer racks. The map always shows it (in
@@ -167,9 +193,9 @@ purple).
   - Without all 3 generators on: a NO POWER panel, with a picture of a
     generator and how many are on.
   - With power: the close-up of the computer (as NUCLEAR MISSION's launch
-    computer). It boots, checks the drive bay, and with fewer than 18 drives
+    computer). It boots, checks the drive bay, and with fewer than 12 drives
     loaded stops at **UNABLE TO BOOT** (X logs off).
-  - With all 18 loaded it boots to a menu: UP / DOWN to choose, X or Square to
+  - With all 12 loaded it boots to a menu: UP / DOWN to choose, X or Square to
     pick. Most items only show a page (core status, temporal field, personnel
     files...). **UNLOCK SUB BASEMENT LIFT ACCESS** names a lift shaft, picked
     at random from those that go down to the bottom floor. LOG OFF to leave.
@@ -422,7 +448,7 @@ The settings for these are at the top of `src/game.cpp` (`CAM_...`, `DRONE_...`,
 `ELEC_...`, the numbers of rooms). One hazard at most in a room; 9 rooms (30%, room 1 among them) have none.
 
 `sim/check_layout.cpp` lays out 2000 complexes and checks the counts (128
-pieces, 4 or 5 a room, 18 drives, 5 documents, 5 first aid kits, 2-6 rooms a column, the
+pieces, 4 or 5 a room, one facility terminal, 12 drives, 5 documents, 5 first aid kits, 2-6 rooms a column, the
 hazard rooms), that every piece stands on its platform clear
 of the lifts, that no two overlap, and that every electrified room has its sign. `sim/check_rooms.cpp` checks that every
 layout can be crossed with every door combination and every spot reached:

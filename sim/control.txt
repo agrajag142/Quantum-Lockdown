@@ -1,5 +1,5 @@
 # QUANTUM CONTROL and the way down (seed 1): a power generator's room; the main
-# computer with no power; 10 drives loaded and the boot fails; all 18 loaded,
+# computer with no power; 7 drives loaded and the boot fails; all 12 loaded,
 # the menu, UNLOCK SUB BASEMENT LIFT ACCESS; then down to the sub basement.
 seed 1
 hold NONE 30
@@ -13,7 +13,7 @@ walkto 640
 tap USE
 hold NONE 30
 shot 61_no_power
-control 10 3
+control 7 3
 walkto 160
 tap USE
 hold NONE 180
@@ -24,7 +24,7 @@ hold NONE 260
 shot 63_unable_to_boot
 hold NONE 30
 tap JUMP
-control 18 3
+control 12 3
 walkto 160
 tap USE
 hold NONE 330
