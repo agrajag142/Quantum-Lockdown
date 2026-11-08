@@ -52,6 +52,12 @@ int main() {
     int gens = 0, terms = 0;
     for (int i = 0; i < ROOM_COUNT; i++) gens += rooms[i].gen;
     for (int i = 0; i < ROOM_COUNT; i++) terms += rooms[i].term;
+    for (int i = 0; i < ROOM_COUNT; i++)
+      if (rooms[i].term) {
+        bool drive = false;
+        for (int k = 0; k < MAX_DECOR; k++) drive |= rooms[i].holds[k];
+        if (drive || rooms[i].gen) { bad++; printf("seed %u: the terminal's room %d has a drive or a generator\n", seed, i + 1); }
+      }
     if (terms != 1 || rooms[0].term) { bad++; printf("seed %u: %d facility terminals (room 1: %d)\n", seed, terms, rooms[0].term); }
     if (gens != GENERATORS || roomAt[rooms[CONTROL_ROOM].row][CONTROL_COL] != CONTROL_ROOM || rooms[CONTROL_ROOM].topL || rooms[CONTROL_ROOM].topR) {
       bad++;
@@ -113,6 +119,6 @@ int main() {
     }
   }
   printf("wall ornaments: %.1f a room on average, a big fan in %.0f%% of rooms\n", ornTotal / 60000.0, bigFans / 600.0);
-  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), one facility terminal (not room 1), 12 drives (one at most a room), 5 documents (different rooms, not in drive pieces), 5 first aid kits, 2-6 rooms a column, no overlaps, 3 generators, QUANTUM CONTROL in the middle column, at most 2 decorations a room, 6 electrified, 3 dark, 6 one-camera, 3 two-camera, 3 drone rooms, signs up");
+  printf("2000 layouts: %s\n", bad ? "PROBLEMS (above)" : "OK - 128 pieces (4 or 5 a room), one facility terminal (not room 1, no drive or generator with it), 12 drives (one at most a room), 5 documents (different rooms, not in drive pieces), 5 first aid kits, 2-6 rooms a column, no overlaps, 3 generators, QUANTUM CONTROL in the middle column, at most 2 decorations a room, 6 electrified, 3 dark, 6 one-camera, 3 two-camera, 3 drone rooms, signs up");
   return bad != 0;
 }

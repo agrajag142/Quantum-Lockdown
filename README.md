@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 027: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 028: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -153,7 +153,8 @@ lamp red or green), and the lift area's panel counts them.
 
 ## The facility terminal (the blueprint)
 
-One room (at random, never room 1) has the **FACILITY TERMINAL** (FT-7): a
+One room (at random, never room 1, and never a room with a quantum drive or
+a power generator) has the **FACILITY TERMINAL** (FT-7): a
 tall grey console standing on its own, a green screen saying FACILITY /
 LOGIN with a blinking cursor, a keyboard shelf and a blue beacon turning on
 top - nothing else looks like it. Search it (hold Square) to log in: the
@@ -190,6 +191,10 @@ After the drive scan, the rooms that still have a quantum drive to find show
 in **blue** on the Options map (with a drive icon; a yellow strip as well if
 it's a generator's room too) and as blue boxes with a Q on the mini map. A
 room drops off as soon as its drive is found.
+
+Once you've been in the terminal's room, it shows in **purple** on the
+Options map (with a little terminal icon) and as a purple box with a T on the
+mini map, so you can find your way back to it.
 
 ## QUANTUM CONTROL
 
@@ -491,7 +496,8 @@ pauses the game and the clock:
 
 - **STAGE MUSIC** ON / OFF
 - **ELEVATOR MUSIC** ON / OFF (both remembered: `settings.bin` beside the
-  high scores)
+  high scores). With the elevator music off, the stage music (if it's on)
+  carries on playing in the lift car instead of going quiet.
 - **JUMP TO STAGE 2** (for testing): straight to the sub basement's lift
   area at the end of stage 1 (unlocked), ready to go into the station
 - **ALL ACCESS (TEST)** ON / OFF (for testing stage 2): every card reader

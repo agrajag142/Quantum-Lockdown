@@ -39,7 +39,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "027"
+#define GAME_VERSION      "028"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -455,10 +455,14 @@ static void layOut(uint32_t seed) {
     ri.gen = true;
     k++;
   }
-  // the facility terminal: one, in a room with a spare spot for it (not room 1)
+  // the facility terminal: one, in a room with a spare spot for it (not room 1), and no quantum
+  // drive or power generator in that room
   for (int tries = 0; tries < 1000; tries++) {
     RoomInfo &ri = rooms[1 + rnd(ROOM_COUNT - 1)];
     if (ri.decorN + (ri.kit ? 1 : 0) + (ri.gen ? 1 : 0) >= wideRooms[ri.tpl].spotCount) continue;
+    bool drive = false;
+    for (int m = 0; m < MAX_DECOR; m++) drive |= ri.holds[m];
+    if (drive || ri.gen) continue;
     ri.term = true;
     break;
   }
@@ -6377,6 +6381,12 @@ static void drawMiniMap(int x0, int y0, int x1, int y1) {
       drawRectOutline(rx + 2, ry, rx + RW - 3, ry + RH - 1, ink, 2);
       continue;
     }
+    if (ri.term && ri.visited) {                // the facility terminal's room: purple, a T
+      fillRect(rx + 2, ry, rx + RW - 3, ry + RH - 1, rgb565(130, 50, 190));
+      drawRectOutline(rx + 2, ry, rx + RW - 3, ry + RH - 1, ink, 1);
+      drawVectorText("T", rx + RW / 2.0f, ry + RH / 2.0f, 1.3f, rgb565(250, 240, 255), true);
+      continue;
+    }
     if (driveScan && driveLeftIn(i)) {         // the drive scan: rooms with a drive to find, blue
       fillRect(rx + 2, ry, rx + RW - 3, ry + RH - 1, rgb565(40, 110, 235));
       drawRectOutline(rx + 2, ry, rx + RW - 3, ry + RH - 1, ink, 1);
@@ -6596,9 +6606,10 @@ static void drawMap() {
       continue;
     }
     bool bp = blueprint && ri.gen;           // the blueprint: the generators' rooms in yellow (green once on)
+    bool ft = ri.term && ri.visited;         // the facility terminal's room, once he has been in it: purple
     bool ds = driveScan && driveLeftIn(i);   // the drive scan: rooms with a drive still to find in blue
-    uint16_t fill = ds ? rgb565(40, 110, 235) : bp ? (ri.genOn ? rgb565(40, 140, 70) : rgb565(230, 196, 40)) : ri.visited ? rgb565(40, 64, 96) : rgb565(22, 26, 34);
-    uint16_t edge = bp ? rgb565(255, 240, 150) : ds ? rgb565(150, 200, 255) : ri.visited ? rgb565(110, 160, 220) : rgb565(70, 78, 96);
+    uint16_t fill = ft ? rgb565(130, 50, 190) : ds ? rgb565(40, 110, 235) : bp ? (ri.genOn ? rgb565(40, 140, 70) : rgb565(230, 196, 40)) : ri.visited ? rgb565(40, 64, 96) : rgb565(22, 26, 34);
+    uint16_t edge = ft ? rgb565(220, 160, 255) : bp ? rgb565(255, 240, 150) : ds ? rgb565(150, 200, 255) : ri.visited ? rgb565(110, 160, 220) : rgb565(70, 78, 96);
     fillRect(x0, y0, x0 + RW - 1, y0 + RH - 1, fill);
     drawRectOutline(x0, y0, x0 + RW - 1, y0 + RH - 1, edge, 2);
     uint16_t door = rgb565(80, 230, 120);
@@ -6608,6 +6619,11 @@ static void drawMap() {
     char b[8];
     snprintf(b, sizeof(b), "%d", i + 1);
     if (ds && bp) fillRect(x0 + 2, y0 + RH - 14, x0 + RW - 3, y0 + RH - 3, ri.genOn ? rgb565(40, 140, 70) : rgb565(230, 196, 40));   // (both: a yellow strip)
+    if (ft) {                                  // a terminal's icon: a screen on a stand
+      fillRect(x0 + 7, y0 + 7, x0 + 23, y0 + 19, rgb565(230, 220, 255));
+      fillRect(x0 + 9, y0 + 9, x0 + 21, y0 + 17, rgb565(40, 200, 110));
+      fillRect(x0 + 13, y0 + 19, x0 + 17, y0 + 27, rgb565(230, 220, 255));
+    }
     if (ds) {                                  // a drive's icon
       fillRect(x0 + 8, y0 + 8, x0 + 20, y0 + 26, rgb565(200, 230, 255));
       fillRect(x0 + 12, y0 + 11, x0 + 15, y0 + 23, rgb565(30, 80, 200));
@@ -6675,10 +6691,12 @@ static void drawMap() {
     fillCircle(x, (int)y, 7, blink ? rgb565(255, 190, 70) : rgb565(255, 240, 200));
   }
   int bottom = top + ROWS * RH + (ROWS - 1) * GAP;
-  if (blueprint || driveScan) {   // the facility terminal's: what the yellow and the blue mean
-    char key[120];
-    snprintf(key, sizeof(key), "%s%s%s", blueprint ? "GENERATOR ROOMS IN YELLOW (GREEN ONCE ON)" : "", blueprint && driveScan ? "     " : "",
-             driveScan ? "QUANTUM DRIVES TO FIND IN BLUE" : "");
+  bool termKnown = false;
+  for (int i = 0; i < ROOM_COUNT; i++) termKnown |= rooms[i].term && rooms[i].visited;
+  if (blueprint || driveScan || termKnown) {   // the facility terminal's: what the purple, yellow and blue mean
+    char key[160];
+    snprintf(key, sizeof(key), "%s%s%s%s%s", termKnown ? "FACILITY TERMINAL IN PURPLE" : "", termKnown && (blueprint || driveScan) ? "     " : "",
+             blueprint ? "GENERATORS IN YELLOW" : "", blueprint && driveScan ? "     " : "", driveScan ? "DRIVES TO FIND IN BLUE" : "");
     drawVectorText(key, SCREEN_W / 2, bottom + 64, 2.2f, blink ? rgb565(255, 220, 80) : rgb565(230, 196, 40), true);
   }
   else
@@ -7627,6 +7645,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (gameOver != END_NONE) drawGameOver();
   // the music: the lift's tune in the car, stage 1's everywhere else; the lift's motor
   int tune = mode == MODE_SHAFT && inCar(agX) && agState != ST_JUMP ? 1 : (stage == 2 ? 4 : 2);   // (the lift car's, else the stage's)
+  if (tune == 1 && !musicOn[0].load(std::memory_order_relaxed)) tune = stage == 2 ? 4 : 2;   // (elevator music off: the stage's carries on in the car)
   if (gameOver != END_NONE || scene == SC_STAGE_CLEAR) tune = 0;
   else if (scene == SC_RIDE || scene == SC_STAGE2_BRIEF || scene == SC_FADE_OUT || scene == SC_ARRIVE) tune = 4;
   tuneWanted.store(tune, std::memory_order_relaxed);
