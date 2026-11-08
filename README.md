@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 030: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 031: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -182,8 +182,13 @@ stages:
 3. **LANDED**: 10 to 15 minutes (at random) after its launch.
 
 When every launched missile has landed: MISSION FAILED - THE NUCLEAR MISSILES
-HAVE LANDED. Each change is announced (NUCLEAR SITE HACKED: ..., MISSILE
-LAUNCHED: ..., IMPACT: ..., with an alarm).
+HAVE LANDED. Each change is announced without stopping the game: red words
+(NORTH ATLANTIC HACKED, ... LAUNCHED, ... IMPACT) come out of the middle of
+the screen, small and faint, and fly at you, growing huge as they fade
+away (2.6 seconds), while you carry on playing. A hack sounds like a heavy
+digital clock ticking (as on the TV show 24), dying away over about 4
+seconds; a launch has the ticking and the alarm; an impact the power
+failing.
 
 With nothing stopped, the timeline runs: hacked at 10, 16, 21, 25, 28
 minutes; launched at 33, 37, 40, 42, 43; all landed by about 53 to 58.
@@ -193,10 +198,11 @@ minutes; launched at 33, 37, 40, 42, 43; all landed by about 53 to 58.
 are SAFE - and the hacked ones start their launch countdown.
 
 **The panel's left box** (where the lift and floor used to be) shows the five
-sites: a box each for HACKED (HK, yellow), LAUNCHED (LN, orange) and LANDED
-(LD, red), lit once done and blinking while that stage's countdown runs, with
-the countdown on the right (SAFE for a site that can't be hacked any more, HIT
-once landed), and LOCKDOWN at the top once it's on.
+sites: a wide box each under HACKED (yellow), LAUNCH (orange) and LANDED
+(red), lit once done and blinking while that stage is under way. There are no
+countdowns - you have to learn how long things take. A site that can't be
+hacked any more after the lockdown is dimmed, its boxes dark green; LOCKDOWN
+shows at the top once it's on.
 
 ## The facility terminal (the blueprint)
 
@@ -561,7 +567,7 @@ pauses the game and the clock:
 | Cross | somersault (stage 2, close to the maintenance man: knock him out) |
 | Square or Circle | hold to search equipment (stage 2: search the maintenance man, put him in the bin, a first aid cabinet) |
 | Options or touchpad | the map (shows every room and where its doors lead), and pauses the game |
-| Triangle | the settings (pauses the game); on the map: lay out a new complex |
+| Triangle | the settings (pauses the game) |
 
 Lift pads start at the stop nearest the door he came in by. Standing beside a
 pad's shaft at one of its stops, UP or DOWN calls the pad to him.

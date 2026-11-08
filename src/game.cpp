@@ -39,7 +39,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "030"
+#define GAME_VERSION      "031"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -234,6 +234,10 @@ static int sitesHacked = 0, sitesLaunched = 0;
 static float hackT = 0, launchT = 0;        // seconds into the hack / launch under way
 static float landLeft[NUKE_SITES];          // a launched one: seconds till it lands (<= 0: landed)
 static bool lockdown = false;               // QUANTUM LOCKDOWN (the main computer): no more hacking
+#define FLYERS 4                            // (their news, flying out at him: see drawFlyers)
+#define FLYER_SECONDS 2.6f
+struct Flyer { char text[40]; float t; bool on; };
+static Flyer flyers[FLYERS];
 static bool blueprint = false;             // the facility blueprint downloaded: the generators' rooms shown on the maps
 static bool bpMapShown = false;            // (logging off after the download: the map, once)
 static bool driveScan = false;             // the QUANTUM DRIVE SCAN run: rooms with drives still to find shown on the maps
@@ -431,6 +435,7 @@ static void layOut(uint32_t seed) {
   blueprint = bpMapShown = driveScan = scanMapShown = false;
   sitesHacked = sitesLaunched = 0;
   hackT = launchT = 0;
+  for (int i = 0; i < FLYERS; i++) flyers[i].on = false;
   lockdown = false;
   // the rooms with one more piece of equipment, to make EQUIPMENT_TOTAL
   for (int extra = EQUIPMENT_TOTAL - ROOM_COUNT * (EQUIPMENT_TOTAL / ROOM_COUNT); extra > 0;) {
@@ -769,7 +774,7 @@ void micromod4_get_audio(short *output_buffer, long count);
 
 enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND,
                      SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN, SFX_SCREAM, SFX_ALARM, SFX_SHOT, SFX_HIT,
-                     SFX_POWERUP, SFX_CLICK, SFX_DENIED, SFX_KEY, SFX_SHUTDOWN, SFX_WARN, SFX_LOOPPOWER, SFX_DOORS };
+                     SFX_POWERUP, SFX_CLICK, SFX_DENIED, SFX_KEY, SFX_SHUTDOWN, SFX_WARN, SFX_LOOPPOWER, SFX_DOORS, SFX_TICK24 };
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -868,6 +873,15 @@ static void startEffect(uint8_t sfx) {
       startVoice(WAVE_SQUARE, 30, 120, 80, 2000, 0.06f);
       startVoice(WAVE_TRIANGLE, 1047, 1047, 2100, 300, 0.30f);
       startVoice(WAVE_TRIANGLE, 1568, 1568, 2250, 500, 0.25f);
+      break;
+    case SFX_TICK24:                           // a site hacked: a heavy digital clock ticking (the TV show 24's), dying away
+      for (int k = 0; k < 6; k++) {
+        float lv = 1.0f - k * 0.13f;
+        startVoice(WAVE_SQUARE, 150, 95, k * 760, 90, 0.20f * lv);          // the thud
+        startVoice(WAVE_TRIANGLE, 1180, 880, k * 760, 45, 0.24f * lv);      // the click on top
+        startVoice(WAVE_NOISE, 2600, 600, k * 760, 35, 0.12f * lv);
+        startVoice(WAVE_SQUARE, 150, 95, k * 760 + 380, 60, 0.10f * lv);    // ...and its softer echo
+      }
       break;
     case SFX_DOORS:                            // its doors sliding: a hiss and a hum
       startVoice(WAVE_NOISE, 3000, 600, 0, 900, 0.20f);
@@ -4099,6 +4113,32 @@ static const char *const termItems[TERM_ITEMS] = {
 #define BOOT_CHECK 3.0f                // the boot: the drive bay is checked at this point...
 #define BOOT_DONE  4.4f                // ...and with all 36 loaded, the menu comes up here
 
+// The sites' news: red words coming out of the middle of the screen at you, growing and fading
+// (the game carries on underneath)
+static void flyerAdd(const char *text) {   // (a free one, else the oldest)
+  int k = 0;
+  for (int i = 1; i < FLYERS; i++) if (flyers[i].t > flyers[k].t) k = i;
+  for (int i = 0; i < FLYERS; i++) if (!flyers[i].on) { k = i; break; }
+  snprintf(flyers[k].text, sizeof(flyers[k].text), "%s", text);
+  flyers[k].t = 0;
+  flyers[k].on = true;
+}
+static void updateFlyers(float dt) {
+  for (int i = 0; i < FLYERS; i++)
+    if (flyers[i].on && (flyers[i].t += dt) >= FLYER_SECONDS) flyers[i].on = false;
+}
+static void drawFlyers() {
+  gfxClip(HUD_H, PLAY_Y1);
+  for (int i = 0; i < FLYERS; i++) {
+    if (!flyers[i].on) continue;
+    float k = flyers[i].t / FLYER_SECONDS;                       // 0..1
+    float size = 1.4f / (1.05f - k);                             // coming at him: small in the distance, then huge at the glass
+    float a = k < 0.12f ? k / 0.12f : k > 0.6f ? 1.0f - (k - 0.6f) / 0.4f : 1.0f;
+    drawVectorTextA(flyers[i].text, SCREEN_W / 2.0f, (HUD_H + PLAY_Y1) / 2.0f, size, 255, 40, 30, 0.85f * a, fmaxf(1.5f, size * 0.55f));
+  }
+  gfxClipAll();
+}
+
 // The launch sites: hacking, launching, landing (in play time)
 static void updateNukes(float dt) {
   char b[64];
@@ -4106,9 +4146,9 @@ static void updateNukes(float dt) {
     hackT += dt;
     if (hackT >= HACK_MINUTES[sitesHacked] * 60) {
       hackT = 0;
-      snprintf(b, sizeof(b), "NUCLEAR SITE HACKED: %s", siteName[sitesHacked]);
-      showMsg(b, 4.0f);
-      sfxPlay(SFX_ALARM);
+      snprintf(b, sizeof(b), "%s HACKED", siteName[sitesHacked]);
+      flyerAdd(b);
+      sfxPlay(SFX_TICK24);
       sitesHacked++;
     }
   }
@@ -4118,8 +4158,9 @@ static void updateNukes(float dt) {
     if (launchT >= LAUNCH_MINUTES[sitesLaunched] * 60) {
       launchT = 0;
       landLeft[sitesLaunched] = 60.0f * (LAND_MIN_MINUTES + (LAND_MAX_MINUTES - LAND_MIN_MINUTES) * (rnd32() % 1000) / 1000.0f);
-      snprintf(b, sizeof(b), "MISSILE LAUNCHED: %s", siteName[sitesLaunched]);
-      showMsg(b, 4.0f);
+      snprintf(b, sizeof(b), "%s LAUNCHED", siteName[sitesLaunched]);
+      flyerAdd(b);
+      sfxPlay(SFX_TICK24);
       sfxPlay(SFX_ALARM);
       sitesLaunched++;
     }
@@ -4129,8 +4170,8 @@ static void updateNukes(float dt) {
     if (landLeft[i] > 0) {
       landLeft[i] -= dt;
       if (landLeft[i] <= 0) {
-        snprintf(b, sizeof(b), "IMPACT: %s", siteName[i]);
-        showMsg(b, 4.0f);
+        snprintf(b, sizeof(b), "%s IMPACT", siteName[i]);
+        flyerAdd(b);
         sfxPlay(SFX_SHUTDOWN);
       }
     }
@@ -4140,43 +4181,31 @@ static void updateNukes(float dt) {
 }
 
 // The left of the panel: the five sites, a box each for HACKED, LAUNCHED, LANDED (yellow, orange,
-// red when done; blinking while its countdown runs), and the countdown under way
+// red when done; blinking while that stage is under way). No countdowns: he has to learn the timing.
 static void drawNukePanel(int x0, int y0, int x1, int y1) {
   (void)y1;
   bool blink = fmodf(clockT, 0.8f) < 0.5f;
   drawVectorText("NUCLEAR SITES", x0 + 14 + vectorTextWidth("NUCLEAR SITES", 1.9f) / 2, y0 + 16, 1.9f, rgb565(255, 220, 80), false);
   if (lockdown) drawVectorText("LOCKDOWN", x1 - 14 - vectorTextWidth("LOCKDOWN", 1.6f) / 2, y0 + 16, 1.6f, rgb565(120, 230, 140), true);
-  static const char *const head[3] = { "HK", "LN", "LD" };   // (hacked, launched, landed)
-  const int bx0 = x0 + 186, bw = 22, gap = 6;
-  for (int c = 0; c < 3; c++) drawVectorText(head[c], bx0 + c * (bw + gap) + bw / 2.0f, y0 + 38, 1.2f, rgb565(190, 200, 220), false);
+  static const char *const head[3] = { "HACKED", "LAUNCH", "LANDED" };
+  const int bx0 = x0 + 150, gap = 8, bw = (x1 - 12 - bx0 - 2 * gap) / 3;
+  for (int c = 0; c < 3; c++) drawVectorText(head[c], bx0 + c * (bw + gap) + bw / 2.0f, y0 + 40, 1.15f, rgb565(190, 200, 220), false);
   const uint16_t done[3] = { rgb565(240, 210, 40), rgb565(250, 130, 30), rgb565(230, 40, 30) };
-  char b[16];
   for (int i = 0; i < NUKE_SITES; i++) {
-    int y = y0 + 58 + i * 26;
+    int y = y0 + 60 + i * 26;
     bool hacked = i < sitesHacked, launched = i < sitesLaunched, landed = launched && landLeft[i] <= 0;
     bool safe = lockdown && !hacked;
     drawVectorText(siteName[i], x0 + 14 + vectorTextWidth(siteName[i], 1.35f) / 2, y, 1.35f, safe ? rgb565(110, 120, 140) : rgb565(220, 226, 240), false);
     bool st[3] = { hacked, launched, landed };
     int active = -1;
-    float left = 0;
-    if (launched && !landed) { active = 2; left = landLeft[i]; }
-    else if (hacked && !launched && i == sitesLaunched && (sitesHacked == NUKE_SITES || lockdown)) { active = 1; left = LAUNCH_MINUTES[i] * 60 - launchT; }
-    else if (!hacked && !lockdown && i == sitesHacked) { active = 0; left = HACK_MINUTES[i] * 60 - hackT; }
+    if (launched && !landed) active = 2;
+    else if (hacked && !launched && i == sitesLaunched && (sitesHacked == NUKE_SITES || lockdown)) active = 1;
+    else if (!hacked && !lockdown && i == sitesHacked) active = 0;
     for (int c = 0; c < 3; c++) {
       int bx = bx0 + c * (bw + gap);
-      uint16_t col = st[c] ? done[c] : (active == c && blink ? done[c] : rgb565(44, 48, 62));
-      fillRect(bx, y - 8, bx + bw, y + 8, col);
-      drawRectOutline(bx, y - 8, bx + bw, y + 8, rgb565(130, 138, 160), 1);
-    }
-    if (active >= 0) {
-      int sec = (int)ceilf(fmaxf(0, left));
-      snprintf(b, sizeof(b), "%d:%02d", sec / 60, sec % 60);
-      const uint16_t txt[3] = { rgb565(250, 220, 70), rgb565(255, 160, 70), rgb565(255, 120, 110) };
-      drawVectorText(b, x1 - 14 - vectorTextWidth(b, 1.6f) / 2, y, 1.6f, txt[active], false);
-    } else if (safe) {
-      drawVectorText("SAFE", x1 - 14 - vectorTextWidth("SAFE", 1.6f) / 2, y, 1.6f, rgb565(120, 230, 140), false);
-    } else if (landed) {
-      drawVectorText("HIT", x1 - 14 - vectorTextWidth("HIT", 1.6f) / 2, y, 1.6f, rgb565(255, 120, 110), false);
+      uint16_t col = st[c] ? done[c] : (active == c && blink ? done[c] : safe ? rgb565(36, 60, 48) : rgb565(44, 48, 62));
+      fillRect(bx, y - 9, bx + bw, y + 9, col);
+      drawRectOutline(bx, y - 9, bx + bw, y + 9, rgb565(130, 138, 160), 1);
     }
   }
 }
@@ -6825,7 +6854,7 @@ static void drawMap() {
   else
     drawVectorText("EACH ROOM: A DOOR AT THE TOP OR THE BOTTOM ON EACH SIDE (GREEN) - THE LIFTS STOP ONLY AT DOORS", SCREEN_W / 2,
                    bottom + 64, 1.8f, rgb565(150, 158, 176), false);
-  drawVectorText("OPTIONS: BACK TO THE GAME     TRIANGLE: LAY OUT A NEW COMPLEX", SCREEN_W / 2, bottom + 92, 2.2f,
+  drawVectorText("OPTIONS: BACK TO THE GAME", SCREEN_W / 2, bottom + 92, 2.2f,
                  rgb565(200, 206, 220), true);
 }
 
@@ -7621,7 +7650,6 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
 
   if ((pressed & BTN_MAP) && !termOn && scene == SC_NONE) mapOn = !mapOn;   // (the map pauses everything, the clock too)
   if (mapOn || settingsOn || briefingOn || scene != SC_NONE) {
-    if (mapOn && (pressed & BTN_NEW)) newGame();
     pressed = 0;
   } else {
     if (gameOver == END_NONE && introT < 0) {
@@ -7633,6 +7661,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
       }
       timeLeft -= dt;
       updateNukes(dt);
+      updateFlyers(dt);
       if (timeLeft > 60) warnSlot = 99;  // (the last minute: an alert and the lights flickering every ten seconds)
       else if (timeLeft > 0) {
         int slot = (int)ceilf(timeLeft / WARN_EVERY);
@@ -7749,6 +7778,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (itemShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawItemPanel();
   if (docShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawDocPanel();
   if (stage == 2 && mode == MODE_ROOM && npcCount > 0 && !mapOn && gameOver == END_NONE) drawSuspicionMeter();
+  if (!mapOn) drawFlyers();
   if (cardShowT > 0 && !mapOn && gameOver == END_NONE) drawCardPanel();
   if (mapOn) drawMap();
   else if (itemShowT <= 0 && !briefingOn && !settingsOn && scene != SC_STAGE_CLEAR && scene != SC_STAGE2_BRIEF && scene != SC_RIDE) drawMessage();

@@ -379,3 +379,32 @@ void drawPersonU(const AgentPose &p, float x, float floorY, int facing, float sc
   int mx, my;
   personDraw(p, x * UNIT_K, floorY * UNIT_K, facing, scale * UNIT_K, (uint8_t)kind, agPolyPx, agCirclePx, mx, my);
 }
+
+// Vector text, see-through (a: 0..1): each stroke a blended quad, w units wide
+void drawVectorTextA(const char *text, float cx, float cy, float size, int r, int g, int b, float a, float w) {
+  int n = (int)strlen(text);
+  int units = n > 0 ? n * 6 - 2 : 0;
+  for (int i = 0; i < n; i++) {
+    const char *gl = vectorGlyph(text[i]);
+    float left = cx + (i * 6 - units * 0.5f) * size;
+    bool penDown = false;
+    float px = 0, py = 0;
+    for (int k = 0; gl[k];) {
+      if (gl[k] == '|') { penDown = false; k++; continue; }
+      float sx = left + (gl[k] - '0') * size, sy = cy + (gl[k + 1] - '0' - 3) * size;
+      k += 2;
+      if (penDown) {
+        float dx = sx - px, dy = sy - py, len = sqrtf(dx * dx + dy * dy);
+        if (len > 0.001f) {
+          float nx = -dy / len * w * 0.5f, ny = dx / len * w * 0.5f, ex = dx / len * w * 0.5f, ey = dy / len * w * 0.5f;
+          float xs[4] = { px - ex + nx, sx + ex + nx, sx + ex - nx, px - ex - nx };
+          float ys[4] = { py - ey + ny, sy + ey + ny, sy + ey - ny, py - ey - ny };
+          blendPolygonF(xs, ys, 4, r, g, b, a);
+        }
+      }
+      px = sx;
+      py = sy;
+      penDown = true;
+    }
+  }
+}

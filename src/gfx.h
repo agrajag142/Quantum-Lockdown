@@ -90,6 +90,7 @@ void glowDisc(float cx, float cy, float r, int cr, int cg, int cb, float a);   /
 void drawVectorText(const char *text, float cx, float cy, float size, uint16_t c, bool thick);
 void drawVectorTextW(const char *text, float cx, float cy, float size, uint16_t c, float width);   // width in units
 float vectorTextWidth(const char *text, float size);
+void drawVectorTextA(const char *text, float cx, float cy, float size, int r, int g, int b, float a, float w);   // see-through (a: 0..1)
 
 // ---- the agent (and the people) through agent_rig.h, at full resolution
 struct AgentPose;
