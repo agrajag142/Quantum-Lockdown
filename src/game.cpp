@@ -39,7 +39,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "028"
+#define GAME_VERSION      "029"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -1669,6 +1669,21 @@ static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
     d.seed = 0;
   }
   if (ri.term && next < t.spotCount) {
+    // (the terminal is tall: a spot with nothing low over it, if there is one)
+    for (int k = next; k < t.spotCount; k++) {
+      const Spot &c = t.spots[order[k]];
+      int room = 1000;
+      for (int p = 0; p < t.platCount; p++) {
+        const Plat &pl = t.plats[p];
+        if (pl.y < c.y && pl.x1 > c.x - 48 && pl.x0 < c.x + 48 && c.y - pl.y - PLAT_T < room) room = c.y - pl.y - PLAT_T;
+      }
+      if (room >= decorH[DEC_TERMINAL] + 20) {
+        int tmp = order[next];
+        order[next] = order[k];
+        order[k] = tmp;
+        break;
+      }
+    }
     const Spot &s = t.spots[order[next++]];
     Decor &d = decor[decorCount++];
     d.kind = DEC_TERMINAL;

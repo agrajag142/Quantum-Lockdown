@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 028: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 029: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -52,9 +52,25 @@ an air-conditioning duct in the catwalk's ceiling at shaft A - the top left
 corner, at its first floor with a room - landing between the lift and the
 door to the first room (X skips it). The clock starts when he lands.
 
-Each room is one of the four layouts in `src/rooms_wide.h` (FOUR DECKS,
-CENTRE LIFT, TWIN TOWERS, THE CHASM), picked at random, each with four levels
-(the floor and three above it).
+Each room is one of the ten layouts in `src/rooms_wide.h`, picked at random,
+each with four levels (the floor and three above it):
+
+- **FOUR DECKS**, **CENTRE LIFT**, **TWIN TOWERS**, **THE CHASM** (the first four)
+- **THE STEPS**: ledges stepping down from each top corner into the middle; a
+  lift beside each top ledge to get back up
+- **THE SHAFT**: one lift up the middle stopping at every level, long shelves
+  either side (drop off their ends to the floor)
+- **THE BRIDGE**: a walkway across the top over a wide pit in the floor, an
+  island under it, a lift at each edge of the pit
+- **THE MAZE**: small ledges at every height, gaps to somersault, drops, a
+  small pit, two lifts
+- **TWIN PITS**: two pits in the floor; a lift in the middle up to ledges over
+  them, a lift each side to the top
+- **THE GALLERY**: a big open floor, a balcony right along the top reached by
+  a lift at each end, two perches half way up
+
+The facility terminal (it's tall) goes on a spot with nothing low over it
+where the room has one.
 
 ## Equipment and the score
 
