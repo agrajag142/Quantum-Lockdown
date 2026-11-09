@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "037"
+#define GAME_VERSION      "038"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -241,11 +241,13 @@ static float hackT = 0, launchT = 0;        // seconds into the hack / launch un
 static float landLeft[NUKE_SITES];          // a launched one: seconds till it lands (<= 0: landed)
 static float landTotal[NUKE_SITES];         // (and how long its flight is)
 static bool lockdown = false;               // QUANTUM LOCKDOWN (the main computer): no more hacking
+static bool prevented[NUKE_SITES];          // its launch stopped from one of the server room's terminals (it never launches)
+#define PREVENT_SCORE 2000
 static bool launchOn = false;               // a launch's cut scene playing (beside the game)
 static int launchQueued = 0;
 #define FLYERS 4                            // (their news, flying out at him: see drawFlyers)
 #define FLYER_SECONDS 2.6f
-struct Flyer { char text[40]; float t; bool on; };
+struct Flyer { char text[40]; float t; bool on, good; };   // (good: green, not red)
 static Flyer flyers[FLYERS];
 static bool blueprint = false;             // the facility blueprint downloaded: the generators' rooms shown on the maps
 static bool bpMapShown = false;            // (logging off after the download: the map, once)
@@ -323,6 +325,8 @@ enum S2Hold : uint8_t { S2H_NONE, S2H_VEST, S2H_DOC, S2H_PASS };
 #define S2_PASSWORDS 4                       // QUANTUM PASSWORDS: in lift A's and lift B's rooms (for the server room's terminals, later)
 #define PASS_SCORE 500
 static int s2PassFound = 0;
+static bool nodeUsed[4];                     // the server room's terminals: used (each takes one password, once)
+static int passUsed = 0, curNode = 0, snSite = -1;
 static char s2PassCode[S2_PASSWORDS][12];    // (what each one says)
 static float passShowT = 0;
 static uint8_t s2Hold[S2_ROOMS][S2_ITEMS];
@@ -469,6 +473,7 @@ static void layOut(uint32_t seed) {
   blueprint = bpMapShown = driveScan = scanMapShown = false;
   sitesHacked = sitesLaunched = 0;
   hackT = launchT = 0;
+  memset(prevented, 0, sizeof(prevented));
   for (int i = 0; i < FLYERS; i++) flyers[i].on = false;
   launchOn = false;
   launchQueued = 0;
@@ -616,6 +621,8 @@ static void layOutStage2() {
   // ...and four QUANTUM PASSWORDS, one a room at most, anywhere in lift A's and lift B's rooms
   s2PassFound = 0;
   passShowT = 0;
+  passUsed = 0;
+  memset(nodeUsed, 0, sizeof(nodeUsed));
   bool passRoom[S2_ROOMS] = {};
   for (int k = 0; k < 1 + S2_DOCS + S2_PASSWORDS; k++)
     for (int tries = 0; tries < 500; tries++) {
@@ -4509,6 +4516,7 @@ static void personWalk(AgentPose &p, float t) {
 }
 
 // The live parts of the lab rooms behind the people: the monitors' traces, the CCTV pictures, the patients
+static int decorAt();
 // Lift B's rooms, moving: bubbles in the clone tanks, the vitals traces, the fans and the big screen's scan
 static void drawLiftBRoomAnim(int k) {
   if (k == LK_QLAB1) {   // the glove box lit inside
@@ -4581,8 +4589,24 @@ static void drawLiftBRoomAnim(int k) {
     }
     int sy = SRV_MON_Y0 + 4 + (int)fmodf(clockT * 60, (float)(SRV_MON_Y1 - SRV_MON_Y0 - 8));   // the screen's scan line
     blendRect(SRV_MON_X0 + 1, sy, SRV_MON_X1 - 1, sy + 3, 120, 220, 255, 0.35f);
+    for (int t = 0; t < 4; t++) {                           // used ones: LOCKED on their screens
+      if (!nodeUsed[t]) continue;
+      int cx = serverItems[2 + t].x;
+      fillRect(cx - 42, ROOM_FLOOR_Y - 148, cx + 42, ROOM_FLOOR_Y - 102, rgb565(40, 8, 8));
+      drawVectorText("LOCKED", (float)cx, ROOM_FLOOR_Y - 125.0f, 1.6f, rgb565(255, 80, 60), true);
+    }
+    {
+      int at = decorAt();
+      if (at >= 2 && at <= 5 && agState == ST_IDLE && !termOn) {
+        char b[40];
+        snprintf(b, sizeof(b), nodeUsed[at - 2] ? "NODE %d - LOCKED" : "NODE %d - HOLD SQUARE: LOG IN", at - 1);
+        float w = vectorTextWidth(b, 2.2f), x = clampv((float)serverItems[at].x, w / 2 + 24, SCREEN_W - w / 2 - 24);
+        blendRect((int)(x - w / 2 - 10), ROOM_FLOOR_Y - 196, (int)(x + w / 2 + 10), ROOM_FLOOR_Y - 170, 0, 0, 0, 0.6f);
+        drawVectorText(b, x, ROOM_FLOOR_Y - 183.0f, 2.2f, nodeUsed[at - 2] ? rgb565(255, 90, 70) : rgb565(255, 220, 120), true);
+      }
+    }
     for (int t = 0; t < 4; t++)                             // the terminals' cursors
-      if (((int)(clockT * 2.5f) + t) & 1) {
+      if (!nodeUsed[t] && (((int)(clockT * 2.5f) + t) & 1)) {
         int cx = serverItems[2 + t].x;
         fillRect(cx + 14, ROOM_FLOOR_Y - 109, cx + 22, ROOM_FLOOR_Y - 105, rgb565(80, 240, 140));
       }
@@ -5554,13 +5578,14 @@ static const char *const termItems[TERM_ITEMS] = {
 
 // The sites' news: red words coming out of the middle of the screen at you, growing and fading
 // (the game carries on underneath)
-static void flyerAdd(const char *text) {   // (a free one, else the oldest)
+static void flyerAdd(const char *text, bool good = false) {   // (a free one, else the oldest)
   int k = 0;
   for (int i = 1; i < FLYERS; i++) if (flyers[i].t > flyers[k].t) k = i;
   for (int i = 0; i < FLYERS; i++) if (!flyers[i].on) { k = i; break; }
   snprintf(flyers[k].text, sizeof(flyers[k].text), "%s", text);
   flyers[k].t = 0;
   flyers[k].on = true;
+  flyers[k].good = good;
 }
 static void updateFlyers(float dt) {
   for (int i = 0; i < FLYERS; i++)
@@ -5573,7 +5598,7 @@ static void drawFlyers() {
     float k = flyers[i].t / FLYER_SECONDS;                       // 0..1
     float size = 1.4f / (1.05f - k);                             // coming at him: small in the distance, then huge at the glass
     float a = k < 0.12f ? k / 0.12f : k > 0.6f ? 1.0f - (k - 0.6f) / 0.4f : 1.0f;
-    drawVectorTextA(flyers[i].text, SCREEN_W / 2.0f, (HUD_H + PLAY_Y1) / 2.0f, size, 255, 40, 30, 0.85f * a, fmaxf(1.5f, size * 0.55f));
+    drawVectorTextA(flyers[i].text, SCREEN_W / 2.0f, (HUD_H + PLAY_Y1) / 2.0f, size, flyers[i].good ? 60 : 255, flyers[i].good ? 230 : 40, flyers[i].good ? 110 : 30, 0.85f * a, fmaxf(1.5f, size * 0.55f));
   }
   gfxClipAll();
 }
@@ -6014,6 +6039,10 @@ static void updateNukes(float dt) {
     }
   }
   bool launching = sitesHacked == NUKE_SITES || lockdown;
+  while (launching && sitesLaunched < sitesHacked && prevented[sitesLaunched]) {   // (stopped: passed over, the next one's countdown starts)
+    sitesLaunched++;
+    launchT = 0;
+  }
   if (launching && sitesLaunched < sitesHacked) {
     launchT += dt;
     if (launchT >= LAUNCH_MINUTES[sitesLaunched] * 60) {
@@ -6024,8 +6053,10 @@ static void updateNukes(float dt) {
       sitesLaunched++;
     }
   }
-  int landed = 0;
+  int landed = 0, flown = 0;
   for (int i = 0; i < sitesLaunched; i++) {
+    if (prevented[i]) continue;
+    flown++;
     if (landLeft[i] > 0) {
       landLeft[i] -= dt;
       if (landLeft[i] <= 0) {
@@ -6036,7 +6067,7 @@ static void updateNukes(float dt) {
     }
     landed += landLeft[i] <= 0;
   }
-  if (launching && sitesHacked > 0 && sitesLaunched == sitesHacked && landed == sitesHacked && gameOver == END_NONE) endGame(END_NUKES);
+  if (launching && flown > 0 && sitesLaunched == sitesHacked && landed == flown && gameOver == END_NONE) endGame(END_NUKES);
 }
 
 // The left of the panel: the five sites, a box each for HACKED, LAUNCHED, LANDED (yellow, orange,
@@ -6052,13 +6083,13 @@ static void drawNukePanel(int x0, int y0, int x1, int y1) {
   const uint16_t done[3] = { rgb565(240, 210, 40), rgb565(250, 130, 30), rgb565(230, 40, 30) };
   for (int i = 0; i < NUKE_SITES; i++) {
     int y = y0 + 60 + i * 26;
-    bool hacked = i < sitesHacked, launched = i < sitesLaunched, landed = launched && landLeft[i] <= 0;
-    bool safe = lockdown && !hacked;
+    bool stopped = prevented[i], hacked = i < sitesHacked, launched = i < sitesLaunched && !stopped, landed = launched && landLeft[i] <= 0;
+    bool safe = (lockdown && !hacked) || stopped;
     drawVectorText(siteName[i], x0 + 14 + vectorTextWidth(siteName[i], 1.35f) / 2, y, 1.35f, safe ? rgb565(110, 120, 140) : rgb565(220, 226, 240), false);
     // how far along each stage is (0..1): filled from the left
     float fill[3] = { hacked ? 1.0f : 0.0f, launched ? 1.0f : 0.0f, landed ? 1.0f : 0.0f };
     if (launched && !landed && landTotal[i] > 0) fill[2] = clampv(1.0f - landLeft[i] / landTotal[i], 0.0f, 1.0f);
-    else if (hacked && !launched && i == sitesLaunched && (sitesHacked == NUKE_SITES || lockdown)) fill[1] = clampv(launchT / (LAUNCH_MINUTES[i] * 60), 0.0f, 1.0f);
+    else if (hacked && !launched && !stopped && i == sitesLaunched && (sitesHacked == NUKE_SITES || lockdown)) fill[1] = clampv(launchT / (LAUNCH_MINUTES[i] * 60), 0.0f, 1.0f);
     else if (!hacked && !lockdown && i == sitesHacked) fill[0] = clampv(hackT / (HACK_MINUTES[i] * 60), 0.0f, 1.0f);
     (void)blink;
     for (int c = 0; c < 3; c++) {
@@ -6066,6 +6097,10 @@ static void drawNukePanel(int x0, int y0, int x1, int y1) {
       fillRect(bx, y - 9, bx + bw, y + 9, safe ? rgb565(36, 60, 48) : rgb565(44, 48, 62));
       int w = (int)lroundf(bw * fill[c]);
       if (w > 0) fillRect(bx, y - 9, bx + w, y + 9, done[c]);
+      if (stopped && c == 1) {                 // its launch stopped: STOPPED in green
+        fillRect(bx, y - 9, bx + bw, y + 9, rgb565(50, 170, 90));
+        drawVectorText("STOPPED", bx + bw / 2.0f, (float)y, 1.0f, rgb565(230, 255, 235), true);
+      }
       drawRectOutline(bx, y - 9, bx + bw, y + 9, rgb565(130, 138, 160), 1);
     }
   }
@@ -6214,6 +6249,87 @@ static void updateFacilityTerminal(float dt) {
     }
     default:                                 // a page: back to the menu
       if (go && termT > 0.4f) { termPage = FT_MENU; termT = 0; sfxPlay(SFX_KEY); }
+      break;
+  }
+}
+
+// ---- the server room's four terminals (NODE 1..4): each takes one QUANTUM PASSWORD, once, and with it
+// stops one hacked site's launch (not one already launched). The room's camera and drone wait while
+// he's logged in, but he can't log in with the drone's light red (it's firing at him).
+enum SnPage : uint8_t { SN_LOGIN, SN_MENU, SN_SENDING, SN_DONE, SN_LATE, SN_USED, SN_NOPASS, SN_NOSITES };
+#define SN_LOGIN_SECONDS 2.6f
+#define SN_SEND_SECONDS 3.0f
+static bool preventable(int i) { return i >= sitesLaunched && i < sitesHacked && !prevented[i]; }
+static int preventList(int *out) {
+  int n = 0;
+  for (int i = 0; i < NUKE_SITES; i++) if (preventable(i)) out[n++] = i;
+  return n;
+}
+static void useServerNode(int n) {
+  termOn = true;
+  termKind = 2;
+  curNode = n;
+  termT = 0;
+  termSel = 0;
+  termPage = nodeUsed[n] ? SN_USED : passUsed >= s2PassFound ? SN_NOPASS : SN_LOGIN;
+  sfxPlay(termPage == SN_LOGIN ? SFX_FOUND : SFX_DENIED);
+}
+static void snLogOff() {
+  if (termPage == SN_DONE) {               // SITE LAUNCH STOPPED, flying out at him in green
+    char b[48];
+    snprintf(b, sizeof(b), "%s LAUNCH STOPPED", siteName[snSite]);
+    flyerAdd(b, true);
+  }
+  termOn = false;
+  sfxPlay(SFX_KEY);
+  if (drGrace < 1.0f) drGrace = 1.0f;     // (a moment before the drone's at it again)
+}
+static void updateServerNode(float dt) {
+  float was = termT;
+  termT += dt;
+  bool go = (pressed & (BTN_USE | BTN_JUMP)) != 0;
+  int list[NUKE_SITES], n = preventList(list);
+  switch (termPage) {
+    case SN_LOGIN:
+      if ((int)(was * 8) != (int)(termT * 8) && termT < 1.8f) sfxPlay(SFX_KEY);
+      if (termT >= SN_LOGIN_SECONDS || (go && termT > 0.3f)) {
+        termPage = n > 0 ? SN_MENU : SN_NOSITES;
+        termT = 0;
+        termSel = 0;
+        sfxPlay(SFX_KEY);
+      }
+      break;
+    case SN_MENU:
+      if (termSel > n) termSel = n;          // (a site launched under him: the list is shorter)
+      if (pressed & BTN_UP) { termSel = (termSel + n) % (n + 1); sfxPlay(SFX_KEY); }
+      if (pressed & BTN_DOWN) { termSel = (termSel + 1) % (n + 1); sfxPlay(SFX_KEY); }
+      if (go && termT > 0.2f) {
+        if (termSel >= n) { snLogOff(); break; }   // LOG OFF (the password's not used)
+        snSite = list[termSel];
+        termPage = SN_SENDING;
+        termT = 0;
+        sfxPlay(SFX_POWERUP);
+      }
+      break;
+    case SN_SENDING:
+      if ((int)(was * 5) != (int)(termT * 5)) sfxPlay(SFX_BEEP);
+      if (termT >= SN_SEND_SECONDS) {
+        termT = 0;
+        if (!preventable(snSite)) { termPage = SN_LATE; sfxPlay(SFX_DENIED); break; }   // (it launched while the abort went)
+        prevented[snSite] = true;
+        if (snSite == sitesLaunched) launchT = 0;
+        nodeUsed[curNode] = true;
+        passUsed++;
+        termPage = SN_DONE;
+        addScore(PREVENT_SCORE, agX, agY - 200);
+        sfxPlay(SFX_FANFARE);                // (the news flies out when he logs off)
+      }
+      break;
+    case SN_LATE:
+      if (go && termT > 0.4f) { termPage = n > 0 ? SN_MENU : SN_NOSITES; termT = 0; termSel = 0; sfxPlay(SFX_KEY); }
+      break;
+    default:                                 // done, used, no password, nothing to stop: off
+      if (go && termT > 0.4f) snLogOff();
       break;
   }
 }
@@ -7219,6 +7335,17 @@ static void updateAgent(float dt) {
             nothingY = py;
             break;
           }
+          if (decor[i].kind == DEC_LAB && s2Kind[curRoom] == LK_SERVER && i >= 2 && i <= 5) {   // a server room terminal: log in
+            searchT = 0;
+            if (curHazard == HZ_CAMDRONE && drLight == 2) {   // (not with the drone firing at him)
+              showMsg("UNDER FIRE - CAN'T LOG IN", 2.0f);
+              sfxPlay(SFX_DENIED);
+              setState(ST_IDLE, 0.1f);
+              break;
+            }
+            useServerNode(i - 2);
+            break;
+          }
           if (decor[i].kind == DEC_LAB) {      // the lab's things: nothing in them yet
             bool first = !s2Searched[curRoom][i];
             s2Searched[curRoom][i] = true;
@@ -8034,9 +8161,14 @@ static void drawTermCase(const char *label) {
 }
 
 static void drawFacilityTerminal();
+static void drawServerNode();
 static void drawTerminal() {
   if (termKind == 1) {
     drawFacilityTerminal();
+    return;
+  }
+  if (termKind == 2) {
+    drawServerNode();
     return;
   }
   drawTermCase("QC-9 QUANTUM CONTROL");
@@ -8344,6 +8476,98 @@ static void bevelBox(int x0, int y0, int x1, int y1, uint16_t face) {
   fillRect(x1 - 2, y0, x1, y1, rgb565(30, 34, 48));
 }
 
+
+static void drawServerNode() {
+  char b[64];
+  snprintf(b, sizeof(b), "QUANTUM NETWORK NODE %d", curNode + 1);
+  drawTermCase(b);
+  uint16_t g = rgb565(100, 255, 140), gd = rgb565(40, 140, 70), dark = rgb565(4, 18, 9), y = rgb565(255, 220, 80), red = rgb565(255, 90, 70);
+  bool cur = ((int)(termT * 2.5f) & 1);
+  float lx = TX0 + 30, mid = (TX0 + TX1) / 2.0f;
+  snprintf(b, sizeof(b), "SERVER ROOM   NODE %d", curNode + 1);
+  drawTextLeft(b, lx, TY0 + 26, 2.2f, gd, false);
+  drawTextLeft("HAZARDS DISABLED WHILE LOGGED IN", TX1 - 30 - vectorTextWidth("HAZARDS DISABLED WHILE LOGGED IN", 2.0f), TY0 + 26, 2.0f, y, true);
+  fillRect(TX0 + 18, TY0 + 46, TX1 - 18, TY0 + 47, gd);
+  int list[NUKE_SITES], n = preventList(list);
+  switch (termPage) {
+    case SN_LOGIN: {
+      const char *pass = s2PassCode[passUsed < S2_PASSWORDS ? passUsed : 0];
+      snprintf(b, sizeof(b), "NODE:      %d", curNode + 1);
+      drawTextLeft(b, lx, TY0 + 100, 2.8f, g, true);
+      if (termT > 0.5f) {
+        int n2 = clampv((int)((termT - 0.5f) * 8), 0, (int)strlen(pass));
+        snprintf(b, sizeof(b), "PASSWORD:  %.*s", n2, pass);
+        drawTextLeft(b, lx, TY0 + 150, 2.8f, g, true);
+      }
+      if (termT > 1.8f) drawTextLeft("ONE-TIME PASSWORD ACCEPTED", lx, TY0 + 220, 3.4f, y, true);
+      break;
+    }
+    case SN_MENU:
+      drawTextLeft("LAUNCH ABORT - SELECT A HACKED SITE:", lx, TY0 + 84, 2.4f, g, false);
+      for (int i = 0; i <= n; i++) {
+        int yy = TY0 + 132 + i * 44;
+        if (i < n) snprintf(b, sizeof(b), "%d  PREVENT LAUNCH: %s", i + 1, siteName[list[i]]);
+        else snprintf(b, sizeof(b), "%d  LOG OFF", i + 1);
+        if (i == termSel) {
+          fillRect(TX0 + 20, yy - 18, TX1 - 20, yy + 18, rgb565(70, 220, 120));
+          drawTextLeft(b, lx + 12, yy, 2.8f, dark, true);
+        } else {
+          drawTextLeft(b, lx + 12, yy, 2.8f, i < n ? y : g, true);
+        }
+      }
+      drawTextLeft("THIS NODE AND PASSWORD WORK ONCE ONLY", lx, TY1 - 52, 1.8f, red, false);
+      drawTextLeft("UP / DOWN TO CHOOSE    X TO SELECT", lx, TY1 - 22, 1.8f, gd, false);
+      break;
+    case SN_SENDING: {
+      float k = fminf(1.0f, termT / SN_SEND_SECONDS);
+      snprintf(b, sizeof(b), "SENDING ABORT CODE TO %s...", siteName[snSite]);
+      drawTextLeft(b, lx, TY0 + 100, 2.6f, g, true);
+      static const char *const steps[4] = { "QUANTUM LINK", "SITE HANDSHAKE", "OVERRIDE LAUNCH CONTROL", "SAFE THE MISSILE" };
+      for (int f = 0; f < 4; f++)
+        if (k > f * 0.25f) {
+          snprintf(b, sizeof(b), "%-24s %s", steps[f], k >= (f + 1) * 0.25f ? "OK" : "...");
+          drawTextLeft(b, lx + 20, TY0 + 150 + f * 34, 2.4f, g, false);
+        }
+      drawRectOutline((int)lx, TY0 + 320, (int)lx + 604, TY0 + 344, g, 1);
+      fillRect((int)lx + 2, TY0 + 322, (int)lx + 2 + (int)(600 * k), TY0 + 342, g);
+      break;
+    }
+    case SN_DONE:
+      drawVectorText("LAUNCH PREVENTED", mid, TY0 + 110, 4.4f, g, true);
+      drawVectorText(siteName[snSite], mid, TY0 + 170, 3.4f, y, true);
+      drawVectorText("THIS NODE IS NOW LOCKED", mid, TY0 + 240, 2.6f, gd, false);
+      snprintf(b, sizeof(b), "PASSWORDS LEFT: %d   NODES LEFT: %d", s2PassFound - passUsed, 4 - passUsed);
+      drawVectorText(b, mid, TY0 + 290, 2.4f, g, false);
+      if (cur) drawTextLeft("PRESS X TO LOG OFF", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+    case SN_LATE:
+      drawVectorText("TOO LATE", mid, TY0 + 120, 4.4f, red, true);
+      snprintf(b, sizeof(b), "%s HAS LAUNCHED", siteName[snSite]);
+      drawVectorText(b, mid, TY0 + 190, 3.0f, red, true);
+      drawVectorText("YOUR PASSWORD WAS NOT USED", mid, TY0 + 250, 2.4f, g, false);
+      if (cur) drawTextLeft("PRESS X TO RETURN", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+    case SN_USED:
+      drawVectorText("NODE LOCKED", mid, TY0 + 120, 4.4f, red, true);
+      drawVectorText("THIS NODE'S ONE-TIME ACCESS HAS BEEN USED", mid, TY0 + 190, 2.4f, g, false);
+      drawVectorText("USE ANOTHER NODE", mid, TY0 + 236, 2.6f, y, true);
+      if (cur) drawTextLeft("PRESS X TO LOG OFF", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+    case SN_NOPASS:
+      drawVectorText("ACCESS DENIED", mid, TY0 + 120, 4.4f, red, true);
+      drawVectorText("A QUANTUM PASSWORD IS NEEDED", mid, TY0 + 190, 2.8f, y, true);
+      snprintf(b, sizeof(b), "PASSWORDS FOUND: %d   USED: %d", s2PassFound, passUsed);
+      drawVectorText(b, mid, TY0 + 240, 2.4f, g, false);
+      if (cur) drawTextLeft("PRESS X TO LOG OFF", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+    default:   // SN_NOSITES
+      drawVectorText("NO LAUNCHES TO STOP", mid, TY0 + 120, 4.0f, y, true);
+      drawVectorText(sitesHacked == 0 ? "NO SITES HAVE BEEN HACKED YET" : "EVERY HACKED SITE HAS LAUNCHED OR BEEN STOPPED", mid, TY0 + 190, 2.2f, g, false);
+      drawVectorText("YOUR PASSWORD WAS NOT USED", mid, TY0 + 240, 2.4f, g, false);
+      if (cur) drawTextLeft("PRESS X TO LOG OFF", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+  }
+}
 
 static void drawFacilityTerminal() {
   drawTermCase("FT-7 FACILITY TERMINAL");
@@ -9773,6 +9997,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (termOn) {                        // at the main computer (or the facility terminal): the controller works the menu
       if (gameOver == END_NONE) {
         if (termKind == 1) updateFacilityTerminal(dt);
+        else if (termKind == 2) updateServerNode(dt);
         else updateTerminal(dt);
       }
     } else {

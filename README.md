@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 037: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 038: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -424,7 +424,7 @@ LAB 2. Everything in them can be searched.
 rooms, at most one a room (never in the knife's, the pistol's or the level 2
 card's place). Each one shows the QUANTUM PASSWORD FOUND panel with its access
 code (e.g. QX7-R41K) and n OF 4 FOUND; the panel's PASSWORDS line counts them.
-They will be what gets you into the server room's four terminals (not yet).
+Each one opens one of the server room's four terminals, once (below).
 
 **Quantum Lab 1**: NUCLEAR MISSION's lab equipment, two levels (a lift pad in the
 middle up to a deck on the right). On the floor: a fridge of samples, mouse
@@ -462,7 +462,25 @@ stand of body armour with a helmet. 9 things to search.
 The walls are shiny silver metal tiles. A row of seven cooling fans (turning)
 runs along the top, with the big QUANTUM NETWORK screen below them (a wire
 globe, bars, a scan line). On the floor are four computer terminals (NODE 1..4)
-and two metal cupboards either side. 8 things to search.
+and two metal cupboards either side. The 4 cupboards can be searched.
+
+**The server room's terminals (NODE 1..4) stop launches.** Stand at one and hold
+Square to log in (NODE n - HOLD SQUARE: LOG IN). **The camera and the drone wait
+while you're logged in** (the screen says HAZARDS DISABLED WHILE LOGGED IN), but
+**you can't log in while the drone's light is red** - it's firing at you (UNDER
+FIRE - CAN'T LOG IN). Logging in types in your next unused QUANTUM PASSWORD;
+then pick a hacked site that hasn't launched yet (PREVENT LAUNCH: PACIFIC...),
+the abort code goes (3 seconds) and that site never launches: LAUNCH PREVENTED,
+2000 points, the site's name flying out in green when you log off, STOPPED in
+its LAUNCH box on the panel, and the next site's launch countdown starts. Each
+terminal and each password works once: that terminal then shows LOCKED. With no
+password left it's ACCESS DENIED; with nothing to stop (no site hacked, or all
+launched or stopped) it's NO LAUNCHES TO STOP and the password isn't used;
+logging off from the list doesn't use it either. If the site launches while the
+abort is going, it's TOO LATE (the password isn't used). The clock and the
+sites keep going while you're logged in. Four terminals, four passwords: four
+launches can be stopped, so with all five sites hacked one always gets through.
+The game ends when every site that launched has landed.
 
 **The admin room**: two levels, most of it on the floor - the ADMINISTRATION
 front counter by the door (ENQUIRIES board, an in-tray, a bell), a desk with
