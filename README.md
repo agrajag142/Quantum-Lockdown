@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 033: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 034: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -189,6 +189,16 @@ away (2.6 seconds), while you carry on playing. A hack sounds like a heavy
 digital clock ticking (as on the TV show 24), dying away over about 4
 seconds; a launch has the ticking and the alarm; an impact the power
 failing.
+
+**A launch** plays NUCLEAR MISSION's launch cut scene and sounds (the
+klaxon, ignition, the roar, the typing) while the game carries on: the game
+shrinks to 5/8 of its size on the left (still played as normal, the top bar
+left full size) and the scene plays in a square on the right under NUCLEAR
+LAUNCH. Inside the silo the launching site's name is on a yellow-and-black
+sign on the wall; above ground it's on a sign by the fence; at the end
+MISSILE LAUNCHED and the site's name type on. About 15 seconds; another
+launch in the meantime waits its turn. (The map and settings show full size
+over it, and pause it with the game.)
 
 With nothing stopped, the timeline runs: hacked at 10, 16, 21, 25, 28
 minutes; launched at 33, 37, 40, 42, 43; all landed by about 53 to 58.

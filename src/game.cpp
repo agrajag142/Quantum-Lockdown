@@ -39,7 +39,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "033"
+#define GAME_VERSION      "034"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -239,6 +239,8 @@ static int sitesHacked = 0, sitesLaunched = 0;
 static float hackT = 0, launchT = 0;        // seconds into the hack / launch under way
 static float landLeft[NUKE_SITES];          // a launched one: seconds till it lands (<= 0: landed)
 static bool lockdown = false;               // QUANTUM LOCKDOWN (the main computer): no more hacking
+static bool launchOn = false;               // a launch's cut scene playing (beside the game)
+static int launchQueued = 0;
 #define FLYERS 4                            // (their news, flying out at him: see drawFlyers)
 #define FLYER_SECONDS 2.6f
 struct Flyer { char text[40]; float t; bool on; };
@@ -453,6 +455,8 @@ static void layOut(uint32_t seed) {
   sitesHacked = sitesLaunched = 0;
   hackT = launchT = 0;
   for (int i = 0; i < FLYERS; i++) flyers[i].on = false;
+  launchOn = false;
+  launchQueued = 0;
   lockdown = false;
   // the rooms with one more piece of equipment, to make EQUIPMENT_TOTAL
   for (int extra = EQUIPMENT_TOTAL - ROOM_COUNT * (EQUIPMENT_TOTAL / ROOM_COUNT); extra > 0;) {
@@ -795,7 +799,8 @@ void micromod4_get_audio(short *output_buffer, long count);
 
 enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND,
                      SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN, SFX_SCREAM, SFX_ALARM, SFX_SHOT, SFX_HIT,
-                     SFX_POWERUP, SFX_CLICK, SFX_DENIED, SFX_KEY, SFX_SHUTDOWN, SFX_WARN, SFX_LOOPPOWER, SFX_DOORS, SFX_TICK24 };
+                     SFX_POWERUP, SFX_CLICK, SFX_DENIED, SFX_KEY, SFX_SHUTDOWN, SFX_WARN, SFX_LOOPPOWER, SFX_DOORS, SFX_TICK24,
+                     SFX_KLAXON, SFX_IGNITE, SFX_BIGROAR, SFX_ROAR, SFX_TYPE };   // (the last five: NUCLEAR MISSION's launch)
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -894,6 +899,27 @@ static void startEffect(uint8_t sfx) {
       startVoice(WAVE_SQUARE, 30, 120, 80, 2000, 0.06f);
       startVoice(WAVE_TRIANGLE, 1047, 1047, 2100, 300, 0.30f);
       startVoice(WAVE_TRIANGLE, 1568, 1568, 2250, 500, 0.25f);
+      break;
+    case SFX_IGNITE:                           // NUCLEAR MISSION's launch: ignition...
+      startVoice(WAVE_NOISE, 5000, 400, 0, 900, 0.45f);
+      startVoice(WAVE_SQUARE, 80, 40, 0, 900, 0.30f);
+      startVoice(WAVE_NOISE, 1500, 300, 150, 1200, 0.30f);
+      break;
+    case SFX_BIGROAR:                          // ...the engine close up (repeated)...
+      startVoice(WAVE_NOISE, 700, 600, 0, 330, 0.22f);
+      startVoice(WAVE_NOISE, 220, 200, 0, 330, 0.25f);
+      startVoice(WAVE_SQUARE, 45, 42, 0, 330, 0.12f);
+      break;
+    case SFX_TYPE:                             // ...the words typing on...
+      startVoice(WAVE_SQUARE, 1800, 1800, 0, 12, 0.08f);
+      break;
+    case SFX_KLAXON:                           // ...the klaxon before ignition...
+      startVoice(WAVE_SQUARE, 440, 440, 0, 380, 0.12f);
+      startVoice(WAVE_SQUARE, 330, 330, 420, 380, 0.12f);
+      break;
+    case SFX_ROAR:                             // ...and the engine further off
+      startVoice(WAVE_NOISE, 900, 700, 0, 320, 0.10f);
+      startVoice(WAVE_NOISE, 300, 260, 0, 320, 0.12f);
       break;
     case SFX_TICK24:                           // a site hacked: a heavy digital clock ticking (the TV show 24's), dying away
       for (int k = 0; k < 6; k++) {
@@ -4353,6 +4379,428 @@ static void drawFlyers() {
   gfxClipAll();
 }
 
+// ============================================================ a launch: NUCLEAR MISSION's launch cut scene
+// When a site launches, its cut scene plays in a square on the right while the game carries on,
+// shrunk, on the left. NUCLEAR MISSION's scene is 720 x 720 pixels: it is drawn 1:1 into the square
+// (pixels 1200..1919 x 180..899). Scene 1: the bottom of the silo (the klaxon, ignition, the fire
+// rolling out); a white flash; scene 3: above ground at night, up out of the silo and away. The
+// site's name is on a sign in both, and typed out at the end.
+#define LS_X 1200
+#define LS_Y 180
+#define LS_SIZE 720
+#define LS_SCENE1_SECONDS 5.4f
+#define LS_SCENE3_SECONDS 9.0f
+#define LS_GROUND 560
+#define LS_FIRE 40
+struct LsFire { bool on; float x, y, vx, vy, r, age, life; };
+static LsFire lsFire[LS_FIRE];
+static int launchSite = 0, launchQueue[NUKE_SITES];
+static int lsScene = 0, lsTyped = 0;
+static float lsT = 0, lsSoundT = 0, lsX = 0, lsY = 0, lsAng = 0, lsDir = 1, lsSpeed = 0, lsScale = 1.6f;
+static uint32_t frameSave[FB_W * FB_H];       // (the game's frame, to shrink beside the scene)
+
+static int lsRand(int lo, int hi) { return fxRnd(lo, hi); }   // lo..hi-1
+// (NUCLEAR MISSION's pixels -> the square)
+static void lsRect(int x0, int y0, int x1, int y1, uint16_t c) {
+  x0 = clampv(x0, 0, LS_SIZE - 1); x1 = clampv(x1, 0, LS_SIZE - 1);
+  y0 = clampv(y0, 0, LS_SIZE - 1); y1 = clampv(y1, 0, LS_SIZE - 1);
+  if (x1 < x0 || y1 < y0) return;
+  pxRect(LS_X + x0, LS_Y + y0, LS_X + x1, LS_Y + y1, c32(c));
+}
+static void lsPoly(const int *xs, const int *ys, int n, uint16_t c) {
+  float fx[12], fy[12];
+  for (int i = 0; i < n && i < 12; i++) { fx[i] = (float)(LS_X + xs[i]); fy[i] = (float)(LS_Y + ys[i]); }
+  pxPoly(fx, fy, n, c32(c));
+}
+static void lsCircle(float x, float y, float r, uint16_t c) { pxCircle(LS_X + x, LS_Y + y, r, c32(c)); }
+static void lsLine(float x0, float y0, float x1, float y1, uint16_t c, bool thick) { pxLine(LS_X + x0, LS_Y + y0, LS_X + x1, LS_Y + y1, thick ? 3.0f : 1.5f, c32(c)); }
+static void lsText(const char *t, float x, float y, float size, uint16_t c, bool thick) {
+  drawVectorText(t, (LS_X + x) / UNIT_K, (LS_Y + y) / UNIT_K, size / UNIT_K, c, thick);
+}
+static void lsTint(float x, float y, float r, int cr, int cg, int cb, float a) {   // a see-through disc
+  float xs[20], ys[20];
+  for (int i = 0; i < 20; i++) {
+    float t = i * 6.2832f / 20;
+    xs[i] = (LS_X + x + cosf(t) * r) / UNIT_K;
+    ys[i] = (LS_Y + y + sinf(t) * r) / UNIT_K;
+  }
+  blendPolygonF(xs, ys, 20, cr, cg, cb, a);
+}
+static void lsHazard(int x0, int x1, int y0, int y1) {     // yellow and black
+  lsRect(x0, y0, x1, y1, rgb565(240, 196, 40));
+  for (int x = x0 - (y1 - y0); x < x1; x += 24) {
+    int xs[4] = { x, x + 12, x + 12 + (y1 - y0), x + (y1 - y0) }, ys[4] = { y1, y1, y0, y0 };
+    for (int k = 0; k < 4; k++) xs[k] = clampv(xs[k], x0, x1);
+    lsPoly(xs, ys, 4, rgb565(20, 20, 22));
+  }
+}
+static void lsAddFire(float x, float y, float vx, float vy, float r, float life) {
+  for (int i = 0; i < LS_FIRE; i++)
+    if (!lsFire[i].on) { lsFire[i] = { true, x, y, vx, vy, r, 0, life }; return; }
+}
+
+// The site's sign: yellow and black edged, its name stencilled
+static void lsSign(int cx, int cy, int w, float size) {
+  lsRect(cx - w / 2 - 6, cy - 34, cx + w / 2 + 6, cy + 34, rgb565(20, 20, 22));
+  lsHazard(cx - w / 2 - 6, cx + w / 2 + 6, cy - 34, cy - 26);
+  lsHazard(cx - w / 2 - 6, cx + w / 2 + 6, cy + 26, cy + 34);
+  lsRect(cx - w / 2, cy - 24, cx + w / 2, cy + 24, rgb565(36, 36, 40));
+  lsText(siteName[launchSite], cx, cy, size, rgb565(240, 200, 60), true);
+}
+
+static void startLaunchScene(int site) {
+  if (launchOn) {                             // (one at a time: the next after this one)
+    if (launchQueued < NUKE_SITES) launchQueue[launchQueued++] = site;
+    return;
+  }
+  launchOn = true;
+  launchSite = site;
+  lsScene = 1;
+  lsT = 0;
+  lsSoundT = 0;
+  lsTyped = 0;
+  for (int i = 0; i < LS_FIRE; i++) lsFire[i].on = false;
+  sfxPlay(SFX_KLAXON);
+}
+
+static void updateLaunchScene(float dt) {
+  if (!launchOn) return;
+  lsT += dt;
+  for (int i = 0; i < LS_FIRE; i++) {
+    LsFire &f = lsFire[i];
+    if (!f.on) continue;
+    f.age += dt;
+    if (f.age >= f.life) { f.on = false; continue; }
+    f.x += f.vx * dt;
+    f.y += f.vy * dt;
+    f.vx *= (1 - dt * 0.7f);
+    f.vy = f.vy * (1 - dt * 0.7f) - 20 * dt;
+    f.r = fminf(f.r + dt * (lsScene == 1 ? 18.0f : 14.0f), 40.0f);
+  }
+  if (lsScene == 1) {                          // the klaxon, then ignition and the roar
+    lsSoundT -= dt;
+    if (lsT < 1.0f) {
+      if (lsSoundT <= 0) { lsSoundT = 0.8f; sfxPlay(SFX_KLAXON); }
+    } else {
+      if (lsT - dt < 1.0f) { sfxPlay(SFX_IGNITE); lsSoundT = 0.3f; }
+      if (lsSoundT <= 0) { lsSoundT = 0.3f; sfxPlay(SFX_BIGROAR); }
+      for (int k = 0; k < 2; k++) {
+        float side = lsRand(0, 2) ? 1.0f : -1.0f;
+        lsAddFire(360 + side * lsRand(20, 60), 640 + lsRand(0, 30), side * lsRand(180, 420), -(float)lsRand(0, 60), 18, 1.3f);
+      }
+      if (lsRand(0, 3) == 0) lsAddFire((float)lsRand(40, 680), 600, (float)lsRand(-30, 31), -(float)lsRand(60, 140), 20, 2.0f);
+    }
+    if (lsT >= LS_SCENE1_SECONDS) { lsScene = 2; lsT = 0; }
+  } else if (lsScene == 2) {                   // the white flash
+    if (lsT >= 0.35f) {
+      lsScene = 3;
+      lsT = 0;
+      for (int i = 0; i < LS_FIRE; i++) lsFire[i].on = false;
+      lsX = 360;
+      lsY = LS_GROUND + 230;
+      lsAng = 0;
+      lsDir = lsRand(0, 2) ? 1.0f : -1.0f;
+      lsSpeed = 0;
+      lsScale = 1.6f;
+      lsTyped = 0;
+    }
+  } else {                                     // up out of the silo, arcing over and away
+    lsSoundT -= dt;
+    if (lsSoundT <= 0) { lsSoundT = 0.3f; sfxPlay(lsT < 4 ? SFX_BIGROAR : SFX_ROAR); }
+    float a = lsAng * 0.017453293f, hx = sinf(a), hy = -cosf(a);
+    if (lsT < 2.2f) {
+      lsY = LS_GROUND + 230 - 50 * lsT * lsT;
+      lsSpeed = 100 * lsT;
+    } else {
+      lsAng += (lsDir * 65 - lsAng) * fminf(1.0f, dt * 0.40f);
+      lsSpeed = fminf(lsSpeed + 25 * dt, 260);
+      lsX += hx * lsSpeed * (lsScale / 1.6f) * dt;
+      lsY += hy * lsSpeed * (lsScale / 1.6f) * dt;
+      lsScale = fmaxf(0.0f, lsScale * (1.0f - dt * 0.40f));
+    }
+    if (lsT < 4.0f)
+      for (int k = 0; k < 2; k++) lsAddFire(360 + lsRand(-60, 61), LS_GROUND - 4, (float)lsRand(-140, 141), -(float)lsRand(30, 120), 14, 2.4f);
+    if (lsScale > 0.12f && lsY < LS_GROUND)
+      lsAddFire(lsX - hx * 4, lsY - hy * 4, -hx * 40 + lsRand(-15, 16), -hy * 40 + lsRand(-15, 16), 6 * lsScale + 3, 2.2f);
+    if (lsT > 2.0f) {                          // MISSILE LAUNCHED / the site, typed on
+      int len = 16 + (int)strlen(siteName[launchSite]);
+      int want = (int)((lsT - 2.0f) * 16);
+      if (want > len) want = len;
+      while (lsTyped < want) { lsTyped++; sfxPlay(SFX_TYPE); }
+    }
+    if (lsT >= LS_SCENE3_SECONDS) {
+      launchOn = false;
+      if (launchQueued > 0) {                  // (another launched meanwhile)
+        int next = launchQueue[0];
+        for (int i = 1; i < launchQueued; i++) launchQueue[i - 1] = launchQueue[i];
+        launchQueued--;
+        startLaunchScene(next);
+      }
+    }
+  }
+}
+
+// The missile, any size: (x, y) its nozzle, ang in degrees (0 straight up)
+static void lsMissileAt(float x, float y, float ang, float sc, bool flame) {
+  float a = ang * 0.017453293f, c = cosf(a), sn = sinf(a);
+  auto poly = [&](const float (*pts)[2], int n, uint16_t col) {
+    int xs[8], ys[8];
+    for (int i = 0; i < n; i++) {
+      float lx = pts[i][0] * sc, ly = pts[i][1] * sc;
+      xs[i] = (int)lroundf(x + lx * c - ly * sn);
+      ys[i] = (int)lroundf(y + lx * sn + ly * c);
+    }
+    lsPoly(xs, ys, n, col);
+  };
+  if (flame) {
+    float len = 40 + lsRand(0, 26);
+    const float outer[3][2] = { { -9, 2 }, { 9, 2 }, { 0, len } };
+    const float inner[3][2] = { { -5, 2 }, { 5, 2 }, { 0, len * 0.6f } };
+    poly(outer, 3, rgb565(255, 130, 30));
+    poly(inner, 3, rgb565(255, 240, 170));
+  }
+  if (sc < 0.25f) { lsCircle(x, y, 2, rgb565(240, 240, 240)); return; }
+  const float body[4][2] = { { -10, 0 }, { 10, 0 }, { 10, -98 }, { -10, -98 } };
+  const float shade[4][2] = { { 3, 0 }, { 10, 0 }, { 10, -98 }, { 3, -98 } };
+  const float nose[5][2] = { { -10, -98 }, { 10, -98 }, { 7, -112 }, { 0, -126 }, { -7, -112 } };
+  const float finL[4][2] = { { -10, -2 }, { -10, -26 }, { -20, -6 }, { -20, 4 } };
+  const float finR[4][2] = { { 10, -2 }, { 10, -26 }, { 20, -6 }, { 20, 4 } };
+  const float band1[4][2] = { { -10, -30 }, { 10, -30 }, { 10, -38 }, { -10, -38 } };
+  const float band2[4][2] = { { -10, -72 }, { 10, -72 }, { 10, -80 }, { -10, -80 } };
+  poly(finL, 4, rgb565(70, 74, 82));
+  poly(finR, 4, rgb565(70, 74, 82));
+  poly(body, 4, rgb565(232, 234, 238));
+  poly(shade, 4, rgb565(190, 194, 202));
+  poly(band1, 4, rgb565(30, 32, 36));
+  poly(band2, 4, rgb565(30, 32, 36));
+  poly(nose, 5, rgb565(200, 40, 30));
+}
+
+// Scene 1: the bottom of the missile, close up (baseY: the bottom of its body)
+static void lsMissileBase(int ox, int baseY) {
+  uint16_t white = rgb565(226, 228, 232), shade = rgb565(176, 180, 188), dark = rgb565(28, 30, 34);
+  int bx0 = ox + 250, bx1 = ox + 470;
+  lsRect(bx0, 0, bx1, baseY, white);
+  lsRect(ox + 400, 0, bx1, baseY, shade);
+  lsRect(bx0, 0, bx0 + 6, baseY, rgb565(150, 154, 162));
+  for (int b = 0; b < 3; b++) {
+    int y0 = baseY - 120 - b * 170;
+    lsRect(bx0, y0 - 60, ox + 360, y0, dark);
+    lsRect(ox + 361, y0 - 230, bx1, y0 - 170, dark);
+  }
+  for (int y = baseY - 40; y > 0; y -= 85) lsRect(bx0, y, bx1, y + 1, rgb565(120, 124, 130));
+  int lfx[4] = { bx0, bx0, ox + 170, ox + 170 }, lfy[4] = { baseY - 190, baseY + 10, baseY + 40, baseY - 60 };
+  lsPoly(lfx, lfy, 4, rgb565(70, 74, 82));
+  int rfx[4] = { bx1, bx1, ox + 550, ox + 550 }, rfy[4] = { baseY - 190, baseY + 10, baseY + 40, baseY - 60 };
+  lsPoly(rfx, rfy, 4, rgb565(56, 60, 68));
+  int sx[4] = { bx0, bx1, ox + 450, ox + 270 }, sy[4] = { baseY, baseY, baseY + 34, baseY + 34 };
+  lsPoly(sx, sy, 4, rgb565(90, 94, 102));
+  int nx[4] = { ox + 312, ox + 408, ox + 440, ox + 280 }, ny[4] = { baseY + 34, baseY + 34, baseY + 120, baseY + 120 };
+  lsPoly(nx, ny, 4, rgb565(60, 56, 54));
+  int hx[4] = { ox + 330, ox + 352, ox + 366, ox + 302 }, hy[4] = { baseY + 36, baseY + 36, baseY + 118, baseY + 118 };
+  lsPoly(hx, hy, 4, rgb565(110, 104, 98));
+  lsRect(ox + 280, baseY + 116, ox + 440, baseY + 122, rgb565(40, 38, 36));
+}
+
+// Scene 1's background: inside the silo at the bottom, the curved walls (lit orange by the flames: lit 0..3)
+static void lsSiloBase(int lit) {
+  for (int x = 0; x < LS_SIZE; x += 2) {
+    float k = 0.45f + 0.55f * cosf((x - 360) / 360.0f * 1.25f);
+    lsRect(x, 0, x + 1, 609, rgb565((int)(70 * k), (int)(70 * k), (int)(74 * k)));
+  }
+  for (int y = 80; y < 610; y += 92)
+    for (int x = 0; x < LS_SIZE; x += 4) {
+      float k = 0.45f + 0.55f * cosf((x - 360) / 360.0f * 1.25f);
+      int bend = (int)(10 * (1 - k));
+      lsRect(x, y + bend, x + 3, y + bend, rgb565((int)(30 * k), (int)(30 * k), (int)(34 * k)));
+      lsRect(x, y + bend + 1, x + 3, y + bend + 1, rgb565((int)(95 * k), (int)(95 * k), (int)(100 * k)));
+    }
+  for (int r = 0; r < 2; r++) lsRect(70 + r * 40, 0, 74 + r * 40, 609, rgb565(60, 62, 66));   // a ladder
+  for (int y = 20; y < 600; y += 26) lsRect(70, y, 114, y + 3, rgb565(56, 58, 62));
+  for (int i = 0; i < 3; i++) {                                                             // pipes
+    int x = 600 + i * 26;
+    lsRect(x, 0, x + 14, 609, rgb565(58 - i * 8, 66 - i * 8, 62 - i * 8));
+    lsRect(x + 2, 0, x + 4, 609, rgb565(90, 98, 94));
+  }
+  lsRect(150, 230, 186, 244, rgb565(40, 40, 44));                                         // beacon housings
+  lsRect(534, 230, 570, 244, rgb565(40, 40, 44));
+  lsRect(0, 610, LS_SIZE - 1, LS_SIZE - 1, rgb565(28, 26, 24));                           // the flame trench
+  lsHazard(0, LS_SIZE - 1, 610, 622);
+  for (int x = 0; x < LS_SIZE; x += 16) lsRect(x, 623, x + 3, LS_SIZE - 1, rgb565(16, 15, 14));
+  int dx[3] = { 280, 440, 360 }, dy[3] = { LS_SIZE - 1, LS_SIZE - 1, 650 };
+  lsPoly(dx, dy, 3, rgb565(70, 66, 60));
+  lsSign(86, 360, 152, 1.6f);                                                               // the site's sign on the wall
+  if (lit > 0) pxBlend(LS_X, LS_Y, LS_X + LS_SIZE - 1, LS_Y + LS_SIZE - 1, 255, 120, 20, lit * 0.10f);
+}
+
+// Scene 3's background: the silo from above ground at night, hatch doors open; the site's sign by the fence
+static void lsSiloTop() {
+  for (int y = 0; y < LS_GROUND; y += 2) {
+    float k = (float)y / LS_GROUND;
+    lsRect(0, y, LS_SIZE - 1, y + 1, rgb565((int)(5 + 30 * k * k), (int)(7 + 14 * k), (int)(20 + 36 * k)));
+  }
+  uint32_t st = 777;                          // (the same stars each frame)
+  for (int i = 0; i < 180; i++) {
+    st = st * 1664525u + 1013904223u;
+    int x = (int)((st >> 8) % LS_SIZE);
+    st = st * 1664525u + 1013904223u;
+    int y = (int)((st >> 8) % (LS_GROUND - 100));
+    int b = 60 + (int)((st >> 20) % 150);
+    lsRect(x, y, x + 1, y + 1, rgb565(b, b, b + 20 > 255 ? 255 : b + 20));
+  }
+  int xs[24], ys[24], n = 0;                  // the hills
+  xs[n] = 0; ys[n++] = LS_GROUND;
+  for (int i = 0; i <= 20; i++) {
+    xs[n] = i * LS_SIZE / 20;
+    ys[n++] = LS_GROUND - 30 - (int)(36 * fabsf(sinf(i * 1.3f + 0.4f)) + 20 * fabsf(sinf(i * 0.5f)));
+  }
+  xs[n] = LS_SIZE - 1; ys[n++] = LS_GROUND;
+  for (int i = 1; i + 1 < n; i++) {            // (as strips: pxPoly takes up to 12 points)
+    int qx[4] = { xs[i], xs[i + 1], xs[i + 1], xs[i] }, qy[4] = { ys[i], ys[i + 1], LS_GROUND, LS_GROUND };
+    lsPoly(qx, qy, 4, rgb565(14, 16, 26));
+  }
+  lsRect(0, LS_GROUND, LS_SIZE - 1, LS_SIZE - 1, rgb565(26, 25, 22));
+  lsRect(200, LS_GROUND - 6, 520, LS_GROUND + 30, rgb565(84, 84, 80));
+  lsRect(200, LS_GROUND - 6, 520, LS_GROUND - 3, rgb565(130, 130, 124));
+  lsRect(270, LS_GROUND - 6, 450, LS_SIZE - 1, rgb565(6, 6, 6));
+  for (int y = LS_GROUND + 34; y < LS_SIZE; y += 30) lsRect(270, y, 450, y + 1, rgb565(20, 20, 20));
+  lsHazard(204, 266, LS_GROUND + 8, LS_GROUND + 18);
+  lsHazard(454, 516, LS_GROUND + 8, LS_GROUND + 18);
+  int lx[4] = { 200, 270, 236, 160 }, ly[4] = { LS_GROUND - 6, LS_GROUND - 6, LS_GROUND - 120, LS_GROUND - 112 };
+  lsPoly(lx, ly, 4, rgb565(92, 94, 96));
+  int rx[4] = { 450, 520, 560, 484 }, ry[4] = { LS_GROUND - 6, LS_GROUND - 6, LS_GROUND - 112, LS_GROUND - 120 };
+  lsPoly(rx, ry, 4, rgb565(78, 80, 82));
+  for (int x = 8; x < LS_SIZE; x += 24) {
+    if (x > 150 && x < 570) continue;
+    lsRect(x, LS_GROUND - 22, x + 1, LS_GROUND, rgb565(60, 60, 64));
+  }
+  lsLine(0, LS_GROUND - 18, 150, LS_GROUND - 18, rgb565(60, 60, 64), false);
+  lsLine(570, LS_GROUND - 18, LS_SIZE - 1, LS_GROUND - 18, rgb565(60, 60, 64), false);
+  for (int s = 0; s < 2; s++) {
+    int mx = s ? 640 : 80;
+    lsRect(mx - 2, LS_GROUND - 150, mx + 2, LS_GROUND, rgb565(70, 70, 74));
+    lsRect(mx - 16, LS_GROUND - 160, mx + 16, LS_GROUND - 148, rgb565(90, 90, 94));
+    lsRect(mx - 13, LS_GROUND - 157, mx + 13, LS_GROUND - 151, rgb565(255, 240, 190));
+  }
+  // the site's sign on posts by the fence
+  lsRect(546, LS_GROUND + 60, 550, LS_GROUND + 120, rgb565(70, 70, 74));
+  lsRect(672, LS_GROUND + 60, 676, LS_GROUND + 120, rgb565(70, 70, 74));
+  lsSign(611, LS_GROUND + 60, 212, 2.2f);
+}
+
+static void drawLaunchScene() {
+  gfxClip((int)(LS_Y / UNIT_K), (int)((LS_Y + LS_SIZE - 1) / UNIT_K));
+  if (lsScene == 1) {
+    float t = lsT;
+    bool burning = t >= 1.0f;
+    int lit = 0;
+    if (burning) lit = (t < 1.2f) ? 3 : 2 + (lsRand(0, 3) == 0 ? 1 : 0) - (lsRand(0, 5) == 0 ? 1 : 0);
+    lsSiloBase(lit);
+    bool on = ((int)(t * 4)) & 1;                                  // beacons
+    lsCircle(168, 224, 10, on ? rgb565(255, 40, 30) : rgb565(90, 16, 12));
+    lsCircle(552, 224, 10, on ? rgb565(90, 16, 12) : rgb565(255, 40, 30));
+    int ox = 0, oy = 0;
+    if (burning) {                                                 // shaking
+      int amt = (t < 1.6f) ? 9 : 5;
+      ox = lsRand(-amt, amt + 1);
+      oy = lsRand(-amt, amt + 1);
+    }
+    float rise = (t > 1.5f) ? 34.0f * (t - 1.5f) * (t - 1.5f) : 0;
+    int baseY = (int)(430 - rise) + oy;
+    for (int c2 = 0; c2 < 2; c2++) {                               // the umbilicals, snapping away
+      int wx = c2 ? 610 : 110, wy = c2 ? 190 : 300;
+      int mx = c2 ? 470 : 250, my = baseY - (c2 ? 360 : 240);
+      if (!burning) {
+        lsLine(wx, wy, mx + ox, my, rgb565(30, 30, 30), true);
+        lsLine(wx, wy + 3, mx + ox, my + 3, rgb565(30, 30, 30), true);
+      } else {
+        float k = fminf((t - 1.0f) / 0.6f, 1.0f);
+        lsLine(wx, wy, wx + (mx - wx) * (1 - k) * 0.6f, wy + 40 + 160 * k, rgb565(30, 30, 30), true);
+      }
+    }
+    if (burning) {                                                 // the flame down into the trench
+      int ny = baseY + 120;
+      float grow = fminf((t - 1.0f) / 0.4f, 1.0f);
+      int len = (int)((LS_SIZE - ny + 40) * grow);
+      int w0 = 80, w1 = (int)(150 + 60 * grow);
+      int fx[4] = { 360 - w0 + ox, 360 + w0 + ox, 360 + w1 + ox + lsRand(-12, 13), 360 - w1 + ox + lsRand(-12, 13) };
+      int fy[4] = { ny, ny, ny + len, ny + len };
+      lsPoly(fx, fy, 4, rgb565(255, 120, 20));
+      int mx2[4] = { 360 - 60 + ox, 360 + 60 + ox, 360 + 90 + ox, 360 - 90 + ox };
+      lsPoly(mx2, fy, 4, rgb565(255, 200, 60));
+      int cx2[3] = { 360 - 40 + ox, 360 + 40 + ox, 360 + ox }, cy2[3] = { ny, ny, ny + (int)(len * 0.75f) + lsRand(-20, 21) };
+      lsPoly(cx2, cy2, 3, rgb565(255, 250, 220));
+    } else if (t > 0.6f) {                                         // sparks just before
+      for (int k = 0; k < 6; k++) {
+        int x = 360 + lsRand(-70, 71), y = 560 + lsRand(0, 20);
+        lsLine(x, y, x + lsRand(-20, 21), y + lsRand(10, 40), rgb565(255, 230, 120), false);
+      }
+    }
+    for (int i = 0; i < LS_FIRE; i++) {                            // fire and smoke across the floor
+      const LsFire &f = lsFire[i];
+      if (!f.on) continue;
+      float k = f.age / f.life;
+      uint16_t col = k < 0.25f ? rgb565(255, 220, 90) : k < 0.5f ? rgb565(255, 140, 30) : k < 0.75f ? rgb565(170, 70, 30) : rgb565(70, 60, 56);
+      lsCircle(f.x + ox, f.y + oy, f.r, col);
+    }
+    lsMissileBase(ox, baseY);
+  } else if (lsScene == 2) {
+    lsRect(0, 0, LS_SIZE - 1, LS_SIZE - 1, rgb565(255, 255, 255));
+  } else {
+    float t = lsT;
+    lsSiloTop();
+    if (t < 4.5f) {                                                // the glow round the silo mouth
+      float g = fminf(t / 0.5f, 1.0f) * (t > 3.0f ? (4.5f - t) / 1.5f : 1.0f);
+      lsTint(360, LS_GROUND, 130, 255, 150, 50, 0.22f * g * (0.85f + 0.15f * lsRand(0, 100) / 100.0f));
+    }
+    for (int i = 0; i < LS_FIRE; i++) {                            // smoke
+      const LsFire &f = lsFire[i];
+      if (!f.on) continue;
+      lsTint(f.x, f.y, f.r, 190, 186, 184, 0.6f * (1.0f - f.age / f.life));
+    }
+    if (lsScale > 0.12f) {                                          // the missile (hidden below the ground in the shaft)
+      gfxClip((int)(LS_Y / UNIT_K), (int)((LS_Y + LS_GROUND - 7) / UNIT_K));
+      lsMissileAt(lsX, lsY, lsAng, lsScale, true);
+      gfxClip((int)(LS_Y / UNIT_K), (int)((LS_Y + LS_SIZE - 1) / UNIT_K));
+    }
+    if (lsTyped > 0) {                                              // MISSILE LAUNCHED, the site
+      char head[20] = "MISSILE LAUNCHED";
+      int n1 = lsTyped < 16 ? lsTyped : 16;
+      head[n1] = 0;
+      lsText(head, 360, 110, 4.5f, rgb565(255, 70, 50), true);
+      int n2 = lsTyped - 16;
+      if (n2 > 0) {
+        char dest[24];
+        snprintf(dest, sizeof(dest), "%.*s", n2, siteName[launchSite]);
+        lsText(dest, 360, 170, 5.0f, rgb565(240, 240, 245), true);
+      }
+    }
+  }
+  gfxClipAll();
+}
+
+// The frame with a launch on: the game shrunk on the left, the scene on the right
+static void composeLaunchFrame() {
+  memcpy(frameSave, g_frame, sizeof(frameSave));
+  pxRect(0, 0, FB_W - 1, FB_H - 1, 0);
+  drawLaunchScene();
+  const int GW = 1200, GH = 675, GY = (FB_H - GH) / 2;   // (5/8 of the size)
+  for (int y = 0; y < GH; y++) {
+    int sy = y * FB_H / GH;
+    const uint32_t *r0 = frameSave + sy * FB_W, *r1 = frameSave + (sy + 1 < FB_H ? sy + 1 : sy) * FB_W;
+    uint32_t *d = g_frame + (GY + y) * FB_W;
+    for (int x = 0; x < GW; x++) {
+      int sx = x * FB_W / GW, sx1 = sx + 1 < FB_W ? sx + 1 : sx;
+      uint32_t a = r0[sx], b = r0[sx1], c = r1[sx], e = r1[sx1];
+      d[x] = (((a & 0xFF00FF) + (b & 0xFF00FF) + (c & 0xFF00FF) + (e & 0xFF00FF)) >> 2 & 0xFF00FF) |
+             (((a & 0x00FF00) + (b & 0x00FF00) + (c & 0x00FF00) + (e & 0x00FF00)) >> 2 & 0x00FF00) | (a & 0xFF000000);
+    }
+  }
+  pxRect(GW, 0, GW + 1, FB_H - 1, c32(rgb565(60, 64, 80)));   // (a line between them)
+  drawVectorText("NUCLEAR LAUNCH", (LS_X + LS_SIZE / 2) / UNIT_K, (LS_Y - 50) / UNIT_K, 3.0f,
+                 fmodf(clockT, 0.6f) < 0.35f ? rgb565(255, 60, 40) : rgb565(140, 30, 20), true);
+}
+
 // The launch sites: hacking, launching, landing (in play time)
 static void updateNukes(float dt) {
   char b[64];
@@ -4372,10 +4820,7 @@ static void updateNukes(float dt) {
     if (launchT >= LAUNCH_MINUTES[sitesLaunched] * 60) {
       launchT = 0;
       landLeft[sitesLaunched] = 60.0f * (LAND_MIN_MINUTES + (LAND_MAX_MINUTES - LAND_MIN_MINUTES) * (rnd32() % 1000) / 1000.0f);
-      snprintf(b, sizeof(b), "%s LAUNCHED", siteName[sitesLaunched]);
-      flyerAdd(b);
-      sfxPlay(SFX_TICK24);
-      sfxPlay(SFX_ALARM);
+      startLaunchScene(sitesLaunched);     // (NUCLEAR MISSION's launch, beside the game)
       sitesLaunched++;
     }
   }
@@ -8017,6 +8462,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
       timeLeft -= dt;
       updateNukes(dt);
       updateFlyers(dt);
+      updateLaunchScene(dt);
       if (timeLeft > 60) warnSlot = 99;  // (the last minute: an alert and the lights flickering every ten seconds)
       else if (timeLeft > 0) {
         int slot = (int)ceilf(timeLeft / WARN_EVERY);
@@ -8171,6 +8617,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (scene == SC_STAGE_CLEAR) drawGameOver();
   if (scene == SC_STAGE2_BRIEF) drawStage2Brief();
   if (gameOver != END_NONE) drawGameOver();
+  if (launchOn && !mapOn && !settingsOn && gameOver == END_NONE) composeLaunchFrame();   // a launch: beside the game, shrunk
   // the music: the lift's tune in the car, stage 1's everywhere else; the lift's motor
   int tune = mode == MODE_SHAFT && inCar(agX) && agState != ST_JUMP ? 1 : (stage == 2 ? 4 : 2);   // (the lift car's, else the stage's)
   if (tune == 1 && !musicOn[0].load(std::memory_order_relaxed)) tune = stage == 2 ? 4 : 2;   // (elevator music off: the stage's carries on in the car)
