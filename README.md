@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 034: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 035: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -209,8 +209,9 @@ are SAFE - and the hacked ones start their launch countdown.
 
 **The panel's left box** (where the lift and floor used to be) shows the five
 sites: a wide box each under HACKED (yellow), LAUNCH (orange) and LANDED
-(red), lit once done and blinking while that stage is under way. There are no
-countdowns - you have to learn how long things take. A site that can't be
+(red), filling from the left as that stage goes on (half way through a hack:
+half full) and full once it's done. There are no countdowns - you have to
+learn how long things take. A site that can't be
 hacked any more after the lockdown is dimmed, its boxes dark green; LOCKDOWN
 shows at the top once it's on.
 
@@ -441,10 +442,20 @@ face (otherwise Square still searches); hold it to keep firing. The first
 person a bullet reaches goes down (500 points); the door guard's vest stops
 it.
 
+**In lift A's six rooms** (at random, never in the knife's, the pistol's or
+the level 2 card's place) are a **BULLET-PROOF VEST** (500 points; he wears
+it: a guard's shot then only does half damage and he stays on his feet - the
+guard keeps firing every half second - until he's nearly out of health, when
+the next shot knocks him down as usual) and **3 TOP SECRET DOCUMENTS**
+(1000 points each, the TOP SECRET DOCUMENTS panel with n OF 3 FOUND).
+
+**Each person he kills** (knife or pistol) puts **5 minutes** back on the
+clock (+5:00 ON THE CLOCK).
+
 **One weapon at a time**: he keeps the stronger. Finding the pistol drops the
 knife (KNIFE DROPPED - ONE WEAPON AT A TIME); finding the knife with the
-pistol leaves the knife (A KNIFE - YOU KEEP YOUR PISTOL). The panel's WEAPON
-line shows which he has. Guards get suspicious twice as fast (a
+pistol leaves the knife (A KNIFE - YOU KEEP YOUR PISTOL). The panel's GEAR
+line shows his weapon and the vest. Guards get suspicious twice as fast (a
 point every 0.35 seconds) and at one point short of five they draw and
 **shoot**: 10 health, 30 seconds, knocked down - you come round in the lift
 area outside the door you came in by.

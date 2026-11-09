@@ -39,7 +39,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "034"
+#define GAME_VERSION      "035"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -238,6 +238,7 @@ static const float LAUNCH_MINUTES[NUKE_SITES] = { 5, 4, 3, 2, 1 };
 static int sitesHacked = 0, sitesLaunched = 0;
 static float hackT = 0, launchT = 0;        // seconds into the hack / launch under way
 static float landLeft[NUKE_SITES];          // a launched one: seconds till it lands (<= 0: landed)
+static float landTotal[NUKE_SITES];         // (and how long its flight is)
 static bool lockdown = false;               // QUANTUM LOCKDOWN (the main computer): no more hacking
 static bool launchOn = false;               // a launch's cut scene playing (beside the game)
 static int launchQueued = 0;
@@ -313,6 +314,14 @@ static MyShot myShots[MY_SHOTS];
 static int s2KnifeItem = 0, s2CardItem = 2;  // which of the kitchen's things the knife is in; which medical bay patient has the level 2 card
 static bool panelKnife = false;              // (the FOUND panel: the knife, not a card)
 static float shotFlashT = 0;
+#define S2_DOCS 3                            // stage 2: TOP SECRET DOCUMENTS in lift A's rooms (1000 points each)...
+#define S2_DOC_VALUE 1000
+#define VEST_SCORE 500                       // ...and a BULLET-PROOF VEST: a guard's shot only hurts (half), no knock down
+#define KILL_TIME_BONUS 300                  // each person he kills: 5 minutes more on the clock
+enum S2Hold : uint8_t { S2H_NONE, S2H_VEST, S2H_DOC };
+static uint8_t s2Hold[S2_ROOMS][S2_ITEMS];
+static bool hasVest = false;
+static int s2DocsFound = 0;
 static int npcCount = 0;
 static int susp = 0;                         // suspicion points (SUSP_MAX: recognised)
 static float suspT = 0;
@@ -575,6 +584,20 @@ static void layOutStage2() {
   for (int k = 0; k < MY_SHOTS; k++) myShots[k].on = false;
   s2KnifeItem = rnd(8);                      // (one of the kitchen's 8 things)
   s2GunItem = rnd(2);                        // (one of the security room's two gun racks)
+  // the vest and three documents: in lift A's rooms, in things that hold nothing else
+  memset(s2Hold, 0, sizeof(s2Hold));
+  hasVest = false;
+  s2DocsFound = 0;
+  for (int k = 0; k < 1 + S2_DOCS; k++)
+    for (int tries = 0; tries < 500; tries++) {
+      int f = rnd(S2_LEVELS), idx = s2Room[0][f], kind = s2Kind[idx];
+      int n = kind == LK_KITCHEN ? 8 : kind == LK_CLEANING ? 16 : kind == LK_MEDICAL ? 9 : kind == LK_SECURITY ? 6 : kind == LK_ADMIN ? 8 : 16;
+      int i = rnd(n);
+      if (s2Hold[idx][i]) continue;
+      if ((kind == LK_KITCHEN && i == s2KnifeItem) || (kind == LK_SECURITY && i == s2GunItem) || (kind == LK_MEDICAL && i == s2CardItem)) continue;
+      s2Hold[idx][i] = k == 0 ? S2H_VEST : S2H_DOC;
+      break;
+    }
   static const int beds[5] = { 2, 4, 5, 6, 7 };
   s2CardItem = beds[rnd(5)];                 // (one of the medical bay's 5 patients)
 }
@@ -2650,11 +2673,11 @@ static void paintKitchen() {
 }
 
 // ---- the cleaning room: the front counter on the floor, the office in the middle, the stores at the top
-static void paintDeckSlab(int y) {
-  fillRect(224, y, SCREEN_W - 1, y + PLAT_T - 1, rgb565(196, 200, 208));
-  fillRect(224, y, SCREEN_W - 1, y + 2, rgb565(244, 246, 250));
-  fillRect(224, y + PLAT_T - 3, SCREEN_W - 1, y + PLAT_T - 1, rgb565(150, 156, 166));
-  for (int x = 300; x < SCREEN_W - 40; x += 230) fillRect(x, y + PLAT_T + 1, x + 90, y + PLAT_T + 4, rgb565(250, 252, 255));   // lights under it
+static void paintDeckSlab(int y, int x0 = 224, int x1 = SCREEN_W - 1) {
+  fillRect(x0, y, x1, y + PLAT_T - 1, rgb565(196, 200, 208));
+  fillRect(x0, y, x1, y + 2, rgb565(244, 246, 250));
+  fillRect(x0, y + PLAT_T - 3, x1, y + PLAT_T - 1, rgb565(150, 156, 166));
+  for (int x = x0 + 76; x < x1 - 90; x += 230) fillRect(x, y + PLAT_T + 1, x + 90, y + PLAT_T + 4, rgb565(250, 252, 255));   // lights under it
 }
 
 static void paintCrates(int x0, int w, int fy, int seed) {                    // wooden crates, stacked
@@ -3024,7 +3047,7 @@ static void paintStore() {
   paintPallet(670, 140, ROOM_FLOOR_Y);
   paintCupboardTall(900, ROOM_FLOOR_Y);
   // the middle
-  paintDeckSlab(STORE_MID_Y);
+  paintDeckSlab(STORE_MID_Y, 0, 1059);
   paintBox(45, STORE_MID_Y, 64, 56, 1);
   paintBox(110, STORE_MID_Y, 64, 90, 0);
   paintSecurityLockers(218, STORE_MID_Y);
@@ -3034,7 +3057,7 @@ static void paintStore() {
   paintBox(850, STORE_MID_Y, 70, 70, 2);
   paintBox(922, STORE_MID_Y, 66, 110, 1);
   // the top
-  paintDeckSlab(STORE_TOP_Y);
+  paintDeckSlab(STORE_TOP_Y, 0, 1059);
   paintBox(55, STORE_TOP_Y, 70, 60, 0);
   paintBox(127, STORE_TOP_Y, 76, 70, 2);
   paintCrates(290, 140, STORE_TOP_Y, 1);
@@ -4820,6 +4843,7 @@ static void updateNukes(float dt) {
     if (launchT >= LAUNCH_MINUTES[sitesLaunched] * 60) {
       launchT = 0;
       landLeft[sitesLaunched] = 60.0f * (LAND_MIN_MINUTES + (LAND_MAX_MINUTES - LAND_MIN_MINUTES) * (rnd32() % 1000) / 1000.0f);
+      landTotal[sitesLaunched] = landLeft[sitesLaunched];
       startLaunchScene(sitesLaunched);     // (NUCLEAR MISSION's launch, beside the game)
       sitesLaunched++;
     }
@@ -4855,15 +4879,17 @@ static void drawNukePanel(int x0, int y0, int x1, int y1) {
     bool hacked = i < sitesHacked, launched = i < sitesLaunched, landed = launched && landLeft[i] <= 0;
     bool safe = lockdown && !hacked;
     drawVectorText(siteName[i], x0 + 14 + vectorTextWidth(siteName[i], 1.35f) / 2, y, 1.35f, safe ? rgb565(110, 120, 140) : rgb565(220, 226, 240), false);
-    bool st[3] = { hacked, launched, landed };
-    int active = -1;
-    if (launched && !landed) active = 2;
-    else if (hacked && !launched && i == sitesLaunched && (sitesHacked == NUKE_SITES || lockdown)) active = 1;
-    else if (!hacked && !lockdown && i == sitesHacked) active = 0;
+    // how far along each stage is (0..1): filled from the left
+    float fill[3] = { hacked ? 1.0f : 0.0f, launched ? 1.0f : 0.0f, landed ? 1.0f : 0.0f };
+    if (launched && !landed && landTotal[i] > 0) fill[2] = clampv(1.0f - landLeft[i] / landTotal[i], 0.0f, 1.0f);
+    else if (hacked && !launched && i == sitesLaunched && (sitesHacked == NUKE_SITES || lockdown)) fill[1] = clampv(launchT / (LAUNCH_MINUTES[i] * 60), 0.0f, 1.0f);
+    else if (!hacked && !lockdown && i == sitesHacked) fill[0] = clampv(hackT / (HACK_MINUTES[i] * 60), 0.0f, 1.0f);
+    (void)blink;
     for (int c = 0; c < 3; c++) {
       int bx = bx0 + c * (bw + gap);
-      uint16_t col = st[c] ? done[c] : (active == c && blink ? done[c] : safe ? rgb565(36, 60, 48) : rgb565(44, 48, 62));
-      fillRect(bx, y - 9, bx + bw, y + 9, col);
+      fillRect(bx, y - 9, bx + bw, y + 9, safe ? rgb565(36, 60, 48) : rgb565(44, 48, 62));
+      int w = (int)lroundf(bw * fill[c]);
+      if (w > 0) fillRect(bx, y - 9, bx + w, y + 9, done[c]);
       drawRectOutline(bx, y - 9, bx + bw, y + 9, rgb565(130, 138, 160), 1);
     }
   }
@@ -5183,6 +5209,8 @@ static void updateMyShots(float dt) {
       s2NpcDDir[curRoom][i] = (int8_t)n.dir;
       sfxPlay(SFX_HIT);
       addScore(500, n.x, n.y - 170);
+      timeLeft += KILL_TIME_BONUS;             // (each one he kills: 5 more minutes)
+      showMsg("+5:00 ON THE CLOCK", 2.0f);
       susp = 0;
       suspT = 0;
       break;
@@ -5299,6 +5327,8 @@ static void updateS2Act(float dt) {
       s2NpcDDir[curRoom][killTarget] = (int8_t)n.dir;
       sfxPlay(SFX_HIT);
       addScore(500, n.x, n.y - 170);
+      timeLeft += KILL_TIME_BONUS;             // (each one he kills: 5 more minutes)
+      showMsg("+5:00 ON THE CLOCK", 2.0f);
       susp = 0;
       suspT = 0;
       if (n.knifeOnly && s2Kind[curRoom] == LK_SECURITY) {   // the door guard: the others will open fire
@@ -5451,6 +5481,12 @@ static void updateNpcs(float dt) {
       if (was < GUARD_AIM_SECONDS && n.aimT >= GUARD_AIM_SECONDS) {
         sfxPlay(SFX_SHOT);
         shotFlashT = 0.12f;
+        if (hasVest && health > SHOT_HURT) { // the vest: it hurts (half), he stays up, the guard fires again (till he's nearly done)
+          hurt(SHOT_HURT / 2);
+          showMsg("HIT - THE VEST HELD", 1.2f);
+          n.aimT = 0.001f;
+          continue;
+        }
         s2Recog = true;                      // (when he comes round: out in the lift area)
         searchItem = -1;
         if (agState == ST_LIFT && agLift >= 0) lifts[agLift].moving = false;
@@ -5608,10 +5644,11 @@ static void drawSuspicionMeter() {
 }
 
 // ACCESS CARD LEVEL n FOUND: the card, big, for a moment
-static bool panelGun = false;
-static void foundCard(int level) {          // (-1: the knife, -2: the pistol)
+static bool panelGun = false, panelVest = false;
+static void foundCard(int level) {          // (-1: the knife, -2: the pistol, -3: the vest)
   panelKnife = level == -1;
   panelGun = level == -2;
+  panelVest = level == -3;
   if (level > s2Card) s2Card = level;
   cardShown = level;
   cardShowT = CARD_SHOW;
@@ -5625,6 +5662,17 @@ static void drawCardPanel() {
   blendRect(x0, y0, x1, y1, 0, 0, 0, 0.78f * k);
   drawRectOutline(x0, y0, x1, y1, rgb565(90, 200, 255), 3);
   char b[40];
+  if (panelVest) {                           // the vest
+    drawVectorText("BULLET-PROOF VEST FOUND", SCREEN_W / 2, y0 + 40, 3.2f, rgb565(240, 244, 250), true);
+    int kx = SCREEN_W / 2, ky = y0 + 130;
+    int vx[8] = { kx - 60, kx - 30, kx - 14, kx + 14, kx + 30, kx + 60, kx + 56, kx - 56 };
+    int vy[8] = { ky - 50, ky - 60, ky - 34, ky - 34, ky - 60, ky - 50, ky + 60, ky + 60 };
+    fillPolygon(vx, vy, 8, rgb565(40, 46, 60));
+    fillRect(kx - 48, ky - 4, kx + 48, ky + 10, rgb565(60, 68, 86));
+    drawVectorText("POLICE", kx, ky + 30, 1.8f, rgb565(230, 236, 250), false);
+    drawVectorText("YOU PUT IT ON - SHOTS HURT LESS   +500", SCREEN_W / 2, y1 - 40, 2.0f, rgb565(255, 220, 120), false);
+    return;
+  }
   if (panelGun) {                            // the pistol, and how to fire it
     drawVectorText("PISTOL FOUND", SCREEN_W / 2, y0 + 40, 3.4f, rgb565(240, 244, 250), true);
     int kx = SCREEN_W / 2, ky = y0 + 140;
@@ -6016,6 +6064,21 @@ static void updateAgent(float dt) {
                 hasKnife = false;
                 showMsg("KNIFE DROPPED - ONE WEAPON AT A TIME", 3.0f);
               }
+              break;
+            }
+            if (first && s2Hold[curRoom][i] == S2H_VEST) {                    // the bullet-proof vest: he puts it on
+              hasVest = true;
+              addScore(VEST_SCORE, px, py - 56);
+              foundCard(-3);
+              break;
+            }
+            if (first && s2Hold[curRoom][i] == S2H_DOC) {                     // TOP SECRET DOCUMENTS
+              s2DocsFound++;
+              docValue = S2_DOC_VALUE;
+              sfxPlay(SFX_FOUND);
+              sfxPlay(SFX_FANFARE);
+              addScore(docValue, px, py - 56);
+              docShowT = DOC_SHOW;
               break;
             }
             if (first && s2Kind[curRoom] == LK_MEDICAL && i == s2CardItem) {    // a patient's level 2 card
@@ -7018,7 +7081,8 @@ static void drawDocPanel() {
   char b[48];
   snprintf(b, sizeof(b), "+%ld POINTS", docValue);
   drawVectorText(b, SCREEN_W / 2, y1 - 62, 3.4f, rgb565(100, 240, 140), true);
-  snprintf(b, sizeof(b), "%d OF %d FOUND", docsFound, DOCUMENTS);
+  if (stage == 2) snprintf(b, sizeof(b), "%d OF %d FOUND", s2DocsFound, S2_DOCS);
+  else snprintf(b, sizeof(b), "%d OF %d FOUND", docsFound, DOCUMENTS);
   drawVectorText(b, SCREEN_W / 2, y1 - 26, 2.4f, rgb565(200, 206, 220), false);
 }
 
@@ -7409,14 +7473,15 @@ static void drawPanel() {
       for (int f = 0; f < S2_LEVELS; f++) aid += s2Stops(s2, f) && !s2Aid[s2][f];
     snprintf(b, sizeof(b), "%d/%d", seen, S2_ROOMS);
     line("ROOMS", b, PANEL_Y + 38, rgb565(240, 240, 245));
-    if (s2AllAccess) snprintf(b, sizeof(b), "ALL (TEST)");
+    if (s2AllAccess) snprintf(b, sizeof(b), "ALL");
     else if (s2Card > 0) snprintf(b, sizeof(b), "LEVEL %d", s2Card);
     else snprintf(b, sizeof(b), "NONE");
     line("ACCESS CARD", b, PANEL_Y + 68, rgb565(90, 220, 255));
     line("DISGUISE", s2Disguised ? "OVERALLS" : "NONE", PANEL_Y + 98, rgb565(255, 220, 80));
     snprintf(b, sizeof(b), "%d", aid);
     line("FIRST AID LEFT", b, PANEL_Y + 128, rgb565(120, 230, 140));
-    line("WEAPON", hasGun ? "PISTOL" : hasKnife ? "KNIFE" : "NONE", PANEL_Y + 158, rgb565(240, 240, 245));
+    snprintf(b, sizeof(b), "%s%s", hasGun ? "PISTOL" : hasKnife ? "KNIFE" : hasVest ? "" : "NONE", hasVest ? ((hasGun || hasKnife) ? " VEST" : "VEST") : "");
+    line("GEAR", b, PANEL_Y + 158, rgb565(240, 240, 245));
     snprintf(b, sizeof(b), "V%s  FPS %d", GAME_VERSION, (int)lroundf(fpsShown));
     drawVectorText(b, (lx + SCREEN_W - 44) / 2, PANEL_Y + 184, 1.5f, rgb565(150, 160, 186), false);
     return;
