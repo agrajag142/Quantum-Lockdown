@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 035: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 036: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -415,6 +415,31 @@ him: ACCESS CARD LEVEL 2 FOUND).
 with variety - tall cupboards, grey double-door cabinets, lockers, racks of
 boxes, tins, sacks and jars, crates, a shrink-wrapped pallet, a wooden
 cupboard, stacks of boxes. Nobody in it: 16 things to search.
+
+**Lift B's rooms** (access level 2): three of its five rooms, at random levels,
+are the clone lab, the super soldier lab and the server room (the other two are
+still empty labs). Everything in them can be searched; nothing is in them yet.
+
+**The clone lab** (EXPERIMENTAL CLONE LAB): NUCLEAR MISSION's, wider. Two
+levels, a lift pad by the door up to the deck. Up on the deck are **five
+cloning tanks**, each with a suited clone floating in green fluid with bubbles
+rising (SUBJECT 01..05). Below are the test tube bench, the DNA and body-scan
+monitors, the green machine feeding the tanks, three gas cylinders, a gurney
+with a clone under a sheet (a tag on his toe) and the orange robot arm. There
+are no hazards: 12 things to search.
+
+**The super soldier lab**: one level, under **two security cameras** (as in
+NUCLEAR MISSION). The big glowing tank in the middle holds SUBJECT X. Around it
+are the two side tanks (DNA, a molecule), the two consoles with VITALS screens
+above them (heart traces), the desk with its body-scan monitor, and the
+syringe cabinet. For the wider room there is also a SERUM fridge of vials and a
+stand of body armour with a helmet. 9 things to search.
+
+**The server room**: one level, with **a camera and a drone** together (hard).
+The walls are shiny silver metal tiles. A row of seven cooling fans (turning)
+runs along the top, with the big QUANTUM NETWORK screen below them (a wire
+globe, bars, a scan line). On the floor are four computer terminals (NODE 1..4)
+and two metal cupboards either side. 8 things to search.
 
 **The admin room**: two levels, most of it on the floor - the ADMINISTRATION
 front counter by the door (ENQUIRIES board, an in-tray, a bell), a desk with

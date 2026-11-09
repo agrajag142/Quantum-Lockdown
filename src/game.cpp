@@ -34,12 +34,13 @@
 #include "micromod.h"
 
 #include <atomic>
+#include <initializer_list>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "035"
+#define GAME_VERSION      "036"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -218,7 +219,7 @@ struct RoomInfo {
   bool term;                       // the facility terminal (one, not in room 1): DOWNLOAD FACILITY BLUEPRINT
   bool noRightDoor;                // (the sub basement's room: a wall on the right)
 };
-enum Hazard : uint8_t { HZ_NONE, HZ_ELECTRIC, HZ_DARK, HZ_CAMERA, HZ_CAMERA2, HZ_DRONE };
+enum Hazard : uint8_t { HZ_NONE, HZ_ELECTRIC, HZ_DARK, HZ_CAMERA, HZ_CAMERA2, HZ_DRONE, HZ_CAMDRONE };   // (HZ_CAMDRONE: stage 2's server room, a camera and a drone)
 static RoomInfo rooms[ALL_ROOMS];          // numbered 1..30 across the rows, top to bottom; then QUANTUM CONTROL, the sub basement's
 static int8_t roomAt[ROWS][COLS];          // which room is in each place (-1: none)
 static bool shaftSeen[SHAFTS][FLOORS + 1];
@@ -266,8 +267,8 @@ static std::atomic<int> rideHum{0};    // the journey's rumble
 // levels (from the top level down: A 6, B 5 ... F 1). A room's left door is on its lift's right
 // walkway, its right door (where the next lift comes down that far) on the next lift's left one;
 // each door has a card reader (access level 1..5: once in, always open). In rooms[0..20].
-enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE };
-static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM" };
+enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE, LK_CLONE, LK_SOLDIER, LK_SERVER };
+static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM" };
 static int8_t s2Room[S2_LIFTS][S2_LEVELS];   // the room on the right of each lift at each level (-1 none)
 static uint8_t s2Kind[S2_ROOMS], s2Lvl[S2_ROOMS];   // what it is, the access level its doors need
 static bool s2Aid[S2_LIFTS][S2_LEVELS];      // each left walkway's first aid cabinet: used
@@ -564,6 +565,21 @@ static void layOutStage2() {
   for (int f = 0; f < S2_LEVELS; f++) {
     int idx = s2Room[0][f];
     s2Kind[idx] = kinds[f];
+  }
+  // lift B's five rooms: three of them the clone lab, the super soldier lab (two cameras) and the server room (a camera and a drone)
+  {
+    int fl[S2_LEVELS - 1] = { 0, 1, 2, 3, 4 };
+    for (int i = S2_LEVELS - 2; i > 0; i--) {
+      int j = rnd(i + 1), t = fl[i];
+      fl[i] = fl[j];
+      fl[j] = t;
+    }
+    const uint8_t bk[3] = { LK_CLONE, LK_SOLDIER, LK_SERVER }, bh[3] = { HZ_NONE, HZ_CAMERA2, HZ_CAMDRONE };
+    for (int k = 0; k < 3; k++) {
+      int idx = s2Room[1][fl[k]];
+      s2Kind[idx] = bk[k];
+      rooms[idx].hazard = bh[k];
+    }
   }
   memset(roomAt, -1, sizeof(roomAt));
   wkFloor = rnd(S2_LEVELS);
@@ -1717,6 +1733,21 @@ static const LabItem adminItems[] = {
   { 310, ROOM_FLOOR_Y, 260, 100 }, { ADMIN_DESK_X, ROOM_FLOOR_Y, 180, 72 }, { 890, ROOM_FLOOR_Y, 200, 70 }, { 1030, ROOM_FLOOR_Y, 60, 120 },
   { 1210, ROOM_FLOOR_Y, 40, 124 },                                                                       // counter, desk, table, filing, cooler
   { 790, ADMIN_DECK_Y, 120, 190 }, { 930, ADMIN_DECK_Y, 90, 170 }, { 1040, ADMIN_DECK_Y, 80, 60 } };       // the archives, a cupboard, boxes
+// lift B's rooms
+#define CLONE_DECK_Y   440
+static const LabItem cloneItems[] = {
+  { 340, ROOM_FLOOR_Y, 170, 110 }, { 512, ROOM_FLOOR_Y, 60, 140 }, { 600, ROOM_FLOOR_Y, 110, 145 }, { 688, ROOM_FLOOR_Y, 60, 140 },   // the bench, DNA, the machine, the body scan
+  { 820, ROOM_FLOOR_Y, 120, 140 }, { 975, ROOM_FLOOR_Y, 160, 90 }, { 1150, ROOM_FLOOR_Y, 70, 200 },                               // the cylinders, the gurney, the robot arm
+  { 330, CLONE_DECK_Y, 120, 180 }, { 520, CLONE_DECK_Y, 120, 180 }, { 710, CLONE_DECK_Y, 120, 180 },                               // the five tanks
+  { 900, CLONE_DECK_Y, 120, 180 }, { 1090, CLONE_DECK_Y, 120, 180 } };
+static const LabItem soldierItems[] = {
+  { 170, ROOM_FLOOR_Y, 84, 200 }, { 280, ROOM_FLOOR_Y, 100, 200 }, { 405, ROOM_FLOOR_Y, 90, 338 }, { 505, ROOM_FLOOR_Y, 50, 120 },   // the serum fridge, the desk, a side tank, a console
+  { 640, ROOM_FLOOR_Y, 180, 380 }, { 775, ROOM_FLOOR_Y, 50, 120 }, { 875, ROOM_FLOOR_Y, 90, 338 }, { 995, ROOM_FLOOR_Y, 84, 160 },  // the big tank, a console, a side tank, the cabinet
+  { 1110, ROOM_FLOOR_Y, 76, 210 } };                                                                                                 // the armour stand
+static const LabItem serverItems[] = {
+  { 180, ROOM_FLOOR_Y, 100, 196 }, { 290, ROOM_FLOOR_Y, 100, 196 },                                                         // two cupboards on the left
+  { 420, ROOM_FLOOR_Y, 110, 150 }, { 567, ROOM_FLOOR_Y, 110, 150 }, { 713, ROOM_FLOOR_Y, 110, 150 }, { 860, ROOM_FLOOR_Y, 110, 150 },   // the four terminals
+  { 990, ROOM_FLOOR_Y, 100, 196 }, { 1100, ROOM_FLOOR_Y, 100, 196 } };                                                      // two on the right
 static void placeLabItems(int idx) {
   decorCount = 0;
   auto add = [](const LabItem &it) {
@@ -1732,6 +1763,9 @@ static void placeLabItems(int idx) {
   if (s2Kind[idx] == LK_SECURITY) for (const LabItem &it : securityItems) add(it);
   if (s2Kind[idx] == LK_STORE) for (const LabItem &it : storeItems) add(it);
   if (s2Kind[idx] == LK_ADMIN) for (const LabItem &it : adminItems) add(it);
+  if (s2Kind[idx] == LK_CLONE) for (const LabItem &it : cloneItems) add(it);
+  if (s2Kind[idx] == LK_SOLDIER) for (const LabItem &it : soldierItems) add(it);
+  if (s2Kind[idx] == LK_SERVER) for (const LabItem &it : serverItems) add(it);
 }
 static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
   decorCount = 0;
@@ -1808,8 +1842,9 @@ static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
 }
 
 // Where a room's security cameras hang (top left / top right corners)
+static const WideRoom &roomTemplate(int idx);
 static float cameraX(const RoomInfo &ri, bool right) {   // in from the corner, clear of any lift shaft
-  const WideRoom &t = wideRooms[ri.tpl];
+  const WideRoom &t = roomTemplate((int)(&ri - rooms));
   const int tryAt[3] = { 150, 300, 110 };
   for (int k = 0; k < 3; k++) {
     int x = right ? SCREEN_W - tryAt[k] : tryAt[k];
@@ -1826,7 +1861,7 @@ static int roomCameras(const RoomInfo &ri, float *xs) {
     xs[1] = cameraX(ri, true);
     return 2;
   }
-  if (ri.hazard == HZ_CAMERA) {
+  if (ri.hazard == HZ_CAMERA || ri.hazard == HZ_CAMDRONE) {
     xs[0] = cameraX(ri, (ri.seed >> 5) & 1);
     return 1;
   }
@@ -3149,6 +3184,608 @@ static void paintAdmin() {
   drawVectorText("ARCHIVES", 790, ADMIN_DECK_Y - 214, 1.8f, rgb565(110, 120, 140), false);
 }
 
+// ---- lift B's rooms: the clone lab and the super soldier lab (NUCLEAR MISSION's secret lab, wider), the server room
+// NUCLEAR MISSION's pieces are drawn through a scale and a shift: its point (x, y) lands at (nmOX + x*nmS, nmOY + y*nmS)
+static float nmS = 1, nmOX = 0, nmOY = 0;
+static void nmAt(float s, float nx, float ny, float qx, float qy) { nmS = s; nmOX = qx - nx * s; nmOY = qy - ny * s; }
+static int nX(float x) { return (int)lroundf(nmOX + x * nmS); }
+static int nY(float y) { return (int)lroundf(nmOY + y * nmS); }
+static void nRect(int x0, int y0, int x1, int y1, uint16_t c) { fillRect(nX((float)x0), nY((float)y0), nX(x1 + 1.0f) - 1, nY(y1 + 1.0f) - 1, c); }
+static void nSpan(int y, int x0, int x1, uint16_t c) { nRect(x0, y, x1, y, c); }
+static void nCirc(int cx, int cy, int r, uint16_t c) { fillCircle(nX((float)cx), nY((float)cy), r * nmS < 1 ? 1 : (int)lroundf(r * nmS), c); }
+static void nRing(int cx, int cy, int r, uint16_t c) { drawCircle(nX((float)cx), nY((float)cy), (int)lroundf(r * nmS), c); }
+static void nPoly(const int *xs, const int *ys, int n, uint16_t c) {
+  float fx[12], fy[12];
+  for (int i = 0; i < n && i < 12; i++) { fx[i] = nmOX + xs[i] * nmS; fy[i] = nmOY + ys[i] * nmS; }
+  fillPolygonF(fx, fy, n, c);
+}
+static void nLine(int x0, int y0, int x1, int y1, uint16_t c, bool thick) {
+  drawLineF(nmOX + x0 * nmS, nmOY + y0 * nmS, nmOX + x1 * nmS, nmOY + y1 * nmS, c, (thick ? 2.0f : 1.0f) * nmS);
+}
+static void nText(const char *t, int x, int y, float size, uint16_t c, bool thick) { drawVectorText(t, nmOX + x * nmS, nmOY + y * nmS, size * nmS, c, thick); }
+static void nOutline(int x0, int y0, int x1, int y1, uint16_t c, int w) { drawRectOutline(nX((float)x0), nY((float)y0), nX((float)x1), nY((float)y1), c, (int)lroundf(w * nmS)); }
+
+static void nBioSign(int x, int y, int r) {   // a yellow triangle with the trefoil in it
+  int tx[3] = { x, x + r, x - r }, ty[3] = { y - r, y + r * 3 / 4, y + r * 3 / 4 };
+  nPoly(tx, ty, 3, rgb565(240, 200, 40));
+  int cy = y + r / 6, k = r / 4;
+  for (int i = 0; i < 3; i++) {
+    float a = -PI / 2 + i * 2 * PI / 3;
+    nCirc(x + (int)(cosf(a) * k), cy + (int)(sinf(a) * k), k, rgb565(20, 20, 22));
+  }
+  nCirc(x, cy, k / 2 + 1, rgb565(240, 200, 40));
+}
+
+// A colour seen through the tank's yellow-green fluid
+static uint16_t inTank(int r, int g, int b) { return rgb565(r + (160 - r) * 3 / 10, g + (205 - g) * 3 / 10, b + (60 - b) * 3 / 10); }
+
+// One clone floating in a tank, eyes shut: a man in a dark suit, white shirt and tie (no one in
+// particular). top: the top of his head; ~100 tall. variant moves the arms a little.
+static void nClone(int cx, int top, int variant) {
+  uint16_t skin = inTank(222, 170, 130), skinD = inTank(180, 128, 96), hair = inTank(96, 66, 40), hairD = inTank(64, 42, 26);
+  uint16_t suit = inTank(40, 46, 66), suitD = inTank(26, 30, 44), shirt = inTank(236, 238, 240), tie = inTank(40, 80, 150);
+  uint16_t shoe = inTank(24, 22, 22), line = inTank(60, 40, 30);
+  if (variant >= 3) { hair = inTank(40, 34, 30); tie = inTank(150, 40, 40); }   // (the extra ones: dark hair, a red tie)
+  int f = top, v = variant % 3;
+  nRect(cx - 13, f + 62, cx - 2, f + 95, suit);
+  nRect(cx + 2, f + 62, cx + 13, f + 95, suit);
+  nRect(cx - 2, f + 64, cx - 1, f + 95, suitD);
+  nRect(cx + 11, f + 66, cx + 13, f + 95, suitD);
+  nRect(cx - 15, f + 95, cx - 1, f + 100, shoe);
+  nRect(cx + 1, f + 95, cx + 15, f + 100, shoe);
+  int sp = 2 + v * 2;
+  int lx[4] = { cx - 22, cx - 14, cx - 15 - sp, cx - 24 - sp }, ly[4] = { f + 30, f + 32, f + 66, f + 64 };
+  int rx[4] = { cx + 22, cx + 14, cx + 15 + sp, cx + 24 + sp }, ry[4] = { f + 30, f + 32, f + 66, f + 64 };
+  nPoly(lx, ly, 4, suit);
+  nPoly(rx, ry, 4, suit);
+  nRect(cx - 23 - sp, f + 63, cx - 16 - sp, f + 65, shirt);
+  nRect(cx + 16 + sp, f + 63, cx + 23 + sp, f + 65, shirt);
+  nCirc(cx - 20 - sp, f + 70, 4, skin);
+  nCirc(cx + 20 + sp, f + 70, 4, skin);
+  int jx[6] = { cx - 22, cx + 22, cx + 18, cx + 16, cx - 16, cx - 18 }, jy[6] = { f + 28, f + 28, f + 50, f + 64, f + 64, f + 50 };
+  nPoly(jx, jy, 6, suit);
+  nRect(cx - 22, f + 28, cx - 18, f + 50, suitD);
+  int sx[3] = { cx - 7, cx + 7, cx }, sy[3] = { f + 26, f + 26, f + 48 };
+  nPoly(sx, sy, 3, shirt);
+  int tx[5] = { cx - 2, cx + 2, cx + 3, cx, cx - 3 }, ty[5] = { f + 28, f + 28, f + 44, f + 48, f + 44 };
+  nPoly(tx, ty, 5, tie);
+  nRect(cx - 2, f + 26, cx + 2, f + 29, tie);
+  nLine(cx - 7, f + 27, cx - 1, f + 50, suitD, false);
+  nLine(cx + 7, f + 27, cx + 1, f + 50, suitD, false);
+  nLine(cx - 7, f + 27, cx - 11, f + 36, suitD, false);
+  nLine(cx + 7, f + 27, cx + 11, f + 36, suitD, false);
+  nCirc(cx + 2, f + 54, 1, suitD);
+  nCirc(cx + 2, f + 59, 1, suitD);
+  nRect(cx + 9, f + 36, cx + 14, f + 37, shirt);
+  nRect(cx - 4, f + 20, cx + 4, f + 27, skinD);
+  nCirc(cx, f + 10, 10, hair);
+  nCirc(cx - 9, f + 13, 2, skin);
+  nCirc(cx + 9, f + 13, 2, skin);
+  nCirc(cx, f + 13, 8, skin);
+  nRect(cx - 8, f + 13, cx + 8, f + 18, skin);
+  nCirc(cx, f + 18, 6, skin);
+  int px[4] = { cx - 10, cx + 9, cx + 7, cx - 9 }, py[4] = { f + 2, f + 2, f + 7, f + 8 };
+  nPoly(px, py, 4, hair);
+  nLine(cx - 3, f + 1, cx - 5, f + 6, hairD, false);
+  nRect(cx - 6, f + 10, cx - 2, f + 10, hairD);
+  nRect(cx + 2, f + 10, cx + 6, f + 10, hairD);
+  nRect(cx - 6, f + 13, cx - 2, f + 13, line);
+  nRect(cx + 2, f + 13, cx + 6, f + 13, line);
+  nRect(cx, f + 14, cx + 1, f + 18, skinD);
+  nRect(cx - 3, f + 21, cx + 3, f + 21, line);
+}
+
+// ---- the EXPERIMENTAL CLONE LAB: five cloning tanks up on the deck, the machines that feed them below
+#define CLONE_TANKS    5
+#define CLONE_TANK_S   1.25f
+static const int16_t cloneTankX[CLONE_TANKS] = { 330, 520, 710, 900, 1090 };
+
+static void paintCloneTank(int qx, int k) {   // its base on the deck (NUCLEAR MISSION's, a quarter bigger)
+  nmAt(CLONE_TANK_S, 0, 400, (float)qx, CLONE_DECK_Y);
+  int cx = 0, x0 = cx - 42, x1 = cx + 42;
+  fillRect(qx - 8, CEIL_Y + 58, qx + 8, nY(256), rgb565(110, 116, 126));   // the feed from the ceiling
+  fillRect(qx - 8, CEIL_Y + 58, qx - 5, nY(256), rgb565(150, 156, 166));
+  nRect(x0 - 6, 256, x1 + 6, 270, rgb565(150, 156, 166));
+  nRect(x0 - 6, 256, x1 + 6, 258, rgb565(200, 206, 214));
+  for (int y = 270; y < 384; y++) {
+    int g = (y - 270) * 40 / 114;
+    nSpan(y, x0, x1, rgb565(150 + g / 2, 190 + g / 2, 40 + g / 3));
+  }
+  nClone(cx, 278, k);
+  nLine(cx + 8, 278, cx + 14, 270, rgb565(70, 90, 60), false);
+  for (int y = 270; y < 384; y += 2) nSpan(y, x0, x0 + 6, rgb565(206, 236, 140));
+  nLine(x1 - 14, 380, x1 - 4, 280, rgb565(220, 240, 170), false);
+  nRect(x0 - 4, 270, x0 - 1, 384, rgb565(170, 176, 186));
+  nRect(x1 + 1, 270, x1 + 4, 384, rgb565(170, 176, 186));
+  nRect(x0 - 8, 384, x1 + 8, 399, rgb565(80, 86, 96));
+  nRect(x0 - 8, 384, x1 + 8, 386, rgb565(130, 138, 150));
+  char b[12];
+  snprintf(b, sizeof(b), "SUBJECT %02d", k + 1);
+  nRect(cx - 34, 388, cx + 34, 397, rgb565(20, 24, 30));
+  nText(b, cx, 392, 0.9f, rgb565(240, 200, 60), true);
+}
+
+static void paintCloneLab() {
+  // the sign up top, between the tanks' feeds
+  nmAt(1.2f, 360, 92, 640, 128);
+  for (int k = 0; k < CLONE_TANKS; k++) paintCloneTank(cloneTankX[k], k);
+  nmAt(1.2f, 360, 92, 640, 128);
+  nRect(150, 92, 570, 150, rgb565(10, 16, 12));
+  nOutline(150, 92, 570, 150, rgb565(60, 220, 120), 2);
+  nText("EXPERIMENTAL", 360, 110, 2.6f, rgb565(60, 220, 120), true);
+  nText("CLONE LAB", 360, 136, 2.6f, rgb565(230, 240, 235), true);
+  nBioSign(22, 121, 22);     // (out past the tanks' feeds)
+  nBioSign(814, 121, 22);
+  // the deck: its slab, a rail in front of the tanks, a yellow and black edge
+  paintDeckSlab(CLONE_DECK_Y);
+  for (int x : { 224, 425, 615, 805, 995, 1185, SCREEN_W - 20 }) fillRect(x, CLONE_DECK_Y - 62, x + 3, CLONE_DECK_Y - 1, rgb565(150, 156, 166));   // a rail in front (posts between the tanks, a top rail)
+  fillRect(224, CLONE_DECK_Y - 64, SCREEN_W - 17, CLONE_DECK_Y - 59, rgb565(222, 226, 232));
+  for (int x = 224; x < SCREEN_W - 16; x += 20) {
+    int xs[4] = { x, x + 10, x + 14, x + 4 }, ys[4] = { CLONE_DECK_Y + PLAT_T + 5, CLONE_DECK_Y + PLAT_T + 5, CLONE_DECK_Y + PLAT_T + 12, CLONE_DECK_Y + PLAT_T + 12 };
+    fillRect(x, CLONE_DECK_Y + PLAT_T + 5, x + 19, CLONE_DECK_Y + PLAT_T + 11, rgb565(20, 20, 22));
+    fillPolygon(xs, ys, 4, rgb565(236, 196, 40));
+  }
+  // under the deck: red lamps along the wall
+  for (int x = 300; x < SCREEN_W - 60; x += 220) {
+    fillRect(x, CLONE_DECK_Y + 34, x + 18, CLONE_DECK_Y + 44, rgb565(90, 20, 20));
+    fillRect(x + 2, CLONE_DECK_Y + 35, x + 16, CLONE_DECK_Y + 42, rgb565(240, 40, 40));
+  }
+  // the bench: a test tube rack (NUCLEAR MISSION's, a fifth bigger)
+  nmAt(1.2f, 98, 560, 340, ROOM_FLOOR_Y);
+  nRect(28, 500, 168, 506, rgb565(170, 176, 186));
+  nRect(34, 507, 40, 559, rgb565(110, 116, 126));
+  nRect(156, 507, 162, 559, rgb565(110, 116, 126));
+  nRect(38, 478, 100, 484, rgb565(200, 204, 212));
+  nRect(38, 492, 100, 499, rgb565(200, 204, 212));
+  const uint16_t fluid[5] = { rgb565(120, 230, 70), rgb565(230, 60, 60), rgb565(80, 170, 255), rgb565(120, 230, 70), rgb565(240, 200, 60) };
+  for (int k = 0; k < 5; k++) {
+    int tx = 44 + k * 12;
+    nRect(tx, 466, tx + 6, 498, rgb565(210, 228, 236));
+    nRect(tx + 1, 482, tx + 5, 497, fluid[k]);
+    nCirc(tx + 3, 497, 3, fluid[k]);
+  }
+  for (int k = 0; k < 3; k++) {                                        // (more: flasks at the other end)
+    int fx = 120 + k * 16;
+    int xs[4] = { fx - 2, fx + 2, fx + 7, fx - 7 }, ys[4] = { 476, 476, 499, 499 };
+    nPoly(xs, ys, 4, rgb565(210, 228, 236));
+    nRect(fx - 6, 490, fx + 6, 498, fluid[(k + 2) % 5]);
+  }
+  // the machine in the middle: a green tank, a biohazard sign, two monitors
+  nmAt(1.2f, 270, 560, 600, ROOM_FLOOR_Y);
+  int mx = 270;
+  nRect(mx - 46, 534, mx + 46, 559, rgb565(80, 86, 96));
+  nRect(mx - 40, 440, mx + 40, 534, rgb565(120, 128, 140));
+  nRect(mx - 40, 440, mx + 40, 446, rgb565(170, 176, 186));
+  nRect(mx - 30, 452, mx + 30, 510, rgb565(30, 120, 40));
+  for (int y = 452; y < 510; y++) nSpan(y, mx - 28, mx - 18, rgb565(80, 200, 90));
+  nBioSign(mx, 526, 12);
+  fillRect(596, CLONE_DECK_Y + PLAT_T, 604, nY(440), rgb565(90, 96, 106));   // its feed pipe, up to the deck
+  nRect(174, 444, 220, 486, rgb565(30, 34, 40));
+  nRect(178, 448, 216, 482, rgb565(6, 20, 14));
+  for (int k = 0; k < 16; k++) {
+    float a = k * 0.55f;
+    int yy = 450 + k * 2;
+    nCirc(197 + (int)(12 * sinf(a)), yy, 1, rgb565(80, 240, 140));
+    nCirc(197 - (int)(12 * sinf(a)), yy, 1, rgb565(80, 170, 255));
+  }
+  nRect(320, 444, 366, 486, rgb565(30, 34, 40));
+  nRect(324, 448, 362, 482, rgb565(6, 20, 14));
+  nCirc(343, 455, 4, rgb565(80, 240, 140));
+  nRect(339, 460, 347, 472, rgb565(80, 240, 140));
+  nRect(334, 461, 337, 471, rgb565(80, 240, 140));
+  nRect(349, 461, 352, 471, rgb565(80, 240, 140));
+  nRect(339, 473, 342, 481, rgb565(80, 240, 140));
+  nRect(344, 473, 347, 481, rgb565(80, 240, 140));
+  nRect(195, 487, 199, 559, rgb565(110, 116, 126));                   // (their stands)
+  nRect(341, 487, 345, 559, rgb565(110, 116, 126));
+  nRect(185, 554, 209, 559, rgb565(110, 116, 126));
+  nRect(331, 554, 355, 559, rgb565(110, 116, 126));
+  nText("DNA", 197, 438, 1.2f, rgb565(80, 240, 140), true);
+  nText("SCAN", 343, 438, 1.2f, rgb565(80, 240, 140), true);
+  // gas cylinders, biohazard on each
+  nmAt(1.2f, 434, 560, 820, ROOM_FLOOR_Y);
+  for (int k = 0; k < 3; k++) {
+    int gx = 398 + k * 36;
+    nRect(gx - 12, 466, gx + 12, 559, rgb565(52, 120, 70));
+    nCirc(gx, 466, 12, rgb565(52, 120, 70));
+    nRect(gx - 12, 470, gx - 8, 559, rgb565(90, 160, 110));
+    nRect(gx - 4, 446, gx + 4, 456, rgb565(150, 156, 166));
+    nRect(gx - 8, 446, gx + 8, 449, rgb565(190, 196, 206));
+    nBioSign(gx, 506, 9);
+  }
+  // the gurney: a clone under a sheet, his feet out, a tag on his toe
+  {
+    int gx0 = 900, gx1 = 1050, top = ROOM_FLOOR_Y - 66;
+    fillRect(gx0 + 10, top + 10, gx0 + 15, ROOM_FLOOR_Y - 10, rgb565(150, 156, 166));
+    fillRect(gx1 - 15, top + 10, gx1 - 10, ROOM_FLOOR_Y - 10, rgb565(150, 156, 166));
+    fillRect(gx0 + 10, ROOM_FLOOR_Y - 34, gx1 - 10, ROOM_FLOOR_Y - 30, rgb565(150, 156, 166));
+    for (int x : { gx0 + 12, gx1 - 12 }) fillCircle(x, ROOM_FLOOR_Y - 6, 6, rgb565(40, 42, 48));
+    fillRect(gx0, top, gx1, top + 10, rgb565(190, 196, 206));
+    int sx[8] = { gx0 + 4, gx0 + 10, gx0 + 34, gx0 + 50, gx0 + 100, gx0 + 128, gx1 - 10, gx1 - 4 };
+    int sy[8] = { top + 2, top - 20, top - 24, top - 16, top - 18, top - 14, top - 12, top + 2 };
+    fillPolygon(sx, sy, 8, rgb565(236, 240, 244));                     // the sheet, his shape under it
+    fillCircle(gx0 + 22, top - 14, 14, rgb565(236, 240, 244));         // (his head)
+    drawLine(gx0 + 50, top - 14, gx0 + 100, top - 6, rgb565(200, 206, 214), false);
+    fillRect(gx1 - 4, top - 14, gx1 + 6, top, rgb565(222, 170, 130));  // his feet
+    fillRect(gx1 + 4, top - 10, gx1 + 14, top - 2, rgb565(240, 220, 120));
+    drawVectorText("06", gx1 + 9, top - 6, 0.7f, rgb565(60, 50, 30), false);
+  }
+  // the robot arm (NUCLEAR MISSION's size: it reaches up under the deck)
+  nmAt(1.0f, 640, 560, 1150, ROOM_FLOOR_Y);
+  {
+    int rx = 640;
+    nRect(rx - 26, 542, rx + 26, 559, rgb565(60, 64, 72));
+    nRect(rx - 12, 520, rx + 12, 542, rgb565(236, 140, 30));
+    int ax[4] = { rx - 8, rx + 8, rx - 22, rx - 38 }, ay[4] = { 520, 520, 420, 420 };
+    nPoly(ax, ay, 4, rgb565(236, 140, 30));
+    nCirc(rx - 30, 420, 11, rgb565(60, 64, 72));
+    int bx[4] = { rx - 36, rx - 24, rx + 14, rx + 4 }, by[4] = { 414, 426, 376, 368 };
+    nPoly(bx, by, 4, rgb565(236, 140, 30));
+    nCirc(rx + 10, 372, 8, rgb565(60, 64, 72));
+    nRect(rx + 14, 362, rx + 30, 368, rgb565(170, 176, 186));
+    nRect(rx + 14, 376, rx + 30, 382, rgb565(170, 176, 186));
+  }
+}
+
+// ---- the SUPER SOLDIER LAB: the big tank in the middle, two side tanks, consoles, the desk and the syringe cabinet
+#define SOLDIER_S 1.3f
+
+static void nSideTank(int cx, int pic) {   // a green tank on a base, with a picture in it (0 DNA, 1 a molecule)
+  nRect(cx - 34, 470, cx + 34, 559, rgb565(110, 116, 126));
+  nRect(cx - 34, 470, cx + 34, 474, rgb565(150, 156, 166));
+  nRect(cx - 24, 490, cx + 24, 530, rgb565(90, 96, 106));
+  nRect(cx - 30, 312, cx + 30, 326, rgb565(150, 156, 166));
+  nRect(cx - 8, 300, cx + 8, 312, rgb565(220, 170, 40));
+  for (int y = 326; y < 470; y++) {
+    int g = (y - 326) * 30 / 144;
+    nSpan(y, cx - 26, cx + 26, rgb565(40 + g, 200 + g, 60));
+  }
+  nRect(cx - 26, 326, cx - 20, 469, rgb565(150, 250, 140));
+  uint16_t ic = rgb565(170, 255, 150);
+  if (pic == 0) {
+    for (int k = 0; k < 14; k++) {
+      float a = k * 0.6f;
+      int y = 356 + k * 6;
+      nCirc(cx + (int)(10 * sinf(a)), y, 2, ic);
+      nCirc(cx - (int)(10 * sinf(a)), y, 2, ic);
+      if (k % 2 == 0) nLine(cx + (int)(10 * sinf(a)), y, cx - (int)(10 * sinf(a)), y, ic, false);
+    }
+  } else {
+    int px[6], py[6];
+    for (int k = 0; k < 6; k++) { px[k] = cx + (int)(14 * cosf(k * 1.047f)); py[k] = 398 + (int)(14 * sinf(k * 1.047f)); }
+    for (int k = 0; k < 6; k++) {
+      nLine(px[k], py[k], px[(k + 1) % 6], py[(k + 1) % 6], ic, true);
+      nCirc(px[k], py[k], 3, ic);
+      int ox = cx + (int)(24 * cosf(k * 1.047f)), oy = 398 + (int)(24 * sinf(k * 1.047f));
+      if (k % 2 == 0) { nLine(px[k], py[k], ox, oy, ic, false); nCirc(ox, oy, 3, ic); }
+    }
+  }
+  for (int k = 0; k < 4; k++) nRing(cx - 12 + k * 8, 450 - k * 28, 2, rgb565(220, 255, 200));
+}
+
+static void nLabConsole(int cx, int pic) {   // a small console with a screen (0 a network, 1 DNA) and three buttons
+  nRect(cx - 22, 440, cx + 22, 559, rgb565(130, 136, 146));
+  nRect(cx - 22, 440, cx + 22, 443, rgb565(176, 182, 192));
+  nRect(cx - 17, 448, cx + 17, 478, rgb565(10, 20, 36));
+  uint16_t c = rgb565(80, 170, 255);
+  if (pic == 0) {
+    nCirc(cx - 8, 456, 3, c); nCirc(cx + 8, 456, 3, c); nCirc(cx - 8, 470, 3, c); nCirc(cx + 8, 470, 3, c);
+    nLine(cx - 8, 456, cx + 8, 470, c, false); nLine(cx + 8, 456, cx - 8, 470, c, false);
+  } else {
+    for (int k = 0; k < 6; k++) { int y = 452 + k * 4; int w = (int)(8 * sinf(k * 0.9f)); nRect(cx - abs(w), y, cx + abs(w), y + 1, c); }
+  }
+  nRect(cx - 14, 486, cx - 8, 492, rgb565(240, 200, 40));
+  nRect(cx - 3, 486, cx + 3, 492, rgb565(220, 50, 40));
+  nRect(cx + 8, 486, cx + 14, 492, rgb565(220, 50, 40));
+}
+
+static void paintSoldierLab() {
+  // red lamps high on the walls
+  for (int lx : { 40, SCREEN_W - 62 }) {
+    fillRect(lx, 330, lx + 22, 342, rgb565(90, 20, 20));
+    fillRect(lx + 2, 332, lx + 20, 340, rgb565(240, 40, 40));
+  }
+  // pipes behind, down from the ceiling (and two more for the wider room)
+  for (int px : { 479, 531, 749, 801, 1048, 232 }) {
+    fillRect(px - 8, CEIL_Y + 58, px + 8, ROOM_FLOOR_Y - 1, rgb565(150, 156, 166));
+    fillRect(px - 8, CEIL_Y + 58, px - 4, ROOM_FLOOR_Y - 1, rgb565(196, 202, 210));
+    fillRect(px + 5, CEIL_Y + 58, px + 8, ROOM_FLOOR_Y - 1, rgb565(110, 116, 126));
+    fillRect(px - 10, 440, px + 10, 448, rgb565(200, 160, 40));
+  }
+  // vitals screens on the wall over the consoles (their traces move)
+  for (int sx : { 505, 775 }) {
+    fillRect(sx - 52, 408, sx + 52, 486, rgb565(60, 64, 72));
+    fillRect(sx - 48, 412, sx + 48, 482, rgb565(6, 16, 12));
+    drawVectorText("VITALS", sx, 420, 1.1f, rgb565(80, 240, 140), false);
+  }
+  // the side tanks (a third bigger) and consoles
+  nmAt(SOLDIER_S, 0, 560, 405, ROOM_FLOOR_Y);
+  nSideTank(0, 0);
+  nmAt(SOLDIER_S, 0, 560, 875, ROOM_FLOOR_Y);
+  nSideTank(0, 1);
+  nmAt(1.0f, 0, 560, 505, ROOM_FLOOR_Y);
+  nLabConsole(0, 0);
+  nmAt(1.0f, 0, 560, 775, ROOM_FLOOR_Y);
+  nLabConsole(0, 1);
+  // the big tank: a striped platform, steps, a glowing cylinder with the soldier in it
+  nmAt(SOLDIER_S, 0, 560, 640, ROOM_FLOOR_Y);
+  {
+    int cx = 0;
+    nRect(cx - 78, 524, cx + 78, 559, rgb565(60, 64, 72));
+    for (int x = cx - 78; x < cx + 78; x += 18) {
+      nRect(x, 530, x + 17, 542, rgb565(20, 20, 22));
+      int xs[4] = { x, x + 9, x + 14, x + 5 }, ys[4] = { 530, 530, 543, 543 };
+      nPoly(xs, ys, 4, rgb565(236, 196, 40));
+    }
+    nRect(cx - 20, 544, cx + 20, 559, rgb565(90, 96, 106));
+    nRect(cx - 62, 516, cx + 62, 524, rgb565(150, 156, 166));
+    nRect(cx - 70, 266, cx + 70, 290, rgb565(120, 128, 140));
+    nRect(cx - 70, 266, cx + 70, 270, rgb565(170, 176, 186));
+    nRect(cx - 40, 286, cx + 40, 290, rgb565(220, 255, 170));
+    fillRect(640 - 14, CEIL_Y + 58, 640 + 14, nY(266), rgb565(110, 116, 126));   // its feed from the ceiling
+    for (int y = 290; y < 516; y++) {
+      int g = (y - 290) * 40 / 226;
+      nSpan(y, cx - 54, cx + 54, rgb565(150 + g / 2, 220 + g / 2, 60 + g / 3));
+    }
+    uint16_t sh = rgb565(70, 120, 40);
+    nCirc(cx, 336, 13, sh);
+    nRect(cx - 6, 346, cx + 6, 356, sh);
+    int tx[6] = { cx - 34, cx + 34, cx + 26, cx + 16, cx - 16, cx - 26 }, ty[6] = { 356, 356, 392, 430, 430, 392 };
+    nPoly(tx, ty, 6, sh);
+    int la[4] = { cx - 34, cx - 24, cx - 30, cx - 44 }, lay[4] = { 358, 366, 432, 428 };
+    int ra[4] = { cx + 34, cx + 24, cx + 30, cx + 44 }, ray[4] = { 358, 366, 432, 428 };
+    nPoly(la, lay, 4, sh);
+    nPoly(ra, ray, 4, sh);
+    nCirc(cx - 36, 436, 6, sh);
+    nCirc(cx + 36, 436, 6, sh);
+    int lg[4] = { cx - 17, cx - 2, cx - 6, cx - 22 }, lgy[4] = { 428, 428, 506, 506 };
+    int rg[4] = { cx + 17, cx + 2, cx + 6, cx + 22 }, rgy[4] = { 428, 428, 506, 506 };
+    nPoly(lg, lgy, 4, sh);
+    nPoly(rg, rgy, 4, sh);
+    for (int y = 290; y < 516; y += 2) nSpan(y, cx - 54, cx - 46, rgb565(210, 250, 160));
+    nRect(cx - 58, 290, cx - 55, 515, rgb565(170, 176, 186));
+    nRect(cx + 55, 290, cx + 58, 515, rgb565(170, 176, 186));
+    nRect(cx - 30, 500, cx + 30, 512, rgb565(20, 24, 30));
+    nText("SUBJECT X", cx, 506, 0.9f, rgb565(240, 200, 60), true);
+  }
+  // the desk on the left: a body-scan monitor, test tubes, a syringe; a stool
+  nmAt(1.0f, 0, 560, 280, ROOM_FLOOR_Y);
+  {
+    int dx = 0;
+    nRect(dx - 44, 360, dx + 44, 420, rgb565(150, 156, 166));
+    nRect(dx - 40, 364, dx + 40, 416, rgb565(10, 24, 44));
+    nCirc(dx - 18, 376, 5, rgb565(90, 210, 255));
+    nRect(dx - 23, 382, dx - 13, 400, rgb565(90, 210, 255));
+    nRect(dx - 23, 400, dx - 19, 412, rgb565(90, 210, 255));
+    nRect(dx - 17, 400, dx - 13, 412, rgb565(90, 210, 255));
+    for (int k = 0; k < 4; k++) nRect(dx + 4 + k * 8, 408 - k * 6, dx + 9 + k * 8, 412, rgb565(90, 210, 255));
+    nRect(dx - 4, 421, dx + 4, 469, rgb565(110, 116, 126));
+    nRect(dx - 46, 470, dx + 46, 476, rgb565(170, 176, 186));
+    nRect(dx - 40, 477, dx - 36, 559, rgb565(110, 116, 126));
+    nRect(dx + 36, 477, dx + 40, 559, rgb565(110, 116, 126));
+    for (int k = 0; k < 3; k++) {
+      nRect(dx - 38 + k * 9, 448, dx - 33 + k * 9, 469, rgb565(210, 228, 236));
+      nRect(dx - 37 + k * 9, 456, dx - 34 + k * 9, 468, rgb565(90, 230, 80));
+    }
+    nRect(dx - 6, 462, dx + 30, 467, rgb565(210, 228, 236));
+    nRect(dx - 4, 463, dx + 22, 466, rgb565(90, 230, 80));
+    nRect(dx + 30, 464, dx + 40, 465, rgb565(180, 186, 196));
+    nRect(dx - 10, 461, dx - 6, 468, rgb565(220, 224, 230));
+    nCirc(dx + 24, 512, 12, rgb565(30, 32, 36));
+    nRect(dx + 22, 518, dx + 26, 548, rgb565(80, 86, 96));
+    nRect(dx + 10, 548, dx + 38, 551, rgb565(80, 86, 96));
+  }
+  // the cabinet on the right, a rack of syringes over it
+  nmAt(1.0f, 0, 560, 995, ROOM_FLOOR_Y);
+  {
+    int kx = 0;
+    nRect(kx - 40, 480, kx + 40, 559, rgb565(150, 156, 166));
+    nRect(kx - 40, 480, kx + 40, 486, rgb565(190, 196, 206));
+    for (int r = 0; r < 2; r++)
+      for (int c = 0; c < 2; c++) {
+        int x0 = kx - 36 + c * 38, y0 = 492 + r * 30;
+        nOutline(x0, y0, x0 + 34, y0 + 26, rgb565(110, 116, 126), 1);
+        nRect(x0 + 12, y0 + 11, x0 + 22, y0 + 14, rgb565(90, 96, 106));
+      }
+    nRect(kx - 38, 400, kx + 38, 404, rgb565(170, 176, 186));
+    nRect(kx - 38, 466, kx + 38, 470, rgb565(170, 176, 186));
+    for (int k = 0; k < 4; k++) {
+      int sx = kx - 30 + k * 19;
+      nRect(sx, 404, sx + 8, 412, rgb565(110, 116, 126));
+      nRect(sx + 1, 412, sx + 7, 452, rgb565(220, 236, 240));
+      nRect(sx + 2, 430, sx + 6, 451, rgb565(90, 230, 80));
+      nRect(sx + 3, 452, sx + 5, 466, rgb565(180, 186, 196));
+    }
+  }
+  // (new, for the wider room) the serum fridge: a glass door, rows of green vials
+  {
+    int x0 = 128, x1 = 212, top = ROOM_FLOOR_Y - 200;
+    fillRect(x0, top, x1, ROOM_FLOOR_Y - 1, rgb565(176, 182, 192));
+    fillRect(x0, top, x1, top + 3, rgb565(220, 224, 230));
+    fillRect(x0 + 8, top + 26, x1 - 8, ROOM_FLOOR_Y - 20, rgb565(150, 200, 214));
+    for (int r = 0; r < 4; r++) {
+      int sy = top + 64 + r * 38;
+      fillRect(x0 + 8, sy, x1 - 8, sy + 2, rgb565(220, 230, 236));
+      for (int k = 0; k < 6; k++) {
+        fillRect(x0 + 14 + k * 10, sy - 20, x0 + 19 + k * 10, sy - 1, rgb565(210, 228, 236));
+        fillRect(x0 + 15 + k * 10, sy - 12, x0 + 18 + k * 10, sy - 1, (k + r) % 4 ? rgb565(90, 230, 80) : rgb565(240, 200, 60));
+      }
+    }
+    drawLine(x0 + 16, ROOM_FLOOR_Y - 30, x0 + 50, top + 34, rgb565(206, 236, 246), false);
+    fillRect(x1 - 6, top + 70, x1 - 3, top + 120, rgb565(90, 96, 106));
+    fillRect(x0 + 10, top + 6, x1 - 10, top + 20, rgb565(20, 24, 30));
+    drawVectorText("SERUM", (x0 + x1) / 2, top + 13, 1.0f, rgb565(90, 230, 80), true);
+  }
+  // (new) the armour stand: a soldier's suit of armour on a stand, a helmet on top
+  {
+    int cx = 1110, fy = ROOM_FLOOR_Y;
+    uint16_t plate = rgb565(70, 86, 60), plateL = rgb565(100, 120, 84), dark = rgb565(40, 46, 36);
+    fillRect(cx - 34, fy - 10, cx + 34, fy - 1, rgb565(80, 86, 96));
+    fillRect(cx - 4, fy - 80, cx + 4, fy - 10, rgb565(130, 136, 146));
+    int bx[6] = { cx - 34, cx + 34, cx + 28, cx + 20, cx - 20, cx - 28 }, by[6] = { fy - 176, fy - 176, fy - 120, fy - 84, fy - 84, fy - 120 };
+    fillPolygon(bx, by, 6, plate);
+    fillRect(cx - 34, fy - 176, cx - 22, fy - 150, plateL);                   // the shoulder plates
+    fillRect(cx + 22, fy - 176, cx + 34, fy - 150, plateL);
+    for (int k = 0; k < 3; k++) fillRect(cx - 18, fy - 140 + k * 16, cx + 18, fy - 136 + k * 16, dark);
+    fillCircle(cx, fy - 194, 16, plate);                                       // the helmet
+    fillRect(cx - 16, fy - 194, cx + 16, fy - 182, plate);
+    fillRect(cx - 12, fy - 196, cx + 12, fy - 188, rgb565(30, 60, 90));       // its visor
+    fillRect(cx - 10, fy - 195, cx - 2, fy - 193, rgb565(110, 170, 220));
+  }
+  // the sign up top (over the pipes): SUPER SOLDIER LAB, a star, yellow and black
+  nmAt(1.2f, 360, 88, 640, 150);
+  nRect(140, 88, 580, 150, rgb565(16, 18, 22));
+  nOutline(140, 88, 580, 150, rgb565(110, 116, 126), 3);
+  nText("SUPER SOLDIER LAB", 360, 112, 3.0f, rgb565(240, 196, 40), true);
+  for (int k = 0; k < 3; k++) {
+    nRect(160, 104 + k * 6, 190 - k * 6, 107 + k * 6, rgb565(240, 196, 40));
+    nRect(530 + k * 6, 104 + k * 6, 560, 107 + k * 6, rgb565(240, 196, 40));
+  }
+  {
+    int sx[10], sy[10];
+    for (int k = 0; k < 10; k++) { float a = -HALF_PI + k * PI / 5; float r = (k & 1) ? 4.5f : 10; sx[k] = 360 + (int)(r * cosf(a)); sy[k] = 138 + (int)(r * sinf(a)); }
+    nPoly(sx, sy, 10, rgb565(240, 196, 40));
+  }
+  for (int x = 200; x < 520; x += 20) {
+    if (x > 330 && x < 390) continue;
+    int xs[4] = { x, x + 10, x + 14, x + 4 }, ys[4] = { 132, 132, 145, 145 };
+    nPoly(xs, ys, 4, rgb565(240, 196, 40));
+  }
+}
+
+// ---- the SERVER ROOM: cooling fans along the top, a big screen, four terminals, metal cupboards; silver walls
+#define SRV_FANS 7
+static int srvFanX(int k) { return 265 + k * 125; }
+#define SRV_FAN_Y 182
+#define SRV_FAN_R 50
+#define SRV_MON_X0 300
+#define SRV_MON_X1 980
+#define SRV_MON_Y0 262
+#define SRV_MON_Y1 456
+
+static void serverWall(int x0, int x1, int y0, int y1) {   // shiny silver metal tiles
+  const int T = 80;
+  for (int ty = y0; ty < y1; ty += T)
+    for (int tx = x0; tx < x1; tx += T) {
+      int bx1 = tx + T - 1 < x1 ? tx + T - 1 : x1, by1 = ty + T - 1 < y1 ? ty + T - 1 : y1;
+      int alt = ((tx / T) + (ty / T)) & 1;
+      for (int y = ty; y <= by1; y++) {                    // brushed: lighter at the top, a little darker down
+        int v = 206 - (y - ty) * 34 / T + alt * 6;
+        fillRect(tx, y, bx1, y, rgb565(v - 6, v, v + 8));
+      }
+      for (int k = 0; k < 3; k++) {                        // a diagonal shine across it
+        int sx0 = tx + 10 + k * 7;
+        drawLine(sx0, by1 - 4, (sx0 + 40 < bx1 ? sx0 + 40 : bx1), (by1 - 44 > ty ? by1 - 44 : ty), rgb565(236, 240, 246), k == 1);
+      }
+      fillRect(tx, ty, bx1, ty, rgb565(246, 248, 252));    // the bevel: light top and left, dark bottom and right
+      fillRect(tx, ty, tx, by1, rgb565(236, 240, 246));
+      fillRect(tx, by1, bx1, by1, rgb565(110, 116, 128));
+      fillRect(bx1, ty, bx1, by1, rgb565(126, 132, 144));
+      for (int c = 0; c < 4; c++) {                        // the screws in its corners
+        int sx = (c & 1) ? bx1 - 6 : tx + 6, sy = (c & 2) ? by1 - 6 : ty + 6;
+        fillCircle(sx, sy, 2, rgb565(130, 136, 148));
+        fillRect(sx - 1, sy, sx + 1, sy, rgb565(220, 224, 232));
+      }
+    }
+  fillRect(x0, y1 - 11, x1, y1, rgb565(110, 116, 128));   // the skirting
+  fillRect(x0, y1 - 11, x1, y1 - 10, rgb565(200, 206, 214));
+}
+
+static void paintMetalCupboard(int cx, int fy) {
+  int x0 = cx - 48, x1 = cx + 48, top = fy - 196;
+  fillRect(x0, top, x1, fy - 1, rgb565(150, 158, 170));
+  for (int x = x0 + 4; x < x1 - 4; x += 3) fillRect(x, top + 6, x, fy - 12, ((x / 3) & 1) ? rgb565(160, 168, 180) : rgb565(144, 152, 164));   // brushed steel
+  fillRect(x0, top, x1, top + 4, rgb565(206, 212, 222));
+  fillRect(x0, top, x0 + 2, fy - 1, rgb565(196, 202, 212));
+  fillRect(x1 - 2, top, x1, fy - 1, rgb565(100, 106, 118));
+  fillRect(cx - 1, top + 6, cx + 1, fy - 12, rgb565(90, 96, 108));
+  fillRect(cx - 9, top + 80, cx - 5, top + 120, rgb565(60, 64, 72));       // the handles, a lock
+  fillRect(cx + 5, top + 80, cx + 9, top + 120, rgb565(60, 64, 72));
+  fillCircle(cx + 7, top + 134, 3, rgb565(230, 190, 60));
+  for (int y = top + 16; y < top + 50; y += 6) {                           // vents top and bottom
+    fillRect(x0 + 10, y, cx - 10, y + 2, rgb565(80, 86, 96));
+    fillRect(cx + 10, y, x1 - 10, y + 2, rgb565(80, 86, 96));
+  }
+  for (int y = fy - 50; y < fy - 20; y += 6) {
+    fillRect(x0 + 10, y, cx - 10, y + 2, rgb565(80, 86, 96));
+    fillRect(cx + 10, y, x1 - 10, y + 2, rgb565(80, 86, 96));
+  }
+  fillRect(x0 + 4, fy - 10, x1 - 4, fy - 1, rgb565(60, 64, 72));
+}
+
+static void paintServerTerminal(int cx, int fy, int k) {
+  int x0 = cx - 55, x1 = cx + 55;
+  fillRect(x0 + 6, fy - 70, x1 - 6, fy - 1, rgb565(70, 76, 88));            // the cabinet
+  fillRect(x0 + 6, fy - 70, x1 - 6, fy - 67, rgb565(120, 126, 138));
+  for (int y = fy - 56; y < fy - 14; y += 8) fillRect(x0 + 16, y, x1 - 16, y + 3, rgb565(46, 50, 58));
+  int dx[4] = { x0, x1, x1 - 8, x0 + 8 }, dy[4] = { fy - 70, fy - 70, fy - 86, fy - 86 };
+  fillPolygon(dx, dy, 4, rgb565(110, 116, 128));                            // the sloping keyboard top
+  for (int r = 0; r < 2; r++)
+    for (int c = 0; c < 9; c++) fillRect(x0 + 14 + c * 10, fy - 83 + r * 6, x0 + 21 + c * 10, fy - 80 + r * 6, rgb565(40, 44, 52));
+  fillRect(cx - 6, fy - 100, cx + 6, fy - 86, rgb565(60, 64, 72));         // the screen's neck
+  fillRect(cx - 46, fy - 152, cx + 46, fy - 98, rgb565(40, 44, 52));
+  fillRect(cx - 42, fy - 148, cx + 42, fy - 102, rgb565(4, 20, 12));
+  static const char *heads[4] = { "NODE 1", "NODE 2", "NODE 3", "NODE 4" };
+  drawVectorText(heads[k], cx, fy - 140, 1.0f, rgb565(80, 240, 140), false);
+  for (int r = 0; r < 4; r++) fillRect(cx - 36, fy - 130 + r * 7, cx - 36 + 20 + ((k * 7 + r * 13) % 44), fy - 128 + r * 7, rgb565(60, 200, 110));
+  fillCircle(x1 - 14, fy - 62, 3, rgb565(80, 240, 120));
+}
+
+static void paintServerRoom() {
+  // the fans' housings (their blades turn: drawn each frame)
+  for (int k = 0; k < SRV_FANS; k++) {
+    int x = srvFanX(k), y = SRV_FAN_Y, r = SRV_FAN_R;
+    fillRect(x - r - 8, y - r - 8, x + r + 8, y + r + 8, rgb565(120, 126, 138));
+    fillRect(x - r - 8, y - r - 8, x + r + 8, y - r - 6, rgb565(220, 224, 232));
+    fillRect(x - r - 8, y + r + 6, x + r + 8, y + r + 8, rgb565(80, 86, 96));
+    fillCircle(x, y, r + 2, rgb565(60, 64, 72));
+    fillCircle(x, y, r, rgb565(24, 26, 30));
+    for (int c = 0; c < 4; c++) fillCircle(x + ((c & 1) ? r + 2 : -r - 2), y + ((c & 2) ? r + 2 : -r - 2), 3, rgb565(70, 76, 88));
+  }
+  drawVectorText("COOLING", 640, SRV_FAN_Y + SRV_FAN_R + 22, 1.2f, rgb565(70, 80, 96), false);
+  // the big screen
+  fillRect(SRV_MON_X0 - 12, SRV_MON_Y0 - 12, SRV_MON_X1 + 12, SRV_MON_Y1 + 12, rgb565(40, 44, 52));
+  fillRect(SRV_MON_X0 - 12, SRV_MON_Y0 - 12, SRV_MON_X1 + 12, SRV_MON_Y0 - 9, rgb565(110, 116, 128));
+  fillRect(SRV_MON_X0, SRV_MON_Y0, SRV_MON_X1, SRV_MON_Y1, rgb565(6, 14, 30));
+  for (int x = SRV_MON_X0 + 20; x < SRV_MON_X1; x += 40) fillRect(x, SRV_MON_Y0 + 1, x, SRV_MON_Y1 - 1, rgb565(14, 28, 52));
+  for (int y = SRV_MON_Y0 + 20; y < SRV_MON_Y1; y += 40) fillRect(SRV_MON_X0 + 1, y, SRV_MON_X1 - 1, y, rgb565(14, 28, 52));
+  drawVectorText("QUANTUM NETWORK", (SRV_MON_X0 + SRV_MON_X1) / 2, SRV_MON_Y0 + 22, 2.2f, rgb565(90, 210, 255), true);
+  // a wire globe on the left
+  int gx = SRV_MON_X0 + 130, gy = SRV_MON_Y0 + 116, gr = 70;
+  drawCircle(gx, gy, gr, rgb565(70, 170, 255));
+  for (int k = 1; k < 4; k++) {
+    int ry = gr * k / 4;
+    for (int s = -1; s <= 1; s += 2) {
+      int yy = gy + s * ry, hw = (int)sqrtf((float)(gr * gr - ry * ry));
+      drawLine(gx - hw, yy, gx + hw, yy, rgb565(40, 110, 190), false);
+    }
+  }
+  drawLine(gx - gr, gy, gx + gr, gy, rgb565(40, 110, 190), false);
+  for (int k = 1; k < 4; k++) {   // meridians: ellipses
+    int rx = gr * k / 4;
+    float px = 0, py = 0;
+    for (int a = 0; a <= 360; a += 12) {
+      float x = gx + rx * cosf(a * PI / 180), y = gy + gr * sinf(a * PI / 180);
+      if (a) drawLine((int)px, (int)py, (int)x, (int)y, rgb565(40, 110, 190), false);
+      px = x; py = y;
+    }
+  }
+  static const int dots[5][2] = { { -30, -40 }, { 10, -50 }, { 50, -10 }, { 20, 0 }, { -10, 40 } };
+  for (int k = 0; k < 5; k++) fillCircle(gx + dots[k][0], gy + dots[k][1], 4, rgb565(255, 80, 60));
+  for (int k = 0; k < 4; k++) drawLine(gx + dots[k][0], gy + dots[k][1], gx + dots[k + 1][0], gy + dots[k + 1][1], rgb565(255, 160, 80), false);
+  // bars and figures on the right
+  static const char *rows[5] = { "CORE TEMP", "QUBITS", "LOAD", "LINKS", "FIREWALL" };
+  for (int r = 0; r < 5; r++) {
+    int y = SRV_MON_Y0 + 60 + r * 28, x = SRV_MON_X0 + 270;
+    drawVectorText(rows[r], (float)x + 60, (float)y, 1.2f, rgb565(140, 200, 240), false);
+    fillRect(x + 140, y - 6, x + 380, y + 6, rgb565(20, 40, 70));
+    fillRect(x + 140, y - 6, x + 140 + 60 + (r * 47) % 170, y + 6, r == 0 ? rgb565(255, 150, 60) : rgb565(70, 200, 255));
+  }
+  // the four terminals and the cupboards
+  for (int k = 0; k < 4; k++) paintServerTerminal(serverItems[2 + k].x, ROOM_FLOOR_Y, k);
+  for (int k : { 0, 1, 6, 7 }) paintMetalCupboard(serverItems[k].x, ROOM_FLOOR_Y);
+}
+
 // A stage 2 room: white walls, the duct and stripe along the top; then what is in it (the kitchen; the rest empty for now)
 static void paintLabRoom() {
   int idx = curRoom;
@@ -3157,8 +3794,15 @@ static void paintLabRoom() {
   labStripe(0, SCREEN_W - 1, CEIL_Y, CEIL_Y + 12);
   bool clean = s2Kind[idx] == LK_CLEANING || s2Kind[idx] == LK_STORE;   // (three levels: no duct)
   if (!clean) labDuctBand(0, SCREEN_W - 1, CEIL_Y + 16, CEIL_Y + 58);   // (the cleaning room: its top level up there instead)
-  labWall(0, SCREEN_W - 1, clean ? CEIL_Y + 13 : CEIL_Y + 61, ROOM_FLOOR_Y - 1);
-  if (s2Kind[idx] == LK_KITCHEN) {
+  if (s2Kind[idx] == LK_SERVER) serverWall(0, SCREEN_W - 1, CEIL_Y + 61, ROOM_FLOOR_Y - 1);   // (shiny metal, not white tiles)
+  else labWall(0, SCREEN_W - 1, clean ? CEIL_Y + 13 : CEIL_Y + 61, ROOM_FLOOR_Y - 1);
+  if (s2Kind[idx] == LK_CLONE) {
+    paintCloneLab();
+  } else if (s2Kind[idx] == LK_SOLDIER) {
+    paintSoldierLab();
+  } else if (s2Kind[idx] == LK_SERVER) {
+    paintServerRoom();
+  } else if (s2Kind[idx] == LK_KITCHEN) {
     paintKitchen();
   } else if (s2Kind[idx] == LK_STORE) {
     paintStore();
@@ -3432,8 +4076,64 @@ static void personWalk(AgentPose &p, float t) {
 }
 
 // The live parts of the lab rooms behind the people: the monitors' traces, the CCTV pictures, the patients
+// Lift B's rooms, moving: bubbles in the clone tanks, the vitals traces, the fans and the big screen's scan
+static void drawLiftBRoomAnim(int k) {
+  if (k == LK_CLONE) {
+    for (int t = 0; t < CLONE_TANKS; t++) {
+      int cx = cloneTankX[t];
+      float top = CLONE_DECK_Y + (270 - 400) * CLONE_TANK_S + 6, bottom = CLONE_DECK_Y + (384 - 400) * CLONE_TANK_S - 4;
+      for (int j = 0; j < 4; j++) {
+        float u = fmodf(clockT * (0.22f + j * 0.05f) + t * 0.31f + j * 0.27f, 1.0f);
+        float y = bottom - u * (bottom - top), x = cx - 34 + ((t * 23 + j * 19) % 64) + 3 * sinf(clockT * 3 + j + t);
+        drawCircle((int)x, (int)y, 2 + (j & 1), rgb565(230, 250, 190));
+      }
+    }
+  } else if (k == LK_SOLDIER) {
+    for (int s = 0; s < 2; s++) {
+      int x0 = (s ? 775 : 505) - 44, y0 = 460, w = 88;
+      float prevY = 0;
+      for (int i = 0; i <= w; i += 2) {
+        float u = fmodf(i / (float)w + clockT * 0.45f + s * 0.4f, 1.0f), v = fmodf(u * 2.0f, 1.0f);
+        float y = (v > 0.45f && v < 0.5f) ? -20.0f : (v > 0.5f && v < 0.55f) ? 12.0f : 0.0f;
+        if (i) drawLine(x0 + i - 2, y0 + (int)prevY, x0 + i, y0 + (int)y, rgb565(80, 240, 120), false);
+        prevY = y;
+      }
+    }
+    float g = 0.10f + 0.06f * sinf(clockT * 1.7f);       // the big tank's glow, breathing
+    glowDisc(640, 420, 200, 160, 255, 90, g);
+  } else if (k == LK_SERVER) {
+    for (int f = 0; f < SRV_FANS; f++) {
+      int x = srvFanX(f), y = SRV_FAN_Y, r = SRV_FAN_R;
+      float spin = clockT * 7.0f * ((f & 1) ? 1 : -1) + f;
+      for (int b = 0; b < 5; b++) {
+        float a = spin + b * TWO_PI / 5, hub = r * 0.22f, tip = r - 3.0f;
+        float xs[4] = { x + cosf(a - 0.2f) * hub, x + cosf(a - 0.45f) * tip, x + cosf(a + 0.2f) * tip, x + cosf(a + 0.2f) * hub };
+        float ys[4] = { y + sinf(a - 0.2f) * hub, y + sinf(a - 0.45f) * tip, y + sinf(a + 0.2f) * tip, y + sinf(a + 0.2f) * hub };
+        fillPolygonF(xs, ys, 4, rgb565(130, 138, 150));
+        drawLineF(xs[0], ys[0], xs[1], ys[1], rgb565(190, 196, 206), 1.0f);
+      }
+      fillCircle(x, y, r / 4, rgb565(70, 76, 88));
+      fillCircle(x, y, r / 8, rgb565(180, 186, 196));
+      drawCircle(x, y, r * 2 / 3, rgb565(90, 96, 108));   // the guard in front
+      drawLine(x - r, y, x + r, y, rgb565(90, 96, 108), true);
+      drawLine(x, y - r, x, y + r, rgb565(90, 96, 108), true);
+    }
+    int sy = SRV_MON_Y0 + 4 + (int)fmodf(clockT * 60, (float)(SRV_MON_Y1 - SRV_MON_Y0 - 8));   // the screen's scan line
+    blendRect(SRV_MON_X0 + 1, sy, SRV_MON_X1 - 1, sy + 3, 120, 220, 255, 0.35f);
+    for (int t = 0; t < 4; t++)                             // the terminals' cursors
+      if (((int)(clockT * 2.5f) + t) & 1) {
+        int cx = serverItems[2 + t].x;
+        fillRect(cx + 14, ROOM_FLOOR_Y - 109, cx + 22, ROOM_FLOOR_Y - 105, rgb565(80, 240, 140));
+      }
+  }
+}
+
 static void drawLabRoomBack() {
   int k = s2Kind[curRoom];
+  if (k == LK_CLONE || k == LK_SOLDIER || k == LK_SERVER) {
+    drawLiftBRoomAnim(k);
+    return;
+  }
   if (k == LK_MEDICAL) {
     auto ecg = [](int x0, int y0, int w, int h, float ph) {    // a heart trace sweeping across a screen
       float prevY = 0;
@@ -3818,7 +4518,10 @@ static const WideRoom storeT = { "STORE ROOM", 3, { { 0, SCREEN_W, ROOM_FLOOR_Y 
                                  1, { { 1060, 1140, { STORE_TOP_Y, STORE_MID_Y, ROOM_FLOOR_Y }, 3 } }, 0, {}, 0, {}, 1180, 120 };
 static const WideRoom adminT = { "ADMIN", 2, { { 0, SCREEN_W, ROOM_FLOOR_Y }, { 700, 1090, ADMIN_DECK_Y } },
                                  1, { { 1090, 1170, { ADMIN_DECK_Y, ROOM_FLOOR_Y }, 2 } }, 0, {}, 0, {}, 880, 120 };
+static const WideRoom cloneT = { "CLONE LAB", 2, { { 0, SCREEN_W, ROOM_FLOOR_Y }, { 220, SCREEN_W, CLONE_DECK_Y } },
+                                 1, { { 140, 220, { CLONE_DECK_Y, ROOM_FLOOR_Y }, 2 } }, 0, {}, 0, {}, 640, 0 };
 static const WideRoom &roomTemplate(int idx) {
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_CLONE) return cloneT;
   if (idx == CONTROL_ROOM) return controlRoomT;
   if (idx == SUB_ROOM || idx == ARRIVAL_ROOM) return subRoomT;
   if (stage == 2 && idx < S2_ROOMS) return s2Kind[idx] == LK_KITCHEN ? kitchenT : s2Kind[idx] == LK_CLEANING ? cleaningT : s2Kind[idx] == LK_MEDICAL ? medicalT :
@@ -6379,7 +7082,7 @@ static void updateDrone(float dt) {
 static void updateHazards(float dt) {
   if (mode != MODE_ROOM || gameOver != END_NONE) return;
   if (camCount > 0) updateCameras(dt);
-  if (curHazard == HZ_DRONE) updateDrone(dt);
+  if (curHazard == HZ_DRONE || curHazard == HZ_CAMDRONE) updateDrone(dt);
   if (curHazard == HZ_DARK && !lightsOut) {   // a couple of flickers, then out
     darkT += dt;
     if (darkT >= 0.75f) {
@@ -8642,7 +9345,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   }
   if (mode == MODE_ROOM && agState == ST_SHOCK) drawShockSparks();
   if (mode == MODE_ROOM && camCount > 0) drawCameras();
-  if (mode == MODE_ROOM && curHazard == HZ_DRONE) drawDrone();
+  if (mode == MODE_ROOM && (curHazard == HZ_DRONE || curHazard == HZ_CAMDRONE)) drawDrone();
   if (mode == MODE_ROOM && powerPanelT > 0 && !mapOn) drawPowerPanel();
   if (termOn && mode == MODE_ROOM) drawTerminal();
   if (mode == MODE_SHAFT && scene != SC_RIDE) drawPanel();
@@ -8696,7 +9399,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     for (int i = 0; i < liftCount && mode == MODE_ROOM; i++)
       if (lifts[i].moving) hum = (lifts[i].stops[lifts[i].at] < lifts[i].y ? 1 : 2) + 2;   // (3, 4: a pad - quieter)
   }
-  droneHum.store(mode == MODE_ROOM && curHazard == HZ_DRONE && !mapOn && !settingsOn && gameOver == END_NONE ? 1 : 0, std::memory_order_relaxed);
+  droneHum.store(mode == MODE_ROOM && (curHazard == HZ_DRONE || curHazard == HZ_CAMDRONE) && !mapOn && !settingsOn && gameOver == END_NONE ? 1 : 0, std::memory_order_relaxed);
   int was = liftHum.exchange(hum, std::memory_order_relaxed);
   if (was != 0 && hum == 0 && !mapOn) sfxPlay(SFX_LIFT_STOP);
   drawHud();
