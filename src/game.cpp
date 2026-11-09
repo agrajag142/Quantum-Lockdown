@@ -39,7 +39,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "032"
+#define GAME_VERSION      "033"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -304,6 +304,10 @@ static bool hasGun = false;                  // the security room's pistol (R1 /
 static int s2GunItem = 0;                    // (which of the two gun racks it's in)
 static float secAlertT = -1;                 // the security room: seconds till the guards open fire (< 0: no alert)
 static float gunFlashT = 0;
+#define MY_SHOTS 4
+#define MY_SHOT_SPEED 900.0f                 // (NUCLEAR MISSION's: you see your bullets fly)
+struct MyShot { bool on; float x, y, level; int dir; };
+static MyShot myShots[MY_SHOTS];
 static int s2KnifeItem = 0, s2CardItem = 2;  // which of the kitchen's things the knife is in; which medical bay patient has the level 2 card
 static bool panelKnife = false;              // (the FOUND panel: the knife, not a card)
 static float shotFlashT = 0;
@@ -564,6 +568,7 @@ static void layOutStage2() {
   hasKnife = false;
   hasGun = false;
   secAlertT = -1;
+  for (int k = 0; k < MY_SHOTS; k++) myShots[k].on = false;
   s2KnifeItem = rnd(8);                      // (one of the kitchen's 8 things)
   s2GunItem = rnd(2);                        // (one of the security room's two gun racks)
   static const int beds[5] = { 2, 4, 5, 6, 7 };
@@ -3891,6 +3896,7 @@ static void enterRoom(int idx, bool fromLeft) {
   resetHazardsForEntry(fromLeft);
   // the lab's people: on their paths, walking away from the door he came in by
   npcCount = 0;
+  for (int k = 0; k < MY_SHOTS; k++) myShots[k].on = false;
   susp = 0;
   suspT = 0;
   s2Recog = false;
@@ -4694,6 +4700,50 @@ static int killTarget = -1;
 static bool canFire() {                      // the pistol: in a lab room, standing on something
   return hasGun && stage == 2 && mode == MODE_ROOM && curRoom < S2_ROOMS && gameOver == END_NONE;
 }
+// Someone alive in line on his level, the way he faces (then Square fires, as in NUCLEAR MISSION; else it searches)
+static bool targetInLine() {
+  if (!canFire()) return false;
+  for (int k = 0; k < npcCount; k++) {
+    const Npc &n = npcs[k];
+    if (!n.dead && fabsf(agY - n.y) < 60 && agFacing * (n.x - agX) > 0) return true;
+  }
+  return false;
+}
+// His bullets: across the room on his level; the first one they reach goes down (not the door guard)
+static void updateMyShots(float dt) {
+  for (int k = 0; k < MY_SHOTS; k++) {
+    MyShot &b = myShots[k];
+    if (!b.on) continue;
+    float x0 = b.x;
+    b.x += b.dir * MY_SHOT_SPEED * dt;
+    if (mode != MODE_ROOM || b.x < -20 || b.x > SCREEN_W + 20) { b.on = false; continue; }
+    for (int i = 0; i < npcCount; i++) {
+      Npc &n = npcs[i];
+      if (n.dead || fabsf(b.level - n.y) > 60) continue;
+      float lo = fminf(x0, b.x) - 14, hi = fmaxf(x0, b.x) + 14;
+      if (n.x < lo || n.x > hi) continue;
+      b.on = false;
+      if (n.knifeOnly) {                      // the door guard's vest
+        sfxPlay(SFX_CLUNK);
+        showMsg("BULLET-PROOF VEST - ONLY THE KNIFE WILL DO", 2.5f);
+        break;
+      }
+      n.dead = true;
+      n.dieT = 0;
+      n.watching = false;
+      n.aimT = 0;
+      s2NpcDead[curRoom][i] = true;
+      s2NpcDX[curRoom][i] = n.x;
+      s2NpcDY[curRoom][i] = n.y;
+      s2NpcDDir[curRoom][i] = (int8_t)n.dir;
+      sfxPlay(SFX_HIT);
+      addScore(500, n.x, n.y - 170);
+      susp = 0;
+      suspT = 0;
+      break;
+    }
+  }
+}
 
 static bool onWalkway() { return stage == 2 && mode == MODE_SHAFT && !carMoving && fabsf(agY - CAR_FLOOR_Y) < 0.5f; }
 static bool atWorker() {                     // close enough to knock him out
@@ -4818,39 +4868,24 @@ static void updateS2Act(float dt) {
   } else if (s2Act == 5) {                   // the pistol: arm out, fire
     static const AgentPose AIMP = { 0, -2, 88, 2, 80, 14, 6, -4, -8, -3, 0, 0, 0, 1, 0 };
     p = AIMP;
-    if (before < 0.08f && t >= 0.08f) {
+    if (before < 0.06f && t >= 0.06f) {      // a bullet out of the muzzle
       sfxPlay(SFX_SHOT);
-      gunFlashT = 0.08f;
-      int hit = -1;
-      float best = 1e9f;
-      for (int k = 0; k < npcCount; k++) {     // the first one in line on his level
-        const Npc &n = npcs[k];
-        float d = agFacing * (n.x - agX);
-        if (n.dead || fabsf(agY - n.y) > 60 || d <= 0 || d > SCREEN_W) continue;
-        if (d < best) { best = d; hit = k; }
-      }
-      if (hit >= 0 && npcs[hit].knifeOnly) {   // (the door guard: it doesn't stop him)
-        sfxPlay(SFX_CLUNK);
-        showMsg("BULLET-PROOF VEST - ONLY THE KNIFE WILL DO", 2.5f);
-      } else if (hit >= 0) {
-        Npc &n = npcs[hit];
-        n.dead = true;
-        n.dieT = 0;
-        n.watching = false;
-        n.aimT = 0;
-        s2NpcDead[curRoom][hit] = true;
-        s2NpcDX[curRoom][hit] = n.x;
-        s2NpcDY[curRoom][hit] = n.y;
-        s2NpcDDir[curRoom][hit] = (int8_t)n.dir;
-        sfxPlay(SFX_HIT);
-        addScore(500, n.x, n.y - 170);
-        susp = 0;
-        suspT = 0;
-      }
+      gunFlashT = 0.07f;
+      int hx, hy, mx, my;
+      agentHand(AIMP, agX, agY, agFacing, myScale, hx, hy, mx, my);
+      for (int k = 0; k < MY_SHOTS; k++)
+        if (!myShots[k].on) {
+          myShots[k] = { true, (float)hx + agFacing * 26.0f, (float)hy - 3.0f, agY, agFacing };
+          break;
+        }
     }
-    if (t >= 0.35f) {
-      s2Act = 0;
-      setState(ST_IDLE, 0.15f);
+    if (t >= 0.32f) {
+      if ((held & (BTN_FIRE | BTN_USE)) && canFire()) {   // held: keep firing
+        s2ActT = 0;
+      } else {
+        s2Act = 0;
+        setState(ST_IDLE, 0.15f);
+      }
     }
   } else if (s2Act == 3) {                   // into the bin with him
     binPT += dt;
@@ -5083,6 +5118,9 @@ static void drawNpcs() {
       p.armN = 70 + 4 * sinf(n.t * 14); p.elbowN = 40; p.armF = 64 + 4 * sinf(n.t * 13 + 1); p.elbowF = 44;
       p.torso = 4; p.head = 6;
       p.plant = 1;
+    } else if (n.a == n.b) {                 // standing at his post: still
+      p = PERSON_IDLE;
+      p.head = 2 * sinf(n.t * 0.7f);
     } else if (n.pause > 0) {                // busy: reaching forward, working
       p = PERSON_IDLE;
       p.armN = 70 + 12 * sinf(n.t * 8); p.elbowN = 50; p.armF = 60 + 10 * sinf(n.t * 8 + 1.5f); p.elbowF = 56;
@@ -5271,8 +5309,8 @@ static void updateAgent(float dt) {
         killTarget = atNpcToKill();     // ...the knife
         startS2Act(4);
         agFacing = npcs[killTarget].x < agX ? -1 : 1;
-      } else if ((pressed & BTN_FIRE) && canFire()) {
-        int f = want ? want : agFacing;  // ...the pistol
+      } else if (((pressed & BTN_FIRE) && canFire()) || ((pressed & BTN_USE) && targetInLine())) {
+        int f = want ? want : agFacing;  // ...the pistol (R1 / R2; Square with someone in line)
         startS2Act(5);
         agFacing = f;
       } else if (pressed & BTN_JUMP) {
@@ -5326,7 +5364,7 @@ static void updateAgent(float dt) {
         agFacing = npcs[killTarget].x < agX ? -1 : 1;
         break;
       }
-      if ((pressed & BTN_FIRE) && canFire()) {
+      if (((pressed & BTN_FIRE) && canFire()) || ((pressed & BTN_USE) && targetInLine())) {
         int f = agFacing;
         setState(ST_IDLE, 0.1f);
         startS2Act(5);
@@ -5517,6 +5555,11 @@ static void updateAgent(float dt) {
             s2Searched[curRoom][i] = true;
             if (first) addScore(SEARCH_SCORE, px, py - 26);
             if (first && s2Kind[curRoom] == LK_KITCHEN && i == s2KnifeItem) {   // the kitchen's knife
+              if (hasGun) {                    // (one weapon at a time: he keeps the stronger)
+                showMsg("A KNIFE - YOU KEEP YOUR PISTOL", 2.5f);
+                sfxPlay(SFX_CLUNK);
+                break;
+              }
               hasKnife = true;
               foundCard(-1);
               break;
@@ -5524,6 +5567,10 @@ static void updateAgent(float dt) {
             if (first && s2Kind[curRoom] == LK_SECURITY && i == s2GunItem) {    // a pistol in a gun rack
               hasGun = true;
               foundCard(-2);
+              if (hasKnife) {                  // (one weapon at a time: the knife goes)
+                hasKnife = false;
+                showMsg("KNIFE DROPPED - ONE WEAPON AT A TIME", 3.0f);
+              }
               break;
             }
             if (first && s2Kind[curRoom] == LK_MEDICAL && i == s2CardItem) {    // a patient's level 2 card
@@ -6924,7 +6971,7 @@ static void drawPanel() {
     line("DISGUISE", s2Disguised ? "OVERALLS" : "NONE", PANEL_Y + 98, rgb565(255, 220, 80));
     snprintf(b, sizeof(b), "%d", aid);
     line("FIRST AID LEFT", b, PANEL_Y + 128, rgb565(120, 230, 140));
-    line("WEAPONS", hasKnife && hasGun ? "KNIFE PISTOL" : hasKnife ? "KNIFE" : hasGun ? "PISTOL" : "NONE", PANEL_Y + 158, rgb565(240, 240, 245));
+    line("WEAPON", hasGun ? "PISTOL" : hasKnife ? "KNIFE" : "NONE", PANEL_Y + 158, rgb565(240, 240, 245));
     snprintf(b, sizeof(b), "V%s  FPS %d", GAME_VERSION, (int)lroundf(fpsShown));
     drawVectorText(b, (lx + SCREEN_W - 44) / 2, PANEL_Y + 184, 1.5f, rgb565(150, 160, 186), false);
     return;
@@ -7993,6 +8040,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (cardShowT > 0) cardShowT -= dt;
     if (shotFlashT > 0) shotFlashT -= dt;
     if (gunFlashT > 0) gunFlashT -= dt;
+    updateMyShots(dt);
     for (int i = 0; i < MAX_POPS; i++)
       if (popT[i] > 0) popT[i] -= dt;
     if (leverT >= 0) leverT += dt;
@@ -8050,7 +8098,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (stage == 2 && s2Disguised) drawPersonU(shownPose, agX, agY, agFacing, myScale, PK_MAINT);   // in the maintenance man's overalls
     else drawAgentU(shownPose, agX, agY, agFacing, myScale);
   }
-  if (s2Act == 5) {                       // his pistol, and its flash
+  if (stage == 2 && mode == MODE_ROOM && (s2Act == 5 || (hasGun && !s2Act && scene == SC_NONE))) {   // his pistol (and its flash)
     int hx, hy, mx, my;
     agentHand(shownPose, agX, agY, agFacing, myScale, hx, hy, mx, my);
     fillRect(hx - 4, hy - 4, hx + 4, hy + 8, rgb565(30, 30, 34));
@@ -8061,6 +8109,12 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
       fillCircle(fx, hy - 3, 5, rgb565(255, 250, 220));
     }
   }
+  for (int k = 0; k < MY_SHOTS; k++)            // his bullets in flight
+    if (myShots[k].on) {
+      const MyShot &b = myShots[k];
+      fillRectF(b.x - b.dir * 16.0f - 1, b.y - 1, b.x + 1, b.y + 1, rgb565(255, 230, 140));
+      fillRectF(b.x - 3, b.y - 2, b.x + 3, b.y + 2, rgb565(255, 255, 230));
+    }
   if (mode == MODE_SHAFT && stage == 2) {
     drawCarriedBody();
     drawS2Prompts();
