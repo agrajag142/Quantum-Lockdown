@@ -208,6 +208,7 @@ static uint32_t gameButtons() {
   if (raw & (RAW_SQUARE | RAW_CIRCLE)) b |= BTN_USE;
   if (raw & (RAW_OPTIONS | RAW_TOUCHPAD)) b |= BTN_MAP;
   if (raw & RAW_TRIANGLE) b |= BTN_NEW;
+  if (raw & (RAW_R1 | RAW_R2)) b |= BTN_FIRE;
   return b;
 }
 

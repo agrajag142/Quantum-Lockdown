@@ -37,6 +37,7 @@ static uint32_t parseButtons(const char *s) {
     else if (!strcmp(t, "USE")) b |= BTN_USE;
     else if (!strcmp(t, "MAP")) b |= BTN_MAP;
     else if (!strcmp(t, "NEW")) b |= BTN_NEW;
+    else if (!strcmp(t, "FIRE")) b |= BTN_FIRE;
   }
   return b;
 }

@@ -11,7 +11,8 @@ enum : uint32_t {
   BTN_JUMP = 0x10,    // Cross: the somersault
   BTN_USE = 0x20,     // Square / Circle: hold to search
   BTN_MAP = 0x40,     // Options / touchpad: the map
-  BTN_NEW = 0x80,     // Triangle: on the map, lays out a new complex
+  BTN_NEW = 0x80,     // Triangle: the settings
+  BTN_FIRE = 0x100,   // R1 / R2: fire (stage 2, with the pistol)
 };
 
 void gameInit(uint32_t seed);

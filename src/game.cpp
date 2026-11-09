@@ -39,7 +39,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "031"
+#define GAME_VERSION      "032"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -116,6 +116,11 @@
 #define SHOT_HURT         10
 #define SHOT_TIME_LOST    30
 #define KNIFE_RANGE       80       // with the kitchen's knife: X this close to someone (on his level)
+#define SEC_ALERT_SECONDS 7.0f     // the security room's door guard knifed: the other guards shoot this long after
+#define STORE_MID_Y       440      // the store room: three levels
+#define STORE_TOP_Y       200
+#define ADMIN_DECK_Y      400      // the admin room: a small deck at the back
+#define ADMIN_DESK_X      650      // (where the one at the desk sits)
 #define SUSP_MAX          5        // ...this many: recognised - back out to the lift area, the clock down
 #define RECOGNISED_TIME_LOST 30
 #define CARD_SHOW         3.2f     // ACCESS CARD LEVEL n FOUND: seconds on screen
@@ -284,6 +289,10 @@ struct Npc {                                 // the lab's people (the chef, the 
   bool watching;                             // suspicious of him: stopped, staring
   bool dead;                                 // (the knife)
   float dieT, aimT;                          // falling; a guard drawing his pistol (> 0) and firing
+  float sight;                               // how far he sees
+  bool turns;                                // (standing at a post: looking one way, then the other)
+  bool knifeOnly;                            // (the security room's door guard: a bullet won't stop him)
+  bool seated;                               // (at a desk)
 };
 #define MAX_NPCS 3
 static Npc npcs[MAX_NPCS];
@@ -291,6 +300,10 @@ static bool s2NpcDead[S2_ROOMS][MAX_NPCS];  // who has been killed, where they l
 static float s2NpcDX[S2_ROOMS][MAX_NPCS], s2NpcDY[S2_ROOMS][MAX_NPCS];
 static int8_t s2NpcDDir[S2_ROOMS][MAX_NPCS];
 static bool hasKnife = false;                // the kitchen's knife
+static bool hasGun = false;                  // the security room's pistol (R1 / R2 to fire)
+static int s2GunItem = 0;                    // (which of the two gun racks it's in)
+static float secAlertT = -1;                 // the security room: seconds till the guards open fire (< 0: no alert)
+static float gunFlashT = 0;
 static int s2KnifeItem = 0, s2CardItem = 2;  // which of the kitchen's things the knife is in; which medical bay patient has the level 2 card
 static bool panelKnife = false;              // (the FOUND panel: the knife, not a card)
 static float shotFlashT = 0;
@@ -549,7 +562,10 @@ static void layOutStage2() {
   susp = 0;
   cardShowT = 0;
   hasKnife = false;
+  hasGun = false;
+  secAlertT = -1;
   s2KnifeItem = rnd(8);                      // (one of the kitchen's 8 things)
+  s2GunItem = rnd(2);                        // (one of the security room's two gun racks)
   static const int beds[5] = { 2, 4, 5, 6, 7 };
   s2CardItem = beds[rnd(5)];                 // (one of the medical bay's 5 patients)
 }
@@ -1637,7 +1653,16 @@ static const LabItem medicalItems[] = {
 static const LabItem securityItems[] = {
   { 250, ROOM_FLOOR_Y, 100, 160 }, { 370, ROOM_FLOOR_Y, 100, 160 }, { 510, ROOM_FLOOR_Y, 84, 150 },   // two gun racks, lockers
   { GUARD_DESK_X, ROOM_FLOOR_Y, 260, 100 }, { 990, ROOM_FLOOR_Y, 60, 120 }, { 1130, ROOM_FLOOR_Y, 150, 60 } };   // the desk, the filing cabinet, seats
-static const int MED_BEDS[5] = { 2, 4, 5, 6, 7 };   // (medicalItems: the patients)
+static const LabItem storeItems[] = {
+  { 120, ROOM_FLOOR_Y, 90, 170 }, { 250, ROOM_FLOOR_Y, 110, 120 }, { 400, ROOM_FLOOR_Y, 150, 186 }, { 580, ROOM_FLOOR_Y, 100, 150 },
+  { 740, ROOM_FLOOR_Y, 140, 100 }, { 900, ROOM_FLOOR_Y, 90, 170 },                                        // the floor
+  { 110, STORE_MID_Y, 130, 90 }, { 260, STORE_MID_Y, 84, 150 }, { 420, STORE_MID_Y, 150, 186 }, { 600, STORE_MID_Y, 140, 80 },
+  { 760, STORE_MID_Y, 90, 170 }, { 920, STORE_MID_Y, 140, 110 },                                          // the middle
+  { 130, STORE_TOP_Y, 150, 70 }, { 360, STORE_TOP_Y, 140, 80 }, { 580, STORE_TOP_Y, 90, 110 }, { 820, STORE_TOP_Y, 160, 66 } };   // the top
+static const LabItem adminItems[] = {
+  { 310, ROOM_FLOOR_Y, 260, 100 }, { ADMIN_DESK_X, ROOM_FLOOR_Y, 180, 72 }, { 890, ROOM_FLOOR_Y, 200, 70 }, { 1030, ROOM_FLOOR_Y, 60, 120 },
+  { 1210, ROOM_FLOOR_Y, 40, 124 },                                                                       // counter, desk, table, filing, cooler
+  { 790, ADMIN_DECK_Y, 120, 190 }, { 930, ADMIN_DECK_Y, 90, 170 }, { 1040, ADMIN_DECK_Y, 80, 60 } };       // the archives, a cupboard, boxes
 static void placeLabItems(int idx) {
   decorCount = 0;
   auto add = [](const LabItem &it) {
@@ -1651,6 +1676,8 @@ static void placeLabItems(int idx) {
   if (s2Kind[idx] == LK_CLEANING) for (const LabItem &it : cleaningItems) add(it);
   if (s2Kind[idx] == LK_MEDICAL) for (const LabItem &it : medicalItems) add(it);
   if (s2Kind[idx] == LK_SECURITY) for (const LabItem &it : securityItems) add(it);
+  if (s2Kind[idx] == LK_STORE) for (const LabItem &it : storeItems) add(it);
+  if (s2Kind[idx] == LK_ADMIN) for (const LabItem &it : adminItems) add(it);
 }
 static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
   decorCount = 0;
@@ -2925,17 +2952,164 @@ static void paintSecurityRoom() {
   paintSeats(1130, ROOM_FLOOR_Y);
 }
 
+// ---- the store room: three levels of boxes, cupboards, cabinets, racks (nobody in it)
+static void paintMetalCabinet(int cx, int fy, int h) {                         // a grey double-door cabinet
+  int x0 = cx - 50, x1 = cx + 50, top = fy - h;
+  fillRect(x0, top, x1, fy - 1, rgb565(130, 140, 150));
+  fillRect(x0, top, x1, top + 3, rgb565(170, 180, 190));
+  fillRect(cx - 1, top + 6, cx + 1, fy - 8, rgb565(90, 98, 108));
+  fillRect(cx - 9, top + h / 2 - 12, cx - 5, top + h / 2 + 12, rgb565(210, 214, 220));
+  fillRect(cx + 5, top + h / 2 - 12, cx + 9, top + h / 2 + 12, rgb565(210, 214, 220));
+  fillRect(x0 + 10, top + 12, x0 + 40, top + 22, rgb565(240, 240, 232));      // a label
+  fillRect(x0, fy - 8, x1, fy - 1, rgb565(80, 86, 96));
+}
+
+static void paintSmallCupboard(int cx, int fy, uint16_t c) {                   // a squat wooden cupboard
+  int x0 = cx - 45, x1 = cx + 45, top = fy - 110;
+  fillRect(x0, top, x1, fy - 1, c);
+  fillRect(x0, top, x1, top + 6, rgb565(200, 160, 110));
+  fillRect(cx - 1, top + 10, cx + 1, fy - 6, rgb565(90, 60, 36));
+  fillCircle(cx - 8, top + 50, 3, rgb565(220, 200, 120));
+  fillCircle(cx + 8, top + 50, 3, rgb565(220, 200, 120));
+}
+
+static void paintPallet(int x0, int w, int fy) {                               // a pallet stacked with boxes, shrink-wrapped
+  fillRect(x0, fy - 10, x0 + w, fy - 1, rgb565(160, 120, 76));
+  for (int x = x0 + 6; x < x0 + w - 8; x += 26) fillRect(x, fy - 10, x + 10, fy - 1, rgb565(110, 80, 50));
+  paintBox(x0 + 4, fy - 10, w / 2 - 6, 46, 0);
+  paintBox(x0 + w / 2, fy - 10, w / 2 - 4, 46, 1);
+  paintBox(x0 + 14, fy - 56, w - 28, 40, 2);
+  blendRect(x0 + 2, fy - 98, x0 + w - 2, fy - 10, 220, 230, 240, 0.18f);
+}
+
+static void paintStore() {
+  // the floor
+  paintCupboardTall(120, ROOM_FLOOR_Y);
+  paintBox(195, ROOM_FLOOR_Y, 60, 60, 0);
+  paintBox(255, ROOM_FLOOR_Y, 50, 70, 2);
+  paintBox(205, ROOM_FLOOR_Y - 60, 70, 50, 1);
+  paintRack(325, 475, ROOM_FLOOR_Y, 3);
+  paintMetalCabinet(580, ROOM_FLOOR_Y, 150);
+  paintPallet(670, 140, ROOM_FLOOR_Y);
+  paintCupboardTall(900, ROOM_FLOOR_Y);
+  // the middle
+  paintDeckSlab(STORE_MID_Y);
+  paintBox(45, STORE_MID_Y, 64, 56, 1);
+  paintBox(110, STORE_MID_Y, 64, 90, 0);
+  paintSecurityLockers(218, STORE_MID_Y);
+  paintRack(345, 495, STORE_MID_Y, 0);
+  paintCrates(530, 140, STORE_MID_Y, 0);
+  paintCupboardTall(760, STORE_MID_Y);
+  paintBox(850, STORE_MID_Y, 70, 70, 2);
+  paintBox(922, STORE_MID_Y, 66, 110, 1);
+  // the top
+  paintDeckSlab(STORE_TOP_Y);
+  paintBox(55, STORE_TOP_Y, 70, 60, 0);
+  paintBox(127, STORE_TOP_Y, 76, 70, 2);
+  paintCrates(290, 140, STORE_TOP_Y, 1);
+  paintSmallCupboard(580, STORE_TOP_Y, rgb565(150, 104, 64));
+  paintBox(740, STORE_TOP_Y, 80, 50, 1);
+  paintBox(822, STORE_TOP_Y, 78, 66, 0);
+  paintBox(760, STORE_TOP_Y - 50, 50, 24, 2);
+  drawVectorText("STORE", 1210, 300, 2.6f, rgb565(60, 72, 96), true);
+  drawVectorText("ROOM", 1210, 336, 2.6f, rgb565(60, 72, 96), true);
+}
+
+// ---- the admin room: the front counter by the door, a desk, a meeting table; a deck of archives at the back
+static void paintAdminChair(int cx, int fy, int dir) {
+  fillRect(cx - 20, fy - 40, cx + 20, fy - 32, rgb565(50, 60, 90));
+  int bx = cx - dir * 18;
+  fillRect(bx - 3, fy - 84, bx + 3, fy - 32, rgb565(50, 60, 90));
+  fillRect(cx - 2, fy - 32, cx + 2, fy - 8, rgb565(120, 126, 136));
+  fillRect(cx - 16, fy - 8, cx + 16, fy - 5, rgb565(120, 126, 136));
+}
+
+static void paintAdmin() {
+  // the walls: a clock, a notice board, pictures
+  fillCircle(560, 150, 26, rgb565(250, 250, 250));
+  drawRectOutline(534, 124, 586, 176, rgb565(60, 64, 72), 2);
+  drawLine(560, 150, 560, 132, rgb565(30, 30, 34), true);
+  drawLine(560, 150, 574, 156, rgb565(30, 30, 34), true);
+  fillRect(200, 430, 420, 520, rgb565(176, 136, 96));                           // the notice board behind the counter
+  for (int k = 0; k < 5; k++) fillRect(214 + k * 40, 440 + (k % 2) * 12, 244 + k * 40, 480 + (k % 2) * 12, rgb565(250, 250, 240));
+  drawVectorText("ENQUIRIES", 310, 410, 2.4f, rgb565(60, 72, 96), true);
+  for (int k = 0; k < 2; k++) {                                              // pictures over the meeting table
+    int px = 830 + k * 120;
+    fillRect(px, 470, px + 80, 530, rgb565(90, 70, 50));
+    fillRect(px + 5, 475, px + 75, 525, k ? rgb565(90, 150, 200) : rgb565(110, 170, 100));
+  }
+  // the front counter, by the door
+  int cx0 = 180, cx1 = 440, top = ROOM_FLOOR_Y - 100;
+  fillRect(cx0, top, cx1, top + 8, rgb565(170, 126, 80));
+  fillRect(cx0 + 6, top + 8, cx1 - 6, ROOM_FLOOR_Y - 1, rgb565(60, 90, 140));
+  fillRect(cx0 + 6, top + 8, cx1 - 6, top + 12, rgb565(90, 120, 170));
+  drawVectorText("ADMINISTRATION", (cx0 + cx1) / 2.0f, top + 50, 2.2f, rgb565(240, 244, 250), true);
+  fillRect(cx0 + 20, top - 14, cx0 + 70, top - 1, rgb565(196, 160, 90));       // an in-tray of papers
+  fillRect(cx0 + 24, top - 18, cx0 + 66, top - 14, rgb565(250, 250, 244));
+  fillCircle(cx1 - 30, top - 6, 7, rgb565(220, 200, 80));                       // a bell
+  fillRect(cx1 - 38, top - 2, cx1 - 22, top, rgb565(60, 60, 66));
+  // the desk (its front is drawn over the one sitting at it), his chair
+  paintAdminChair(ADMIN_DESK_X + 18, ROOM_FLOOR_Y, -1);
+  int dx0 = ADMIN_DESK_X - 90, dtop = ROOM_FLOOR_Y - 72;
+  fillRect(dx0 + 20, dtop - 52, dx0 + 88, dtop - 8, rgb565(40, 44, 52));        // the computer, turned to him
+  fillRect(dx0 + 24, dtop - 48, dx0 + 84, dtop - 12, rgb565(40, 110, 160));
+  fillRect(dx0 + 50, dtop - 8, dx0 + 58, dtop, rgb565(40, 44, 52));
+  fillRect(dx0 + 120, dtop - 20, dx0 + 160, dtop, rgb565(240, 240, 236));       // papers, a mug
+  fillRect(dx0 + 166, dtop - 14, dx0 + 176, dtop, rgb565(200, 60, 50));
+  // the meeting table and its chairs
+  int tx0 = 790, tx1 = 990, ttop = ROOM_FLOOR_Y - 70;
+  paintAdminChair(tx0 + 10, ROOM_FLOOR_Y, 1);
+  paintAdminChair(tx1 - 10, ROOM_FLOOR_Y, -1);
+  fillRect(tx0 + 20, ttop, tx1 - 20, ttop + 8, rgb565(170, 126, 80));
+  fillRect(tx0 + 30, ttop + 8, tx0 + 38, ROOM_FLOOR_Y - 1, rgb565(130, 94, 60));
+  fillRect(tx1 - 38, ttop + 8, tx1 - 30, ROOM_FLOOR_Y - 1, rgb565(130, 94, 60));
+  fillRect(tx0 + 60, ttop - 6, tx0 + 100, ttop, rgb565(250, 250, 244));
+  fillRect(tx0 + 130, ttop - 16, tx0 + 140, ttop, rgb565(120, 200, 230));       // a jug of water
+  paintFilingCabinet(1030, ROOM_FLOOR_Y);
+  // the water cooler, a plant
+  int wx = 1210;
+  fillRect(wx - 18, ROOM_FLOOR_Y - 80, wx + 18, ROOM_FLOOR_Y - 1, rgb565(230, 232, 236));
+  fillRect(wx - 14, ROOM_FLOOR_Y - 124, wx + 14, ROOM_FLOOR_Y - 80, rgb565(150, 200, 240));
+  fillRect(wx - 6, ROOM_FLOOR_Y - 60, wx + 6, ROOM_FLOOR_Y - 54, rgb565(60, 120, 220));
+  fillRect(480, ROOM_FLOOR_Y - 34, 520, ROOM_FLOOR_Y - 1, rgb565(170, 100, 60));
+  for (int k = 0; k < 5; k++) fillCircle(488 + k * 6, ROOM_FLOOR_Y - 46 - (k % 2) * 16, 12, rgb565(60, 150, 70));
+  // the deck at the back: archive shelves of binders, a cupboard, boxes
+  fillRect(700, ADMIN_DECK_Y, 1089, ADMIN_DECK_Y + PLAT_T - 1, rgb565(196, 200, 208));
+  fillRect(700, ADMIN_DECK_Y, 1089, ADMIN_DECK_Y + 2, rgb565(244, 246, 250));
+  fillRect(700, ADMIN_DECK_Y + PLAT_T - 3, 1089, ADMIN_DECK_Y + PLAT_T - 1, rgb565(150, 156, 166));
+  int sx0 = 730, sx1 = 850;
+  fillRect(sx0, ADMIN_DECK_Y - 190, sx0 + 4, ADMIN_DECK_Y - 1, rgb565(150, 156, 166));
+  fillRect(sx1 - 4, ADMIN_DECK_Y - 190, sx1, ADMIN_DECK_Y - 1, rgb565(150, 156, 166));
+  for (int r = 0; r < 3; r++) {
+    int sy = ADMIN_DECK_Y - 8 - r * 62;
+    fillRect(sx0, sy, sx1, sy + 4, rgb565(176, 182, 192));
+    for (int k = 0; k < 9; k++) {
+      uint16_t c = (k + r) % 3 == 0 ? rgb565(200, 50, 40) : (k + r) % 3 == 1 ? rgb565(40, 90, 170) : rgb565(240, 200, 60);
+      fillRect(sx0 + 8 + k * 12, sy - 48, sx0 + 18 + k * 12, sy - 1, c);
+      fillRect(sx0 + 11 + k * 12, sy - 36, sx0 + 15 + k * 12, sy - 30, rgb565(250, 250, 250));
+    }
+  }
+  paintCupboardTall(930, ADMIN_DECK_Y);
+  paintBox(1002, ADMIN_DECK_Y, 76, 60, 1);
+  drawVectorText("ADMIN", 420, 200, 5.0f, rgb565(60, 72, 96), true);
+  drawVectorText("ARCHIVES", 790, ADMIN_DECK_Y - 214, 1.8f, rgb565(110, 120, 140), false);
+}
+
 // A stage 2 room: white walls, the duct and stripe along the top; then what is in it (the kitchen; the rest empty for now)
 static void paintLabRoom() {
   int idx = curRoom;
   fillRect(0, HUD_H, SCREEN_W - 1, CEIL_Y - 1, rgb565(214, 218, 224));
   for (int x = 40; x < SCREEN_W - 40; x += 180) fillRect(x, CEIL_Y - 8, x + 70, CEIL_Y - 4, rgb565(250, 252, 255));
   labStripe(0, SCREEN_W - 1, CEIL_Y, CEIL_Y + 12);
-  bool clean = s2Kind[idx] == LK_CLEANING;
+  bool clean = s2Kind[idx] == LK_CLEANING || s2Kind[idx] == LK_STORE;   // (three levels: no duct)
   if (!clean) labDuctBand(0, SCREEN_W - 1, CEIL_Y + 16, CEIL_Y + 58);   // (the cleaning room: its top level up there instead)
   labWall(0, SCREEN_W - 1, clean ? CEIL_Y + 13 : CEIL_Y + 61, ROOM_FLOOR_Y - 1);
   if (s2Kind[idx] == LK_KITCHEN) {
     paintKitchen();
+  } else if (s2Kind[idx] == LK_STORE) {
+    paintStore();
+  } else if (s2Kind[idx] == LK_ADMIN) {
+    paintAdmin();
   } else if (clean) {
     paintCleaning();
   } else if (s2Kind[idx] == LK_MEDICAL) {
@@ -3258,6 +3432,12 @@ static void drawLabRoomFront() {
     fillRect(x1 - 70, top - 40, x1 - 20, top - 4, rgb565(50, 54, 62));            // its computer
     fillRect(x1 - 66, top - 36, x1 - 24, top - 8, rgb565(40, 110, 160));
     fillRect(x1 - 48, top - 4, x1 - 42, top, rgb565(50, 54, 62));
+  } else if (k == LK_ADMIN) {                  // the desk's front, over the one sitting at it
+    int x0 = ADMIN_DESK_X - 90, x1 = ADMIN_DESK_X + 90, top = ROOM_FLOOR_Y - 72;
+    fillRect(x0, top, x1, top + 8, rgb565(170, 126, 80));
+    fillRect(x0 + 6, top + 8, x1 - 6, ROOM_FLOOR_Y - 1, rgb565(140, 100, 64));
+    fillRect(x1 - 70, top + 20, x1 - 14, top + 22, rgb565(110, 78, 48));
+    fillRect(x1 - 70, top + 44, x1 - 14, top + 46, rgb565(110, 78, 48));
   } else if (k == LK_SECURITY) {
     int x0 = GUARD_DESK_X - 130, x1 = GUARD_DESK_X + 130, top = ROOM_FLOOR_Y - 100;
     fillRect(x0, top, x1, ROOM_FLOOR_Y - 1, rgb565(40, 70, 140));
@@ -3580,10 +3760,15 @@ static const WideRoom cleaningT = { "CLEANING", 3, { { 0, SCREEN_W, ROOM_FLOOR_Y
                                     1, { { 140, 220, { CLEAN_TOP_Y, CLEAN_MID_Y, ROOM_FLOOR_Y }, 3 } }, 0, {}, 0, {}, 640, 100 };
 static const WideRoom medicalT = { "MEDICAL BAY", 2, { { 0, SCREEN_W, ROOM_FLOOR_Y }, { 220, SCREEN_W, MED_DECK_Y } },
                                    1, { { 140, 220, { MED_DECK_Y, ROOM_FLOOR_Y }, 2 } }, 0, {}, 0, {}, 760, 140 };
+static const WideRoom storeT = { "STORE ROOM", 3, { { 0, SCREEN_W, ROOM_FLOOR_Y }, { 0, 1060, STORE_MID_Y }, { 0, 1060, STORE_TOP_Y } },
+                                 1, { { 1060, 1140, { STORE_TOP_Y, STORE_MID_Y, ROOM_FLOOR_Y }, 3 } }, 0, {}, 0, {}, 1180, 120 };
+static const WideRoom adminT = { "ADMIN", 2, { { 0, SCREEN_W, ROOM_FLOOR_Y }, { 700, 1090, ADMIN_DECK_Y } },
+                                 1, { { 1090, 1170, { ADMIN_DECK_Y, ROOM_FLOOR_Y }, 2 } }, 0, {}, 0, {}, 880, 120 };
 static const WideRoom &roomTemplate(int idx) {
   if (idx == CONTROL_ROOM) return controlRoomT;
   if (idx == SUB_ROOM || idx == ARRIVAL_ROOM) return subRoomT;
-  if (stage == 2 && idx < S2_ROOMS) return s2Kind[idx] == LK_KITCHEN ? kitchenT : s2Kind[idx] == LK_CLEANING ? cleaningT : s2Kind[idx] == LK_MEDICAL ? medicalT : labRoomT;
+  if (stage == 2 && idx < S2_ROOMS) return s2Kind[idx] == LK_KITCHEN ? kitchenT : s2Kind[idx] == LK_CLEANING ? cleaningT : s2Kind[idx] == LK_MEDICAL ? medicalT :
+                                           s2Kind[idx] == LK_STORE ? storeT : s2Kind[idx] == LK_ADMIN ? adminT : labRoomT;
   return wideRooms[rooms[idx].tpl];
 }
 
@@ -3720,6 +3905,9 @@ static void enterRoom(int idx, bool fromLeft) {
     n.dead = false;
     n.dieT = 9;
     n.aimT = 0;
+    n.sight = NPC_SIGHT;
+    n.turns = a == b;
+    n.knifeOnly = n.seated = false;
     int slot = npcCount - 1;
     if (s2NpcDead[idx][slot]) {              // killed: where he fell
       n.dead = true;
@@ -3740,12 +3928,32 @@ static void enterRoom(int idx, bool fromLeft) {
     addNpc(PK_NURSE, ROOM_FLOOR_Y, 590, 700, 40);
     addNpc(PK_SCIENTIST, MED_DECK_Y, 300, 1110, 200);
   }
-  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_SECURITY) {  // a guard behind the desk, two walking
+  secAlertT = -1;
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_SECURITY) {  // a guard at the door, one behind the desk, one walking
+    float gx = fromLeft ? 150.0f : SCREEN_W - 150.0f;    // the door guard: just inside the door he came in by, facing into the room
+    addNpc(PK_SECURITY, ROOM_FLOOR_Y, gx, gx, 0);
+    Npc &d = npcs[npcCount - 1];
+    if (!d.dead) {
+      d.x = gx;
+      d.dir = fromLeft ? 1 : -1;
+    }
+    d.turns = false;
+    d.knifeOnly = true;
+    d.sight = SCREEN_W;                      // (he sees the whole room: no searching the gun racks under his nose)
     addNpc(PK_SECURITY, ROOM_FLOOR_Y, GUARD_DESK_X, GUARD_DESK_X, 0);
     npcs[npcCount - 1].dir = fromLeft ? 1 : -1;   // (looking away from the door; he turns now and then)
     if (!npcs[npcCount - 1].dead) npcs[npcCount - 1].x = GUARD_DESK_X;
-    addNpc(PK_SECURITY, ROOM_FLOOR_Y, 280, 1180, 160);
-    addNpc(PK_SECURITY, ROOM_FLOOR_Y, 280, 1180, 560);
+    addNpc(PK_SECURITY, ROOM_FLOOR_Y, 300, 1160, 560);
+    bool others = !npcs[1].dead || !npcs[2].dead;
+    if (npcs[0].dead && others) secAlertT = SEC_ALERT_SECONDS;   // (back after knifing the door guard: they're waiting for him)
+  }
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_ADMIN) {     // one at a desk, one walking
+    addNpc(PK_OFFICE, ROOM_FLOOR_Y, ADMIN_DESK_X, ADMIN_DESK_X, 0);
+    Npc &d = npcs[npcCount - 1];
+    if (!d.dead) { d.x = ADMIN_DESK_X; d.dir = -1; }   // (at his desk, facing the counter)
+    d.turns = false;
+    d.seated = true;
+    addNpc(PK_OFFICE, ROOM_FLOOR_Y, 560, 1040, 200);
   }
 }
 
@@ -4483,6 +4691,9 @@ static int atNpcToKill() {
   return -1;
 }
 static int killTarget = -1;
+static bool canFire() {                      // the pistol: in a lab room, standing on something
+  return hasGun && stage == 2 && mode == MODE_ROOM && curRoom < S2_ROOMS && gameOver == END_NONE;
+}
 
 static bool onWalkway() { return stage == 2 && mode == MODE_SHAFT && !carMoving && fabsf(agY - CAR_FLOOR_Y) < 0.5f; }
 static bool atWorker() {                     // close enough to knock him out
@@ -4595,10 +4806,51 @@ static void updateS2Act(float dt) {
       addScore(500, n.x, n.y - 170);
       susp = 0;
       suspT = 0;
+      if (n.knifeOnly && s2Kind[curRoom] == LK_SECURITY) {   // the door guard: the others will open fire
+        secAlertT = SEC_ALERT_SECONDS;
+        for (int k = 0; k < npcCount; k++) npcs[k].watching = false;
+      }
     }
     if (t >= 0.8f) {
       s2Act = 0;
       setState(ST_IDLE, 0.2f);
+    }
+  } else if (s2Act == 5) {                   // the pistol: arm out, fire
+    static const AgentPose AIMP = { 0, -2, 88, 2, 80, 14, 6, -4, -8, -3, 0, 0, 0, 1, 0 };
+    p = AIMP;
+    if (before < 0.08f && t >= 0.08f) {
+      sfxPlay(SFX_SHOT);
+      gunFlashT = 0.08f;
+      int hit = -1;
+      float best = 1e9f;
+      for (int k = 0; k < npcCount; k++) {     // the first one in line on his level
+        const Npc &n = npcs[k];
+        float d = agFacing * (n.x - agX);
+        if (n.dead || fabsf(agY - n.y) > 60 || d <= 0 || d > SCREEN_W) continue;
+        if (d < best) { best = d; hit = k; }
+      }
+      if (hit >= 0 && npcs[hit].knifeOnly) {   // (the door guard: it doesn't stop him)
+        sfxPlay(SFX_CLUNK);
+        showMsg("BULLET-PROOF VEST - ONLY THE KNIFE WILL DO", 2.5f);
+      } else if (hit >= 0) {
+        Npc &n = npcs[hit];
+        n.dead = true;
+        n.dieT = 0;
+        n.watching = false;
+        n.aimT = 0;
+        s2NpcDead[curRoom][hit] = true;
+        s2NpcDX[curRoom][hit] = n.x;
+        s2NpcDY[curRoom][hit] = n.y;
+        s2NpcDDir[curRoom][hit] = (int8_t)n.dir;
+        sfxPlay(SFX_HIT);
+        addScore(500, n.x, n.y - 170);
+        susp = 0;
+        suspT = 0;
+      }
+    }
+    if (t >= 0.35f) {
+      s2Act = 0;
+      setState(ST_IDLE, 0.15f);
     }
   } else if (s2Act == 3) {                   // into the bin with him
     binPT += dt;
@@ -4689,6 +4941,23 @@ static void updateWorker(float dt) {
 // The lab's people: back and forth along their paths, a pause at each end (working); stopped while
 // they're suspicious of him
 static void updateNpcs(float dt) {
+  if (secAlertT >= 0 && mode == MODE_ROOM) {   // the security room on alert: the guards turn to him, then open fire
+    int shooter = -1;
+    bool aiming = false;
+    for (int i = 0; i < npcCount; i++) {
+      Npc &n = npcs[i];
+      if (n.dead || n.knifeOnly || n.kind != PK_SECURITY) continue;
+      n.dir = agX < n.x ? -1 : 1;
+      n.watching = true;
+      aiming |= n.aimT > 0;
+      if (shooter < 0) shooter = i;
+    }
+    if (shooter < 0) secAlertT = -1;           // (none left)
+    else if (!s2Recog) {
+      secAlertT -= dt;
+      if (secAlertT <= 0 && !aiming) { secAlertT = 0; npcs[shooter].aimT = 0.001f; }
+    }
+  }
   for (int i = 0; i < npcCount; i++) {
     Npc &n = npcs[i];
     n.t += dt;
@@ -4712,8 +4981,8 @@ static void updateNpcs(float dt) {
       continue;
     }
     if (n.watching) continue;
-    if (n.a == n.b) {                        // standing at his post: looking one way, then the other
-      if (fmodf(n.t, 4.0f) < dt) n.dir = -n.dir;
+    if (n.a == n.b) {                        // standing at his post: looking one way, then the other (or not)
+      if (n.turns && fmodf(n.t, 4.0f) < dt) n.dir = -n.dir;
       continue;
     }
     if (n.pause > 0) {
@@ -4731,14 +5000,14 @@ static void updateNpcs(float dt) {
 
 // Can this one see him? (facing him, on his level, close enough)
 static bool npcSees(const Npc &n) {
-  return !n.dead && fabsf(agY - n.y) < 60 && n.dir * (agX - n.x) > 0 && fabsf(agX - n.x) < NPC_SIGHT;
+  return !n.dead && fabsf(agY - n.y) < 60 && n.dir * (agX - n.x) > 0 && fabsf(agX - n.x) < n.sight;
 }
 
 // Suspicion: someone who can see him while he looks at them, or while he searches, gets
 // suspicious - a point every SUSP_STEP (twice as fast if he's searching). Looking away and not
 // searching clears it. SUSP_MAX: recognised.
 static void updateSuspicion(float dt) {
-  if (npcCount == 0 || s2Recog || agState == ST_CAUGHT || agState == ST_KO || s2Act) return;
+  if (npcCount == 0 || s2Recog || agState == ST_CAUGHT || agState == ST_KO || s2Act || secAlertT >= 0) return;
   for (int i = 0; i < npcCount; i++)
     if (npcs[i].aimT > 0) return;            // (a guard is about to shoot)
   bool searching = agState == ST_USE, any = false;
@@ -4808,6 +5077,12 @@ static void drawNpcs() {
       p = PERSON_IDLE;
       p.head = -4;
       p.torso = -2;
+    } else if (n.seated) {                   // at a desk: sitting, typing
+      memset(&p, 0, sizeof(p));
+      p.legN = 88; p.kneeN = -86; p.legF = 82; p.kneeF = -84;
+      p.armN = 70 + 4 * sinf(n.t * 14); p.elbowN = 40; p.armF = 64 + 4 * sinf(n.t * 13 + 1); p.elbowF = 44;
+      p.torso = 4; p.head = 6;
+      p.plant = 1;
     } else if (n.pause > 0) {                // busy: reaching forward, working
       p = PERSON_IDLE;
       p.armN = 70 + 12 * sinf(n.t * 8); p.elbowN = 50; p.armF = 60 + 10 * sinf(n.t * 8 + 1.5f); p.elbowF = 56;
@@ -4825,7 +5100,9 @@ static void drawNpcs() {
       fillRectF(fx - 16, n.y - 12, fx + 16, n.y - 1, rgb565(230, 230, 220));
       fillRectF(fx - 4, n.y - 16, fx + 4, n.y - 11, rgb565(60, 140, 200));
     }
-    if (n.watching && susp > 0) {            // ? over their head, redder with each point
+    if (secAlertT >= 0 && n.kind == PK_SECURITY && !n.knifeOnly) {   // on alert: ! over their heads
+      drawVectorTextW("!", n.x, n.y - 200, 5.0f, rgb565(255, 60, 40), 3.0f);
+    } else if (n.watching && susp > 0) {     // ? over their head, redder with each point
       float k = (float)susp / SUSP_MAX;
       uint16_t c = rgb565(255, (int)(220 - 170 * k), (int)(80 - 40 * k));
       drawVectorTextW("?", n.x, n.y - 200, 4.0f + k * 2.0f, c, 2.6f);
@@ -4848,8 +5125,10 @@ static void drawSuspicionMeter() {
 }
 
 // ACCESS CARD LEVEL n FOUND: the card, big, for a moment
-static void foundCard(int level) {          // (-1: the knife)
-  panelKnife = level < 0;
+static bool panelGun = false;
+static void foundCard(int level) {          // (-1: the knife, -2: the pistol)
+  panelKnife = level == -1;
+  panelGun = level == -2;
   if (level > s2Card) s2Card = level;
   cardShown = level;
   cardShowT = CARD_SHOW;
@@ -4863,6 +5142,19 @@ static void drawCardPanel() {
   blendRect(x0, y0, x1, y1, 0, 0, 0, 0.78f * k);
   drawRectOutline(x0, y0, x1, y1, rgb565(90, 200, 255), 3);
   char b[40];
+  if (panelGun) {                            // the pistol, and how to fire it
+    drawVectorText("PISTOL FOUND", SCREEN_W / 2, y0 + 40, 3.4f, rgb565(240, 244, 250), true);
+    int kx = SCREEN_W / 2, ky = y0 + 140;
+    fillRect(kx - 90, ky - 30, kx + 80, ky - 4, rgb565(40, 42, 48));          // the slide
+    fillRect(kx - 90, ky - 30, kx + 80, ky - 26, rgb565(90, 94, 104));
+    fillRect(kx + 80, ky - 24, kx + 92, ky - 10, rgb565(30, 30, 34));         // the muzzle
+    int gx[4] = { kx - 80, kx - 30, kx - 46, kx - 96 }, gy[4] = { ky - 4, ky - 4, ky + 70, ky + 70 };
+    fillPolygon(gx, gy, 4, rgb565(50, 52, 58));                               // the grip
+    fillRect(kx - 30, ky - 4, kx - 6, ky + 24, rgb565(40, 42, 48));           // the trigger guard
+    fillRect(kx - 26, ky, kx - 10, ky + 20, rgb565(0, 0, 0));
+    drawVectorText("R1 OR R2 TO FIRE", SCREEN_W / 2, y1 - 40, 2.2f, rgb565(255, 220, 120), false);
+    return;
+  }
   if (panelKnife) {                          // the knife, and what it's for
     drawVectorText("KNIFE FOUND", SCREEN_W / 2, y0 + 40, 3.4f, rgb565(240, 244, 250), true);
     int kx = SCREEN_W / 2, ky = y0 + 140;
@@ -4979,6 +5271,10 @@ static void updateAgent(float dt) {
         killTarget = atNpcToKill();     // ...the knife
         startS2Act(4);
         agFacing = npcs[killTarget].x < agX ? -1 : 1;
+      } else if ((pressed & BTN_FIRE) && canFire()) {
+        int f = want ? want : agFacing;  // ...the pistol
+        startS2Act(5);
+        agFacing = f;
       } else if (pressed & BTN_JUMP) {
         if (want) agFacing = want;
         startJump();
@@ -5028,6 +5324,13 @@ static void updateAgent(float dt) {
         killTarget = atNpcToKill();
         startS2Act(4);
         agFacing = npcs[killTarget].x < agX ? -1 : 1;
+        break;
+      }
+      if ((pressed & BTN_FIRE) && canFire()) {
+        int f = agFacing;
+        setState(ST_IDLE, 0.1f);
+        startS2Act(5);
+        agFacing = f;
         break;
       }
       if (pressed & BTN_JUMP) {
@@ -5216,6 +5519,11 @@ static void updateAgent(float dt) {
             if (first && s2Kind[curRoom] == LK_KITCHEN && i == s2KnifeItem) {   // the kitchen's knife
               hasKnife = true;
               foundCard(-1);
+              break;
+            }
+            if (first && s2Kind[curRoom] == LK_SECURITY && i == s2GunItem) {    // a pistol in a gun rack
+              hasGun = true;
+              foundCard(-2);
               break;
             }
             if (first && s2Kind[curRoom] == LK_MEDICAL && i == s2CardItem) {    // a patient's level 2 card
@@ -6616,7 +6924,7 @@ static void drawPanel() {
     line("DISGUISE", s2Disguised ? "OVERALLS" : "NONE", PANEL_Y + 98, rgb565(255, 220, 80));
     snprintf(b, sizeof(b), "%d", aid);
     line("FIRST AID LEFT", b, PANEL_Y + 128, rgb565(120, 230, 140));
-    line("KNIFE", hasKnife ? "YES" : "NO", PANEL_Y + 158, rgb565(240, 240, 245));
+    line("WEAPONS", hasKnife && hasGun ? "KNIFE PISTOL" : hasKnife ? "KNIFE" : hasGun ? "PISTOL" : "NONE", PANEL_Y + 158, rgb565(240, 240, 245));
     snprintf(b, sizeof(b), "V%s  FPS %d", GAME_VERSION, (int)lroundf(fpsShown));
     drawVectorText(b, (lx + SCREEN_W - 44) / 2, PANEL_Y + 184, 1.5f, rgb565(150, 160, 186), false);
     return;
@@ -7684,6 +7992,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (docShowT > 0) docShowT -= dt;
     if (cardShowT > 0) cardShowT -= dt;
     if (shotFlashT > 0) shotFlashT -= dt;
+    if (gunFlashT > 0) gunFlashT -= dt;
     for (int i = 0; i < MAX_POPS; i++)
       if (popT[i] > 0) popT[i] -= dt;
     if (leverT >= 0) leverT += dt;
@@ -7740,6 +8049,17 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (scene != SC_RIDE) {
     if (stage == 2 && s2Disguised) drawPersonU(shownPose, agX, agY, agFacing, myScale, PK_MAINT);   // in the maintenance man's overalls
     else drawAgentU(shownPose, agX, agY, agFacing, myScale);
+  }
+  if (s2Act == 5) {                       // his pistol, and its flash
+    int hx, hy, mx, my;
+    agentHand(shownPose, agX, agY, agFacing, myScale, hx, hy, mx, my);
+    fillRect(hx - 4, hy - 4, hx + 4, hy + 8, rgb565(30, 30, 34));
+    fillRect(agFacing > 0 ? hx : hx - 18, hy - 6, agFacing > 0 ? hx + 18 : hx, hy, rgb565(30, 30, 34));
+    if (gunFlashT > 0) {
+      int fx = hx + agFacing * 26;
+      glowDisc((float)fx, (float)(hy - 3), 22, 255, 220, 120, 0.9f);
+      fillCircle(fx, hy - 3, 5, rgb565(255, 250, 220));
+    }
   }
   if (mode == MODE_SHAFT && stage == 2) {
     drawCarriedBody();

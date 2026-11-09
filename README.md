@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 031: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 032: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -400,12 +400,33 @@ a drip, and the medicine cabinet. The doctor (white coat) walks the ward.
 One of the five patients, at random, has the **level 2 access card** (search
 him: ACCESS CARD LEVEL 2 FOUND).
 
+**The store room**: three levels (the lift at the back, on the right), packed
+with variety - tall cupboards, grey double-door cabinets, lockers, racks of
+boxes, tins, sacks and jars, crates, a shrink-wrapped pallet, a wooden
+cupboard, stacks of boxes. Nobody in it: 16 things to search.
+
+**The admin room**: two levels, most of it on the floor - the ADMINISTRATION
+front counter by the door (ENQUIRIES board, an in-tray, a bell), a desk with
+someone sitting at it (white shirt and tie, typing, facing the counter; the
+desk's front hides his legs), a meeting table with chairs, a filing cabinet,
+a water cooler, a plant, a clock and pictures; at the back a lift up to a
+deck of archive shelves, a cupboard and boxes. A second office worker walks
+the floor. 8 things to search.
+
 **The security room**: one level. A wall of 24 CCTV screens high up (people
 walking corridors, scan lines, recording lamps), two gun racks of rifles,
 lockers, the SECURITY desk (NUCLEAR MISSION's GR1 style, its front drawn over
 the guard behind it), a filing cabinet and seats. **Three guards** with
-pistols: one at the desk (turning to look one way, then the other, every few
-seconds) and two walking the room. Guards get suspicious twice as fast (a
+pistols: one standing **just inside the door you came in by**, facing into
+the room (he sees the whole room, so the gun racks can't be searched under
+his nose, and a bullet won't stop him - he wears a vest: only the knife),
+one at the desk (turning to look one way, then the other, every few seconds)
+and one walking the room. Come in behind the door guard and knife him: the
+other two put up a red ! and open fire **7 seconds** later (back in the room
+after knifing him, they're waiting: 7 seconds again). One of the two gun
+racks (at random) has a **pistol** (PISTOL FOUND): **R1 or R2** fires it -
+the first person in line on your level, either way you face, goes down
+(500 points; not the door guard). Guards get suspicious twice as fast (a
 point every 0.35 seconds) and at one point short of five they draw and
 **shoot**: 10 health, 30 seconds, knocked down - you come round in the lift
 area outside the door you came in by.
@@ -414,7 +435,7 @@ area outside the door you came in by.
 With it, X close to someone in a lab room (on your level, within 80 units;
 the prompt says X: KNIFE) kills them: they fall and stay down where they fell,
 can't see you any more, and are still there when you come back. 500 points.
-The panel's KNIFE line shows whether you have it.
+The panel's WEAPONS line shows what you have (KNIFE, PISTOL).
 
 **Searching**: everything in the kitchen (8 things), the cleaning room (16),
 the medical bay (9, the patients included) and the security room (6) can be
@@ -565,6 +586,7 @@ pauses the game and the clock:
 | X (Cross), on the title | start a new game |
 | D-pad or left stick | run left / right; up / down rides the lift car or a lift pad, or calls a pad to you |
 | Cross | somersault (stage 2, close to the maintenance man: knock him out) |
+| R1 / R2 | fire the pistol (stage 2, once found) |
 | Square or Circle | hold to search equipment (stage 2: search the maintenance man, put him in the bin, a first aid cabinet) |
 | Options or touchpad | the map (shows every room and where its doors lead), and pauses the game |
 | Triangle | the settings (pauses the game) |
