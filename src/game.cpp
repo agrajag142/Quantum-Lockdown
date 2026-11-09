@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "036"
+#define GAME_VERSION      "037"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -267,8 +267,8 @@ static std::atomic<int> rideHum{0};    // the journey's rumble
 // levels (from the top level down: A 6, B 5 ... F 1). A room's left door is on its lift's right
 // walkway, its right door (where the next lift comes down that far) on the next lift's left one;
 // each door has a card reader (access level 1..5: once in, always open). In rooms[0..20].
-enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE, LK_CLONE, LK_SOLDIER, LK_SERVER };
-static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM" };
+enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE, LK_CLONE, LK_SOLDIER, LK_SERVER, LK_QLAB1, LK_QLAB2 };
+static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM", "QUANTUM LAB 1", "QUANTUM LAB 2" };
 static int8_t s2Room[S2_LIFTS][S2_LEVELS];   // the room on the right of each lift at each level (-1 none)
 static uint8_t s2Kind[S2_ROOMS], s2Lvl[S2_ROOMS];   // what it is, the access level its doors need
 static bool s2Aid[S2_LIFTS][S2_LEVELS];      // each left walkway's first aid cabinet: used
@@ -319,7 +319,12 @@ static float shotFlashT = 0;
 #define S2_DOC_VALUE 1000
 #define VEST_SCORE 500                       // ...and a BULLET-PROOF VEST: a guard's shot only hurts (half), no knock down
 #define KILL_TIME_BONUS 300                  // each person he kills: 5 minutes more on the clock
-enum S2Hold : uint8_t { S2H_NONE, S2H_VEST, S2H_DOC };
+enum S2Hold : uint8_t { S2H_NONE, S2H_VEST, S2H_DOC, S2H_PASS };
+#define S2_PASSWORDS 4                       // QUANTUM PASSWORDS: in lift A's and lift B's rooms (for the server room's terminals, later)
+#define PASS_SCORE 500
+static int s2PassFound = 0;
+static char s2PassCode[S2_PASSWORDS][12];    // (what each one says)
+static float passShowT = 0;
 static uint8_t s2Hold[S2_ROOMS][S2_ITEMS];
 static bool hasVest = false;
 static int s2DocsFound = 0;
@@ -534,6 +539,7 @@ static void layOut(uint32_t seed) {
 
 // Stage 2's lab: its rooms (in rooms[0..20]), what they are and their access levels; the
 // maintenance man's level
+static int s2ItemCount(int kind);
 static void layOutStage2() {
   rngState = layoutSeed * 2246822519u + 991u;
   int n = 0;
@@ -566,7 +572,8 @@ static void layOutStage2() {
     int idx = s2Room[0][f];
     s2Kind[idx] = kinds[f];
   }
-  // lift B's five rooms: three of them the clone lab, the super soldier lab (two cameras) and the server room (a camera and a drone)
+  // lift B's five rooms, at random levels: the clone lab, the super soldier lab (two cameras), the server room (a camera and
+  // a drone), QUANTUM LAB 1 (scientists) and QUANTUM LAB 2 (wrecked: holes in the floor)
   {
     int fl[S2_LEVELS - 1] = { 0, 1, 2, 3, 4 };
     for (int i = S2_LEVELS - 2; i > 0; i--) {
@@ -574,8 +581,8 @@ static void layOutStage2() {
       fl[i] = fl[j];
       fl[j] = t;
     }
-    const uint8_t bk[3] = { LK_CLONE, LK_SOLDIER, LK_SERVER }, bh[3] = { HZ_NONE, HZ_CAMERA2, HZ_CAMDRONE };
-    for (int k = 0; k < 3; k++) {
+    const uint8_t bk[5] = { LK_CLONE, LK_SOLDIER, LK_SERVER, LK_QLAB1, LK_QLAB2 }, bh[5] = { HZ_NONE, HZ_CAMERA2, HZ_CAMDRONE, HZ_NONE, HZ_NONE };
+    for (int k = 0; k < 5; k++) {
       int idx = s2Room[1][fl[k]];
       s2Kind[idx] = bk[k];
       rooms[idx].hazard = bh[k];
@@ -604,18 +611,33 @@ static void layOutStage2() {
   memset(s2Hold, 0, sizeof(s2Hold));
   hasVest = false;
   s2DocsFound = 0;
-  for (int k = 0; k < 1 + S2_DOCS; k++)
-    for (int tries = 0; tries < 500; tries++) {
-      int f = rnd(S2_LEVELS), idx = s2Room[0][f], kind = s2Kind[idx];
-      int n = kind == LK_KITCHEN ? 8 : kind == LK_CLEANING ? 16 : kind == LK_MEDICAL ? 9 : kind == LK_SECURITY ? 6 : kind == LK_ADMIN ? 8 : 16;
-      int i = rnd(n);
-      if (s2Hold[idx][i]) continue;
-      if ((kind == LK_KITCHEN && i == s2KnifeItem) || (kind == LK_SECURITY && i == s2GunItem) || (kind == LK_MEDICAL && i == s2CardItem)) continue;
-      s2Hold[idx][i] = k == 0 ? S2H_VEST : S2H_DOC;
-      break;
-    }
   static const int beds[5] = { 2, 4, 5, 6, 7 };
   s2CardItem = beds[rnd(5)];                 // (one of the medical bay's 5 patients)
+  // ...and four QUANTUM PASSWORDS, one a room at most, anywhere in lift A's and lift B's rooms
+  s2PassFound = 0;
+  passShowT = 0;
+  bool passRoom[S2_ROOMS] = {};
+  for (int k = 0; k < 1 + S2_DOCS + S2_PASSWORDS; k++)
+    for (int tries = 0; tries < 500; tries++) {
+      bool pass = k > S2_DOCS;
+      int s = pass ? rnd(2) : 0, f = rnd(S2_LEVELS - s), idx = s2Room[s][f], kind = s2Kind[idx];
+      int n = s2ItemCount(kind);
+      if (n <= 0) continue;
+      int i = rnd(n);
+      if (s2Hold[idx][i] || (pass && passRoom[idx])) continue;
+      if ((kind == LK_KITCHEN && i == s2KnifeItem) || (kind == LK_SECURITY && i == s2GunItem) || (kind == LK_MEDICAL && i == s2CardItem)) continue;
+      s2Hold[idx][i] = k == 0 ? S2H_VEST : pass ? S2H_PASS : S2H_DOC;
+      if (pass) passRoom[idx] = true;
+      break;
+    }
+  for (int k = 0; k < S2_PASSWORDS; k++) {   // e.g. QX7-R41K
+    static const char al[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    char *c = s2PassCode[k];
+    c[0] = 'Q';
+    for (int j = 1; j < 8; j++) c[j] = al[rnd(32)];
+    c[3] = '-';
+    c[8] = 0;
+  }
 }
 
 // ============================================================ where we are
@@ -1748,6 +1770,30 @@ static const LabItem serverItems[] = {
   { 180, ROOM_FLOOR_Y, 100, 196 }, { 290, ROOM_FLOOR_Y, 100, 196 },                                                         // two cupboards on the left
   { 420, ROOM_FLOOR_Y, 110, 150 }, { 567, ROOM_FLOOR_Y, 110, 150 }, { 713, ROOM_FLOOR_Y, 110, 150 }, { 860, ROOM_FLOOR_Y, 110, 150 },   // the four terminals
   { 990, ROOM_FLOOR_Y, 100, 196 }, { 1100, ROOM_FLOOR_Y, 100, 196 } };                                                      // two on the right
+static const LabItem qlab1Items[] = {
+  { 180, ROOM_FLOOR_Y, 60, 150 }, { 280, ROOM_FLOOR_Y, 80, 142 }, { 405, ROOM_FLOOR_Y, 110, 90 }, { 540, ROOM_FLOOR_Y, 120, 140 },   // the fridge, the cages, a bench, the terminal
+  { 857, ROOM_FLOOR_Y, 134, 150 }, { 1035, ROOM_FLOOR_Y, 110, 116 }, { 1157, ROOM_FLOOR_Y, 54, 44 },                                // the glove box, the microscope, the centrifuge
+  { 835, 440, 90, 160 }, { 950, 440, 60, 70 }, { 1050, 440, 80, 84 }, { 1140, 440, 40, 102 }, { 1215, 440, 50, 120 } };          // the deck: the silver fridge, an incubator, isolation, LN2, filing
+static const LabItem qlab2Items[] = {
+  { 180, ROOM_FLOOR_Y, 80, 150 }, { 275, ROOM_FLOOR_Y, 70, 60 }, { 369, ROOM_FLOOR_Y, 86, 110 },                                    // the lockers, a containment box, the drums
+  { 627, ROOM_FLOOR_Y, 134, 150 }, { 755, ROOM_FLOOR_Y, 40, 102 },                                                                  // the glove box, LN2
+  { 990, ROOM_FLOOR_Y, 120, 140 }, { 1165, ROOM_FLOOR_Y, 110, 90 } };                                                               // the terminal, a bench
+static int s2ItemCount(int kind) {   // how many things a stage 2 room has to search
+  switch (kind) {
+    case LK_KITCHEN: return 8;
+    case LK_CLEANING: return 16;
+    case LK_MEDICAL: return 9;
+    case LK_SECURITY: return 6;
+    case LK_ADMIN: return 8;
+    case LK_STORE: return 16;
+    case LK_CLONE: return (int)(sizeof(cloneItems) / sizeof(cloneItems[0]));
+    case LK_SOLDIER: return (int)(sizeof(soldierItems) / sizeof(soldierItems[0]));
+    case LK_SERVER: return (int)(sizeof(serverItems) / sizeof(serverItems[0]));
+    case LK_QLAB1: return (int)(sizeof(qlab1Items) / sizeof(qlab1Items[0]));
+    case LK_QLAB2: return (int)(sizeof(qlab2Items) / sizeof(qlab2Items[0]));
+  }
+  return 0;
+}
 static void placeLabItems(int idx) {
   decorCount = 0;
   auto add = [](const LabItem &it) {
@@ -1766,6 +1812,8 @@ static void placeLabItems(int idx) {
   if (s2Kind[idx] == LK_CLONE) for (const LabItem &it : cloneItems) add(it);
   if (s2Kind[idx] == LK_SOLDIER) for (const LabItem &it : soldierItems) add(it);
   if (s2Kind[idx] == LK_SERVER) for (const LabItem &it : serverItems) add(it);
+  if (s2Kind[idx] == LK_QLAB1) for (const LabItem &it : qlab1Items) add(it);
+  if (s2Kind[idx] == LK_QLAB2) for (const LabItem &it : qlab2Items) add(it);
 }
 static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
   decorCount = 0;
@@ -3786,6 +3834,385 @@ static void paintServerRoom() {
   for (int k : { 0, 1, 6, 7 }) paintMetalCupboard(serverItems[k].x, ROOM_FLOOR_Y);
 }
 
+// ---- NUCLEAR MISSION's lab equipment (its B1 / B2 research rooms), as it was: same units, same sizes
+static void nkBio(int x, int y, int r) { nmAt(1, 0, 0, 0, 0); nBioSign(x, y, r); }
+static void nkGloveBox(int x0, int x1, int fy) {
+  int top = fy - 150, base = fy - 60;
+  fillRect(x0 + 6, base, x0 + 12, fy - 1, rgb565(150, 156, 166));
+  fillRect(x1 - 12, base, x1 - 6, fy - 1, rgb565(150, 156, 166));
+  fillRect(x0, top, x1, base, rgb565(176, 182, 192));
+  fillRect(x0 + 8, top + 10, x1 - 8, base - 10, rgb565(120, 170, 196));   // the window, lit inside
+  drawLine(x0 + 20, base - 14, x0 + 50, top + 14, rgb565(196, 226, 240), false);
+  for (int s = 0; s < 2; s++) {
+    int gx = x0 + (x1 - x0) * (s ? 3 : 1) / 4, gy = base - 28;
+    fillCircle(gx, gy, 12, rgb565(30, 30, 34));
+    fillRect(gx - 6, gy, gx + 6, gy + 24, rgb565(26, 26, 30));   // the glove hanging in
+  }
+  fillRect(x0 + 10, top + 16, x0 + 40, top + 30, rgb565(220, 220, 230));   // something inside: a rack of tubes
+  for (int k = 0; k < 5; k++) fillRect(x0 + 12 + k * 6, top + 8, x0 + 15 + k * 6, top + 16, k & 1 ? rgb565(220, 60, 60) : rgb565(60, 160, 220));
+  nkBio(x1 - 20, top + 20, 10);
+}
+static void nkLabFridge(int x, int fy) {   // tall, glass door, tubes on racks
+  fillRect(x, fy - 150, x + 60, fy - 1, rgb565(232, 236, 240));
+  fillRect(x + 6, fy - 144, x + 54, fy - 20, rgb565(150, 190, 210));
+  for (int r = 0; r < 4; r++) {
+    int y = fy - 136 + r * 30;
+    fillRect(x + 8, y + 18, x + 52, y + 20, rgb565(200, 206, 214));
+    for (int k = 0; k < 6; k++) fillRect(x + 10 + k * 7, y + 6, x + 13 + k * 7, y + 18, (k + r) % 3 == 0 ? rgb565(220, 60, 60) : (k + r) % 3 == 1 ? rgb565(60, 160, 220) : rgb565(240, 200, 60));
+  }
+  fillRect(x + 50, fy - 110, x + 53, fy - 70, rgb565(150, 156, 166));
+  fillRect(x + 8, fy - 16, x + 22, fy - 10, rgb565(40, 200, 120));   // its display
+}
+static void nkCages(int x, int fy, int rows) {   // stacked animal cages
+  for (int r = 0; r < rows; r++) {
+    int y1 = fy - 4 - r * 46, y0 = y1 - 40;
+    fillRect(x, y0, x + 80, y1, rgb565(60, 64, 72));
+    fillRect(x + 3, y0 + 3, x + 77, y1 - 3, rgb565(200, 196, 170));   // bedding
+    for (int k = x + 6; k < x + 78; k += 6) fillRect(k, y0 + 3, k, y1 - 3, rgb565(150, 156, 166));   // bars
+    fillCircle(x + 22 + (r * 17) % 40, y1 - 9, 5, rgb565(244, 244, 244));   // a white mouse
+    fillCircle(x + 27 + (r * 17) % 40, y1 - 11, 3, rgb565(244, 244, 244));
+    fillRect(x + 4, y0 - 6, x + 30, y0 - 1, rgb565(250, 250, 250));   // label
+  }
+}
+static void nkContainment(int x, int fy) {   // a sealed yellow containment box
+  fillRect(x, fy - 60, x + 70, fy - 1, rgb565(220, 180, 40));
+  fillRect(x, fy - 60, x + 70, fy - 52, rgb565(240, 206, 70));
+  fillRect(x + 4, fy - 30, x + 66, fy - 26, rgb565(30, 30, 34));
+  nkBio(x + 35, fy - 34, 13);
+  fillRect(x + 6, fy - 8, x + 14, fy - 1, rgb565(80, 80, 84));
+  fillRect(x + 56, fy - 8, x + 64, fy - 1, rgb565(80, 80, 84));
+}
+static void nkIsolation(int x, int fy) {   // a clear isolation box with a green light inside
+  fillRect(x, fy - 74, x + 80, fy - 1, rgb565(170, 210, 226));
+  drawRectOutline(x, fy - 74, x + 80, fy - 1, rgb565(200, 206, 214), 3);
+  fillRect(x + 10, fy - 20, x + 70, fy - 6, rgb565(60, 160, 100));
+  drawLine(x + 10, fy - 10, x + 30, fy - 64, rgb565(226, 244, 250), false);
+  fillCircle(x + 64, fy - 64, 4, rgb565(60, 240, 120));
+  fillRect(x + 30, fy - 84, x + 50, fy - 74, rgb565(150, 156, 166));   // its air filter
+}
+static void nkIncubator(int x, int fy) {
+  fillRect(x, fy - 70, x + 60, fy - 1, rgb565(230, 232, 236));
+  fillRect(x + 6, fy - 62, x + 54, fy - 18, rgb565(110, 120, 140));
+  for (int k = 0; k < 3; k++) fillRect(x + 10, fy - 54 + k * 12, x + 50, fy - 52 + k * 12, rgb565(160, 170, 186));
+  fillRect(x + 8, fy - 12, x + 24, fy - 6, rgb565(255, 120, 40));
+}
+static void nkCentrifuge(int x, int fy) {
+  fillRect(x, fy - 34, x + 54, fy - 1, rgb565(226, 230, 236));
+  fillRect(x - 2, fy - 40, x + 56, fy - 34, rgb565(190, 196, 206));
+  fillCircle(x + 27, fy - 37, 12, rgb565(150, 156, 166));
+  fillRect(x + 6, fy - 22, x + 20, fy - 16, rgb565(40, 180, 240));
+}
+static void nkDewar(int x, int fy) {   // a liquid nitrogen tank
+  fillRect(x, fy - 90, x + 40, fy - 1, rgb565(190, 196, 206));
+  fillRect(x + 4, fy - 90, x + 8, fy - 1, rgb565(226, 230, 236));
+  fillRect(x + 12, fy - 102, x + 28, fy - 90, rgb565(150, 156, 166));
+  fillRect(x + 6, fy - 60, x + 34, fy - 48, rgb565(40, 90, 190));
+  drawVectorText("LN2", x + 20, fy - 54, 1.0f, rgb565(255, 255, 255), false);
+}
+static void nkMicroscope(int x, int fy) {
+  fillRect(x, fy - 52, x + 110, fy - 46, rgb565(226, 230, 236));
+  fillRect(x + 4, fy - 46, x + 10, fy - 1, rgb565(150, 156, 166));
+  fillRect(x + 100, fy - 46, x + 106, fy - 1, rgb565(150, 156, 166));
+  int mx = x + 40;   // the microscope
+  fillRect(mx, fy - 60, mx + 26, fy - 52, rgb565(40, 44, 52));
+  fillRect(mx + 16, fy - 96, mx + 22, fy - 60, rgb565(220, 224, 230));
+  int ex[4] = { mx + 6, mx + 14, mx + 24, mx + 16 }, ey[4] = { fy - 110, fy - 116, fy - 92, fy - 86 };
+  fillPolygon(ex, ey, 4, rgb565(40, 44, 52));
+  fillRect(mx + 4, fy - 76, mx + 18, fy - 72, rgb565(200, 204, 210));
+  fillRect(x + 76, fy - 58, x + 96, fy - 52, rgb565(60, 160, 220));   // petri dishes
+}
+static void nkLockers(int x, int fy) {
+  for (int k = 0; k < 2; k++) {
+    int x0 = x + k * 40;
+    fillRect(x0, fy - 150, x0 + 38, fy - 1, rgb565(120, 128, 140));
+    fillRect(x0, fy - 150, x0 + 38, fy - 147, rgb565(160, 168, 180));
+    for (int v = 0; v < 4; v++) fillRect(x0 + 8, fy - 136 + v * 6, x0 + 30, fy - 134 + v * 6, rgb565(70, 76, 88));
+    fillRect(x0 + 30, fy - 90, x0 + 33, fy - 70, rgb565(200, 204, 210));
+    fillRect(x0 + 6, fy - 60, x0 + 18, fy - 54, rgb565(240, 240, 236));   // a name card
+  }
+}
+static void nkFiling(int x, int fy) {
+  fillRect(x, fy - 120, x + 50, fy - 1, rgb565(110, 118, 110));
+  for (int k = 0; k < 4; k++) {
+    int y = fy - 116 + k * 29;
+    fillRect(x + 4, y, x + 46, y + 25, rgb565(128, 136, 128));
+    fillRect(x + 18, y + 10, x + 32, y + 13, rgb565(200, 204, 210));
+    fillRect(x + 20, y + 3, x + 30, y + 7, rgb565(240, 240, 236));
+  }
+}
+static void nkLabBench(int x, int fy) {   // a white bench, a rack of test tubes, a flask
+  fillRect(x, fy - 52, x + 110, fy - 44, rgb565(236, 238, 242));
+  fillRect(x + 4, fy - 44, x + 106, fy - 1, rgb565(200, 206, 214));
+  for (int k = 0; k < 3; k++) fillRect(x + 10 + k * 34, fy - 36, x + 38 + k * 34, fy - 6, rgb565(176, 182, 192));   // drawers
+  fillRect(x + 8, fy - 62, x + 50, fy - 58, rgb565(150, 156, 166));   // the rack
+  for (int k = 0; k < 7; k++) {
+    int tx = x + 11 + k * 6;
+    uint16_t c = (k % 3 == 0) ? rgb565(220, 60, 60) : (k % 3 == 1) ? rgb565(60, 200, 120) : rgb565(240, 200, 60);
+    fillRect(tx, fy - 76, tx + 3, fy - 58, rgb565(220, 230, 236));
+    fillRect(tx, fy - 66, tx + 3, fy - 58, c);
+  }
+  int fx[4] = { x + 70, x + 92, x + 86, x + 76 }, fyy[4] = { fy - 52, fy - 52, fy - 78, fy - 78 };   // a flask
+  fillPolygon(fx, fyy, 4, rgb565(160, 220, 240));
+  fillRect(x + 76, fy - 90, x + 86, fy - 78, rgb565(200, 230, 240));
+  fillRect(x + 72, fy - 64, x + 90, fy - 53, rgb565(80, 200, 140));
+}
+static void nkSilverFridge(int x, int fy) {   // big, double-doored, stainless
+  fillRect(x, fy - 160, x + 90, fy - 1, rgb565(200, 206, 214));
+  for (int k = x + 4; k < x + 88; k += 6) fillRect(k, fy - 156, k, fy - 4, rgb565(186, 192, 202));   // brushed
+  fillRect(x + 44, fy - 160, x + 46, fy - 1, rgb565(130, 136, 146));
+  fillRect(x + 36, fy - 110, x + 40, fy - 60, rgb565(150, 156, 166));
+  fillRect(x + 50, fy - 110, x + 54, fy - 60, rgb565(150, 156, 166));
+  fillRect(x + 8, fy - 150, x + 34, fy - 140, rgb565(30, 40, 50));
+  fillRect(x + 10, fy - 148, x + 22, fy - 142, rgb565(60, 220, 255));
+  nkBio(x + 68, fy - 140, 9);
+}
+static void nkWasteDrums(int x, int fy) {   // yellow waste drums with the trefoil
+  for (int k = 0; k < 3; k++) {
+    int dx = x + k * 30;
+    fillRect(dx, fy - 60, dx + 26, fy - 1, rgb565(220, 180, 40));
+    fillRect(dx, fy - 60, dx + 26, fy - 56, rgb565(170, 140, 30));
+    fillRect(dx, fy - 34, dx + 26, fy - 31, rgb565(170, 140, 30));
+    fillCircle(dx + 13, fy - 44, 6, rgb565(20, 20, 22));
+    fillCircle(dx + 13, fy - 44, 2, rgb565(220, 180, 40));
+  }
+  fillRect(x, fy - 110, x + 86, fy - 96, rgb565(200, 30, 30));
+  drawVectorText("WASTE", x + 43, fy - 103, 1.3f, rgb565(255, 255, 255), true);
+}
+
+// A computer terminal, the old kind (not the server room's): a desk, a deep beige monitor, a tower
+// under it, a chair. broken: its screen cracked and dead.
+static void paintCrtDesk(int x, int fy, bool broken) {
+  uint16_t beige = rgb565(214, 204, 176), beigeD = rgb565(176, 166, 140);
+  fillRect(x, fy - 60, x + 120, fy - 54, rgb565(120, 128, 140));          // the desk
+  fillRect(x + 4, fy - 54, x + 10, fy - 1, rgb565(90, 96, 106));
+  fillRect(x + 110, fy - 54, x + 116, fy - 1, rgb565(90, 96, 106));
+  fillRect(x + 84, fy - 50, x + 106, fy - 1, beige);                       // the tower
+  fillRect(x + 88, fy - 44, x + 102, fy - 40, beigeD);
+  fillRect(x + 88, fy - 34, x + 102, fy - 30, beigeD);
+  fillCircle(x + 95, fy - 14, 2, broken ? rgb565(90, 30, 20) : rgb565(80, 240, 120));
+  fillRect(x + 40, fy - 70, x + 72, fy - 61, beigeD);                      // the monitor's foot
+  fillRect(x + 16, fy - 140, x + 96, fy - 70, beige);                      // its deep case
+  fillRect(x + 16, fy - 140, x + 96, fy - 136, rgb565(232, 224, 200));
+  fillRect(x + 90, fy - 136, x + 96, fy - 72, beigeD);
+  fillRect(x + 24, fy - 130, x + 86, fy - 80, rgb565(30, 34, 30));        // the screen's bezel
+  if (!broken) {
+    fillRect(x + 27, fy - 127, x + 83, fy - 83, rgb565(6, 30, 14));
+    drawVectorText("Q-TERM", x + 55, fy - 119, 1.0f, rgb565(90, 250, 130), false);
+    drawVectorText("LOGIN:", x + 46, fy - 104, 0.9f, rgb565(90, 250, 130), false);
+    fillRect(x + 32, fy - 94, x + 74, fy - 92, rgb565(50, 170, 90));
+  } else {
+    fillRect(x + 27, fy - 127, x + 83, fy - 83, rgb565(14, 16, 18));
+    int cx = x + 50, cy = fy - 108;
+    drawLine(cx, cy, x + 28, fy - 124, rgb565(190, 200, 210), false);    // the crack, out from where it was hit
+    drawLine(cx, cy, x + 80, fy - 120, rgb565(190, 200, 210), false);
+    drawLine(cx, cy, x + 70, fy - 84, rgb565(170, 180, 190), false);
+    drawLine(cx, cy, x + 30, fy - 90, rgb565(170, 180, 190), false);
+    drawLine(cx, cy, x + 58, fy - 126, rgb565(150, 160, 170), false);
+    fillCircle(x + 70, fy - 150, 16, rgb565(150, 150, 150));              // (soot over it)
+    fillCircle(x + 56, fy - 156, 12, rgb565(170, 170, 170));
+  }
+  fillRect(x + 22, fy - 64, x + 80, fy - 60, beige);                        // the keyboard
+  for (int k = 0; k < 8; k++) fillRect(x + 25 + k * 7, fy - 63, x + 29 + k * 7, fy - 62, beigeD);
+  if (broken) {                                                             // the chair, knocked over
+    int cx[4] = { x + 124, x + 160, x + 162, x + 126 }, cy[4] = { fy - 12, fy - 26, fy - 20, fy - 6 };
+    fillPolygon(cx, cy, 4, rgb565(40, 40, 46));
+    fillRect(x + 128, fy - 6, x + 168, fy - 2, rgb565(60, 60, 66));
+  } else {
+    fillRect(x + 124, fy - 34, x + 156, fy - 30, rgb565(40, 40, 46));
+    fillRect(x + 150, fy - 76, x + 156, fy - 30, rgb565(40, 40, 46));
+    fillRect(x + 138, fy - 30, x + 142, fy - 6, rgb565(90, 90, 96));
+    fillRect(x + 126, fy - 6, x + 154, fy - 3, rgb565(90, 90, 96));
+  }
+}
+
+static void paintQuantumAtom(int cx, int cy, int r, uint16_t c) {   // the lab's emblem: a nucleus, three orbits
+  for (int k = 0; k < 3; k++) {
+    float a = k * PI / 3;
+    float px = 0, py = 0;
+    for (int d = 0; d <= 360; d += 10) {
+      float t = d * PI / 180, ex = r * cosf(t), ey = r * 0.36f * sinf(t);
+      float x = cx + ex * cosf(a) - ey * sinf(a), y = cy + ex * sinf(a) + ey * cosf(a);
+      if (d) drawLineF(px, py, x, y, c, 2.0f);
+      px = x; py = y;
+    }
+  }
+  fillCircle(cx, cy, r / 6, c);
+}
+
+static void paintQLabSign(int cx, int y, const char *name, bool broken) {
+  int x0 = cx - 230, x1 = cx + 230;
+  fillRect(x0, y, x1, y + 70, rgb565(14, 20, 34));
+  drawRectOutline(x0, y, x1, y + 70, rgb565(120, 90, 255), 3);
+  paintQuantumAtom(x0 + 44, y + 35, 28, rgb565(150, 120, 255));
+  drawVectorText(name, cx + 26, y + 35, 3.2f, rgb565(210, 200, 255), true);
+  if (broken) {                                                             // cracked, a corner gone
+    drawLine(x1 - 120, y, x1 - 90, y + 30, rgb565(220, 226, 240), false);
+    drawLine(x1 - 90, y + 30, x1 - 104, y + 70, rgb565(220, 226, 240), false);
+    int px[3] = { x1 - 40, x1 + 1, x1 + 1 }, py[3] = { y + 71, y + 30, y + 71 };
+    fillPolygon(px, py, 3, rgb565(226, 230, 234));
+  }
+}
+
+// ---- QUANTUM LAB 1: NUCLEAR MISSION's lab equipment, a glove box, a deck on the right; three scientists
+#define QLAB_DECK_Y 440
+static void paintQuantumLab1() {
+  paintQLabSign(420, 150, "QUANTUM LAB 1", false);
+  nkBio(200, 300, 18);                                                      // a biohazard sign, a shelf of bottles
+  fillRect(240, 310, 400, 314, rgb565(170, 176, 186));
+  for (int k = 0; k < 8; k++) fillRect(246 + k * 19, 288, 259 + k * 19, 310, k & 1 ? rgb565(60, 120, 200) : rgb565(240, 240, 236));
+  paintQuantumAtom(1010, 220, 70, rgb565(170, 150, 240));                   // the emblem over the deck
+  drawVectorText("QUANTUM RESEARCH", 1010, 314, 2.0f, rgb565(60, 72, 96), true);
+  // the deck: its slab and a rail
+  paintDeckSlab(QLAB_DECK_Y, 760, SCREEN_W - 1);
+  for (int x : { 764, 900, 1040, 1180, SCREEN_W - 20 }) fillRect(x, QLAB_DECK_Y - 62, x + 3, QLAB_DECK_Y - 1, rgb565(150, 156, 166));
+  fillRect(764, QLAB_DECK_Y - 64, SCREEN_W - 17, QLAB_DECK_Y - 59, rgb565(222, 226, 232));
+  for (int x = 840; x < SCREEN_W - 40; x += 200) {                          // lights under it
+    fillRect(x, QLAB_DECK_Y + PLAT_T + 2, x + 60, QLAB_DECK_Y + PLAT_T + 6, rgb565(250, 252, 255));
+  }
+  // the floor: a fridge, mouse cages, a bench, the terminal; under the deck the glove box, a microscope, a centrifuge
+  nkLabFridge(150, ROOM_FLOOR_Y);
+  nkCages(240, ROOM_FLOOR_Y, 3);
+  nkLabBench(350, ROOM_FLOOR_Y);
+  paintCrtDesk(480, ROOM_FLOOR_Y, false);
+  nkGloveBox(790, 924, ROOM_FLOOR_Y);
+  nkMicroscope(980, ROOM_FLOOR_Y);
+  nkCentrifuge(1130, ROOM_FLOOR_Y);
+  // up on the deck
+  nkSilverFridge(790, QLAB_DECK_Y);
+  nkIncubator(920, QLAB_DECK_Y);
+  nkIsolation(1010, QLAB_DECK_Y);
+  nkDewar(1120, QLAB_DECK_Y);
+  nkFiling(1190, QLAB_DECK_Y);
+}
+
+// ---- QUANTUM LAB 2: the same kind of lab after an accident - two holes in the floor, things sparking
+#define QLAB2_PIT1 420
+#define QLAB2_PIT2 800
+#define QLAB2_PIT_W 110
+static const int16_t qlab2Spark[4][2] = { { 476, 352 }, { 858, 330 }, { 690, 548 }, { 985, 575 } };   // the cables' ends, the glove box, the terminal
+
+static void paintScorch(int x, int y, int r) {   // soot: a ragged cloud, darker in the middle
+  uint32_t h = (uint32_t)(x * 7919 + y * 104729);
+  for (int k = 0; k < 4; k++) {
+    int v = 206 - k * 26, n = 10 - k;
+    float spread = r * (1.0f - k * 0.22f), rad = r * (0.34f - k * 0.05f);
+    for (int j = 0; j < n; j++) {
+      h = h * 1103515245u + 12345u;
+      float a = (h >> 8) % 628 / 100.0f, d = spread * ((h >> 18) % 100) / 100.0f;
+      fillCircle(x + (int)(cosf(a) * d * 1.3f), y + (int)(sinf(a) * d * 0.8f), (int)(rad * (0.7f + ((h >> 4) % 60) / 100.0f)), rgb565(v, v, v + 2));
+    }
+  }
+}
+
+static void paintBrokenPit(int x0, int x1) {
+  fillRect(x0, ROOM_FLOOR_Y - 1, x1 - 1, PLAY_Y1, rgb565(6, 6, 8));         // the hole
+  for (int i = 0; i < 4; i++)
+    fillRect(x0 + 4 + i * 6, PLAY_Y1 - 6 + i, x1 - 5 - i * 6, PLAY_Y1 - 6 + i, rgb565(70 - i * 12, 20, 14));
+  for (int s = 0; s < 2; s++) {                                             // its broken edges: jagged slab, bent rods sticking out
+    int e = s ? x1 : x0, d = s ? -1 : 1;
+    int jx[6] = { e, e + d * 10, e + d * 4, e + d * 14, e + d * 6, e }, jy[6] = { ROOM_FLOOR_Y, ROOM_FLOOR_Y + 6, ROOM_FLOOR_Y + 14, ROOM_FLOOR_Y + 22, ROOM_FLOOR_Y + 34, ROOM_FLOOR_Y + 40 };
+    fillPolygon(jx, jy, 6, rgb565(120, 124, 132));
+    drawLine(e, ROOM_FLOOR_Y + 8, e + d * 24, ROOM_FLOOR_Y + 2, rgb565(150, 90, 50), true);
+    drawLine(e, ROOM_FLOOR_Y + 24, e + d * 20, ROOM_FLOOR_Y + 34, rgb565(150, 90, 50), true);
+    for (int k = 0; k < 4; k++) {                                           // rubble at the edge
+      int rx = e - d * (8 + k * 13), ry = ROOM_FLOOR_Y - 4 - (k & 1) * 3;
+      int px[4] = { rx - 5, rx + 4, rx + 6, rx - 4 }, py[4] = { ry + 4, ry - 3, ry + 4, ry + 5 };
+      fillPolygon(px, py, 4, rgb565(140, 144, 150));
+    }
+  }
+}
+
+static void paintPitTape(int x0, int x1) {   // (behind everything: warning tape strung across a hole on two posts)
+  for (int x = x0 - 30; x < x1 + 30; x += 24) {
+    fillRect(x, ROOM_FLOOR_Y - 92, x + 11, ROOM_FLOOR_Y - 86, rgb565(240, 200, 30));
+    fillRect(x + 12, ROOM_FLOOR_Y - 92, x + 23, ROOM_FLOOR_Y - 86, rgb565(20, 20, 22));
+  }
+  fillRect(x0 - 34, ROOM_FLOOR_Y - 100, x0 - 30, ROOM_FLOOR_Y - 1, rgb565(230, 120, 30));   // its two posts
+  fillRect(x1 + 30, ROOM_FLOOR_Y - 100, x1 + 34, ROOM_FLOOR_Y - 1, rgb565(230, 120, 30));
+}
+
+static void paintQuantumLab2() {
+  // the wall: cracks, scorch marks
+  paintScorch(560, 420, 44);
+  paintScorch(1010, 470, 32);
+  paintScorch(330, 250, 40);
+  for (int c = 0; c < 4; c++) {
+    static const int16_t cr[4][2] = { { 340, 200 }, { 700, 260 }, { 1100, 220 }, { 870, 420 } };
+    int x = cr[c][0], y = cr[c][1];
+    for (int k = 0; k < 5; k++) {
+      int nx = x + ((k * 37 + c * 11) % 30) - 12, ny = y + 22 + (k * 13) % 14;
+      drawLine(x, y, nx, ny, rgb565(150, 156, 166), false);
+      x = nx; y = ny;
+    }
+  }
+  paintQLabSign(640, 150, "QUANTUM LAB 2", true);
+  // the sign: DANGER, UNSAFE FLOOR
+  fillRect(1010, 290, 1210, 350, rgb565(240, 200, 30));
+  drawRectOutline(1010, 290, 1210, 350, rgb565(20, 20, 22), 3);
+  drawVectorText("DANGER", 1110, 308, 2.4f, rgb565(20, 20, 22), true);
+  drawVectorText("UNSAFE FLOOR", 1110, 334, 1.6f, rgb565(20, 20, 22), true);
+  // a ceiling panel hanging down, cables dangling over the holes
+  {
+    int px[4] = { 130, 270, 258, 122 }, py[4] = { CEIL_Y + 60, CEIL_Y + 60, CEIL_Y + 196, CEIL_Y + 92 };
+    fillPolygon(px, py, 4, rgb565(170, 176, 186));
+    drawLine(130, CEIL_Y + 60, 122, CEIL_Y + 92, rgb565(110, 116, 126), true);
+    drawLine(270, CEIL_Y + 60, 258, CEIL_Y + 196, rgb565(110, 116, 126), true);
+    fillRect(130, CEIL_Y + 58, 270, CEIL_Y + 62, rgb565(30, 30, 34));      // (the gap it left)
+  }
+  for (int c = 0; c < 2; c++) {
+    int x0 = c ? 840 : 500, ex = qlab2Spark[c][0], ey = qlab2Spark[c][1];
+    float px = (float)x0, py = CEIL_Y + 60;
+    for (int k = 1; k <= 8; k++) {                                          // a cable sagging down to its loose end
+      float t = k / 8.0f, x = x0 + (ex - x0) * t + 14 * sinf(t * PI), y = CEIL_Y + 60 + (ey - CEIL_Y - 60) * t;
+      drawLineF(px, py, x, y, c ? rgb565(30, 30, 34) : rgb565(160, 40, 30), 3.0f);
+      px = x; py = y;
+    }
+    drawLine(ex, ey, ex - 5, ey + 7, rgb565(200, 130, 60), false);          // its copper ends
+    drawLine(ex, ey, ex + 4, ey + 8, rgb565(200, 130, 60), false);
+  }
+  // the light hanging off one wire
+  drawLine(1160, CEIL_Y + 60, 1146, CEIL_Y + 150, rgb565(40, 40, 44), false);
+  {
+    int lx[4] = { 1114, 1178, 1182, 1118 }, ly[4] = { CEIL_Y + 150, CEIL_Y + 140, CEIL_Y + 150, CEIL_Y + 160 };
+    fillPolygon(lx, ly, 4, rgb565(200, 206, 214));
+  }
+  // tape round the holes (the holes themselves go in after the floor)
+  paintPitTape(QLAB2_PIT1, QLAB2_PIT1 + QLAB2_PIT_W);
+  paintPitTape(QLAB2_PIT2, QLAB2_PIT2 + QLAB2_PIT_W);
+  // what's left: lockers, a containment box, drums (one rolled over), the glove box (its glass smashed),
+  // a nitrogen tank, the terminal, a bench
+  nkLockers(140, ROOM_FLOOR_Y);
+  nkContainment(240, ROOM_FLOOR_Y);
+  nkWasteDrums(326, ROOM_FLOOR_Y);
+  nkGloveBox(560, 694, ROOM_FLOOR_Y);
+  {
+    int gx0 = 568, gy0 = ROOM_FLOOR_Y - 140, gx1 = 686, gy1 = ROOM_FLOOR_Y - 70;   // the window, smashed
+    fillRect(gx0, gy0, gx1, gy1, rgb565(40, 50, 60));
+    int hx = 640, hy = ROOM_FLOOR_Y - 104;
+    for (int k = 0; k < 7; k++) {
+      float a = k * 0.9f + 0.3f;
+      drawLine(hx, hy, hx + (int)(60 * cosf(a)), hy + (int)(34 * sinf(a)), rgb565(200, 220, 230), false);
+    }
+    for (int k = 0; k < 6; k++) {                                            // glass on the floor
+      int sx = 560 + k * 23, sy = ROOM_FLOOR_Y - 3;
+      int px[3] = { sx, sx + 7, sx + 3 }, py[3] = { sy, sy, sy - 4 };
+      fillPolygon(px, py, 3, rgb565(190, 220, 236));
+    }
+    paintScorch(690, ROOM_FLOOR_Y - 150, 22);
+  }
+  nkDewar(735, ROOM_FLOOR_Y);
+  paintCrtDesk(930, ROOM_FLOOR_Y, true);
+  nkLabBench(1110, ROOM_FLOOR_Y);
+  {
+    int dx = 200, dy = ROOM_FLOOR_Y;                                         // a drum on its side, rolled out
+    fillRect(dx - 30, dy - 26, dx + 30, dy - 1, rgb565(220, 180, 40));
+    fillRect(dx - 30, dy - 26, dx - 26, dy - 1, rgb565(170, 140, 30));
+    fillRect(dx - 2, dy - 26, dx + 1, dy - 1, rgb565(170, 140, 30));
+    fillCircle(dx + 30, dy - 13, 12, rgb565(200, 160, 36));
+    fillCircle(dx + 30, dy - 13, 5, rgb565(20, 20, 22));
+  }
+}
+
 // A stage 2 room: white walls, the duct and stripe along the top; then what is in it (the kitchen; the rest empty for now)
 static void paintLabRoom() {
   int idx = curRoom;
@@ -3802,6 +4229,10 @@ static void paintLabRoom() {
     paintSoldierLab();
   } else if (s2Kind[idx] == LK_SERVER) {
     paintServerRoom();
+  } else if (s2Kind[idx] == LK_QLAB1) {
+    paintQuantumLab1();
+  } else if (s2Kind[idx] == LK_QLAB2) {
+    paintQuantumLab2();
   } else if (s2Kind[idx] == LK_KITCHEN) {
     paintKitchen();
   } else if (s2Kind[idx] == LK_STORE) {
@@ -3836,6 +4267,8 @@ static void paintLabRoom() {
     }
   }
   labFloor(0, SCREEN_W - 1, ROOM_FLOOR_Y, PLAY_Y1);
+  if (s2Kind[idx] == LK_QLAB2)                 // (the holes in its floor)
+    for (int i = 0; i < pitCount; i++) paintBrokenPit(pits[i][0], pits[i][1]);
   paintLabSide(false, doorYL, true);
   paintLabSide(true, doorYR, !rooms[idx].noRightDoor);
 }
@@ -4078,7 +4511,35 @@ static void personWalk(AgentPose &p, float t) {
 // The live parts of the lab rooms behind the people: the monitors' traces, the CCTV pictures, the patients
 // Lift B's rooms, moving: bubbles in the clone tanks, the vitals traces, the fans and the big screen's scan
 static void drawLiftBRoomAnim(int k) {
-  if (k == LK_CLONE) {
+  if (k == LK_QLAB1) {   // the glove box lit inside
+    blendRect(798, ROOM_FLOOR_Y - 140, 916, ROOM_FLOOR_Y - 70, 150, 210, 240, 0.10f + 0.05f * sinf(clockT * 2));
+  } else if (k == LK_QLAB2) {   // sparks: the loose cables, the glove box, the terminal; the lights flicker
+    static int lastBurst[4] = { -1, -1, -1, -1 };
+    for (int s = 0; s < 4; s++) {
+      float rate = 0.45f + s * 0.13f, u = clockT * rate + s * 0.37f;
+      int burst = (int)u;
+      float in = (u - burst) / rate;                       // seconds into this burst's cycle
+      if (in > 0.45f) continue;
+      if (burst != lastBurst[s]) {
+        lastBurst[s] = burst;
+        if (s < 2 || ((burst + s) % 3) == 0) sfxPlay(SFX_ZAP);
+      }
+      int sx = qlab2Spark[s][0], sy = qlab2Spark[s][1];
+      uint32_t h = (uint32_t)(burst * 2654435761u + s * 40503u + (int)(clockT * 24) * 97u);
+      glowDisc(sx, sy, 34, 255, 230, 140, 0.30f * (1 - in / 0.45f));
+      for (int j = 0; j < 7; j++) {
+        h = h * 1103515245u + 12345u;
+        float a = (h >> 8) % 628 / 100.0f, len = 10 + (h >> 20) % 26;
+        if (s < 2) a = a * 0.5f + 0.8f;                    // (a cable's end: mostly down)
+        int ex = sx + (int)(cosf(a) * len), ey = sy + (int)(sinf(a) * len);
+        drawLine(sx, sy, ex, ey, (j & 1) ? rgb565(255, 250, 220) : rgb565(255, 200, 60), false);
+        fillCircle(ex, ey, 1, rgb565(255, 255, 240));
+      }
+    }
+    float f = fmodf(clockT, 5.3f);                         // the lights: a stutter every few seconds
+    if ((f > 2.0f && f < 2.08f) || (f > 2.16f && f < 2.3f) || (f > 4.6f && f < 4.66f))
+      blendRect(0, CEIL_Y, SCREEN_W - 1, ROOM_FLOOR_Y - 1, 0, 0, 10, 0.35f);
+  } else if (k == LK_CLONE) {
     for (int t = 0; t < CLONE_TANKS; t++) {
       int cx = cloneTankX[t];
       float top = CLONE_DECK_Y + (270 - 400) * CLONE_TANK_S + 6, bottom = CLONE_DECK_Y + (384 - 400) * CLONE_TANK_S - 4;
@@ -4130,7 +4591,7 @@ static void drawLiftBRoomAnim(int k) {
 
 static void drawLabRoomBack() {
   int k = s2Kind[curRoom];
-  if (k == LK_CLONE || k == LK_SOLDIER || k == LK_SERVER) {
+  if (k == LK_CLONE || k == LK_SOLDIER || k == LK_SERVER || k == LK_QLAB1 || k == LK_QLAB2) {
     drawLiftBRoomAnim(k);
     return;
   }
@@ -4520,8 +4981,14 @@ static const WideRoom adminT = { "ADMIN", 2, { { 0, SCREEN_W, ROOM_FLOOR_Y }, { 
                                  1, { { 1090, 1170, { ADMIN_DECK_Y, ROOM_FLOOR_Y }, 2 } }, 0, {}, 0, {}, 880, 120 };
 static const WideRoom cloneT = { "CLONE LAB", 2, { { 0, SCREEN_W, ROOM_FLOOR_Y }, { 220, SCREEN_W, CLONE_DECK_Y } },
                                  1, { { 140, 220, { CLONE_DECK_Y, ROOM_FLOOR_Y }, 2 } }, 0, {}, 0, {}, 640, 0 };
+static const WideRoom qlab1T = { "QUANTUM LAB 1", 2, { { 0, SCREEN_W, ROOM_FLOOR_Y }, { 760, SCREEN_W, 440 } },
+                                 1, { { 680, 760, { 440, ROOM_FLOOR_Y }, 2 } }, 0, {}, 0, {}, 640, 0 };
+static const WideRoom qlab2T = { "QUANTUM LAB 2", 3, { { 0, 420, ROOM_FLOOR_Y }, { 530, 800, ROOM_FLOOR_Y }, { 910, SCREEN_W, ROOM_FLOOR_Y } },
+                                 0, {}, 2, { { 420, 530 }, { 800, 910 } }, 0, {}, 640, 0 };
 static const WideRoom &roomTemplate(int idx) {
   if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_CLONE) return cloneT;
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_QLAB1) return qlab1T;
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_QLAB2) return qlab2T;
   if (idx == CONTROL_ROOM) return controlRoomT;
   if (idx == SUB_ROOM || idx == ARRIVAL_ROOM) return subRoomT;
   if (stage == 2 && idx < S2_ROOMS) return s2Kind[idx] == LK_KITCHEN ? kitchenT : s2Kind[idx] == LK_CLEANING ? cleaningT : s2Kind[idx] == LK_MEDICAL ? medicalT :
@@ -4704,6 +5171,12 @@ static void enterRoom(int idx, bool fromLeft) {
     addNpc(PK_SECURITY, ROOM_FLOOR_Y, 300, 1160, 560);
     bool others = !npcs[1].dead || !npcs[2].dead;
     if (npcs[0].dead && others) secAlertT = SEC_ALERT_SECONDS;   // (back after knifing the door guard: they're waiting for him)
+  }
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_QLAB1) {     // three scientists: at the glove box, walking the floor, on the deck
+    addNpc(PK_SCIENTIST, ROOM_FLOOR_Y, 857, 857, 0);
+    if (!npcs[npcCount - 1].dead) npcs[npcCount - 1].x = 857;
+    addNpc(PK_SCIENTIST, ROOM_FLOOR_Y, 200, 1180, 380);
+    addNpc(PK_SCIENTIST, 440, 800, 1220, 120);
   }
   if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_ADMIN) {     // one at a desk, one walking
     addNpc(PK_OFFICE, ROOM_FLOOR_Y, ADMIN_DESK_X, ADMIN_DESK_X, 0);
@@ -6775,6 +7248,15 @@ static void updateAgent(float dt) {
               foundCard(-3);
               break;
             }
+            if (first && s2Hold[curRoom][i] == S2H_PASS) {                    // a QUANTUM PASSWORD
+              s2PassFound++;
+              sfxPlay(SFX_FOUND);
+              sfxPlay(SFX_FANFARE);
+              addScore(PASS_SCORE, px, py - 56);
+              passShowT = DOC_SHOW;
+              docShowT = 0;
+              break;
+            }
             if (first && s2Hold[curRoom][i] == S2H_DOC) {                     // TOP SECRET DOCUMENTS
               s2DocsFound++;
               docValue = S2_DOC_VALUE;
@@ -7789,6 +8271,24 @@ static void drawDocPanel() {
   drawVectorText(b, SCREEN_W / 2, y1 - 26, 2.4f, rgb565(200, 206, 220), false);
 }
 
+// QUANTUM PASSWORD FOUND: the slip of paper with it on, how many found
+static void drawPassPanel() {
+  int x0 = 410, y0 = 120, x1 = 870, y1 = 340;
+  fillRect(x0, y0, x1, y1, rgb565(10, 12, 20));
+  drawRectOutline(x0, y0, x1, y1, rgb565(170, 140, 255), 3);
+  drawVectorText("QUANTUM PASSWORD FOUND", SCREEN_W / 2, y0 + 30, 3.0f, rgb565(190, 170, 255), true);
+  int k = s2PassFound > 0 ? s2PassFound - 1 : 0;
+  fillRect(SCREEN_W / 2 - 150, y0 + 60, SCREEN_W / 2 + 150, y0 + 130, rgb565(240, 236, 220));   // the slip
+  fillRect(SCREEN_W / 2 - 150, y0 + 60, SCREEN_W / 2 + 150, y0 + 66, rgb565(200, 60, 60));
+  drawVectorText("ACCESS CODE", SCREEN_W / 2, y0 + 80, 1.4f, rgb565(90, 90, 100), false);
+  drawVectorText(s2PassCode[k], SCREEN_W / 2, y0 + 108, 3.6f, rgb565(20, 20, 40), true);
+  char b[48];
+  snprintf(b, sizeof(b), "+%d POINTS", PASS_SCORE);
+  drawVectorText(b, SCREEN_W / 2, y1 - 62, 3.0f, rgb565(100, 240, 140), true);
+  snprintf(b, sizeof(b), "%d OF %d FOUND", s2PassFound, S2_PASSWORDS);
+  drawVectorText(b, SCREEN_W / 2, y1 - 26, 2.4f, rgb565(200, 206, 220), false);
+}
+
 // QUANTUM DRIVE FOUND, as NUCLEAR MISSION's panel: a box with the find in it
 static void drawItemPanel() {
   int x0 = 410, y0 = 120, x1 = 870, y1 = 316;
@@ -8175,18 +8675,20 @@ static void drawPanel() {
     for (int s2 = 0; s2 < S2_LIFTS; s2++)
       for (int f = 0; f < S2_LEVELS; f++) aid += s2Stops(s2, f) && !s2Aid[s2][f];
     snprintf(b, sizeof(b), "%d/%d", seen, S2_ROOMS);
-    line("ROOMS", b, PANEL_Y + 38, rgb565(240, 240, 245));
+    line("ROOMS", b, PANEL_Y + 32, rgb565(240, 240, 245));
     if (s2AllAccess) snprintf(b, sizeof(b), "ALL");
     else if (s2Card > 0) snprintf(b, sizeof(b), "LEVEL %d", s2Card);
     else snprintf(b, sizeof(b), "NONE");
-    line("ACCESS CARD", b, PANEL_Y + 68, rgb565(90, 220, 255));
-    line("DISGUISE", s2Disguised ? "OVERALLS" : "NONE", PANEL_Y + 98, rgb565(255, 220, 80));
+    line("ACCESS CARD", b, PANEL_Y + 58, rgb565(90, 220, 255));
+    line("DISGUISE", s2Disguised ? "OVERALLS" : "NONE", PANEL_Y + 84, rgb565(255, 220, 80));
     snprintf(b, sizeof(b), "%d", aid);
-    line("FIRST AID LEFT", b, PANEL_Y + 128, rgb565(120, 230, 140));
+    line("FIRST AID LEFT", b, PANEL_Y + 110, rgb565(120, 230, 140));
     snprintf(b, sizeof(b), "%s%s", hasGun ? "PISTOL" : hasKnife ? "KNIFE" : hasVest ? "" : "NONE", hasVest ? ((hasGun || hasKnife) ? " VEST" : "VEST") : "");
-    line("GEAR", b, PANEL_Y + 158, rgb565(240, 240, 245));
+    line("GEAR", b, PANEL_Y + 136, rgb565(240, 240, 245));
+    snprintf(b, sizeof(b), "%d/%d", s2PassFound, S2_PASSWORDS);
+    line("PASSWORDS", b, PANEL_Y + 162, rgb565(190, 170, 255));
     snprintf(b, sizeof(b), "V%s  FPS %d", GAME_VERSION, (int)lroundf(fpsShown));
-    drawVectorText(b, (lx + SCREEN_W - 44) / 2, PANEL_Y + 184, 1.5f, rgb565(150, 160, 186), false);
+    drawVectorText(b, (lx + SCREEN_W - 44) / 2, PANEL_Y + 186, 1.5f, rgb565(150, 160, 186), false);
     return;
   }
   snprintf(b, sizeof(b), "%d/%d", seen, ROOM_COUNT);
@@ -9058,6 +9560,7 @@ static void newGame() {
   itemsFound = 0;
   docsFound = 0;
   docShowT = 0;
+  passShowT = 0;
   health = HEALTH_MAX;
   hurtFlashT = 0;
   timeLeft = GAME_SECONDS;
@@ -9251,6 +9754,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (nothingShowT > 0) nothingShowT -= dt;
     if (itemShowT > 0) itemShowT -= dt;
     if (docShowT > 0) docShowT -= dt;
+    if (passShowT > 0) passShowT -= dt;
     if (cardShowT > 0) cardShowT -= dt;
     if (shotFlashT > 0) shotFlashT -= dt;
     if (gunFlashT > 0) gunFlashT -= dt;
@@ -9365,6 +9869,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mode == MODE_ROOM && !termOn) drawScorePops();
   if (itemShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawItemPanel();
   if (docShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawDocPanel();
+  if (passShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawPassPanel();
   if (stage == 2 && mode == MODE_ROOM && npcCount > 0 && !mapOn && gameOver == END_NONE) drawSuspicionMeter();
   if (!mapOn) drawFlyers();
   if (cardShowT > 0 && !mapOn && gameOver == END_NONE) drawCardPanel();

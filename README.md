@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 036: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 037: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -416,9 +416,32 @@ with variety - tall cupboards, grey double-door cabinets, lockers, racks of
 boxes, tins, sacks and jars, crates, a shrink-wrapped pallet, a wooden
 cupboard, stacks of boxes. Nobody in it: 16 things to search.
 
-**Lift B's rooms** (access level 2): three of its five rooms, at random levels,
-are the clone lab, the super soldier lab and the server room (the other two are
-still empty labs). Everything in them can be searched; nothing is in them yet.
+**Lift B's rooms** (access level 2): its five rooms, at random levels, are the
+clone lab, the super soldier lab, the server room, QUANTUM LAB 1 and QUANTUM
+LAB 2. Everything in them can be searched.
+
+**4 QUANTUM PASSWORDS** (500 points each) are hidden in lift A's and lift B's
+rooms, at most one a room (never in the knife's, the pistol's or the level 2
+card's place). Each one shows the QUANTUM PASSWORD FOUND panel with its access
+code (e.g. QX7-R41K) and n OF 4 FOUND; the panel's PASSWORDS line counts them.
+They will be what gets you into the server room's four terminals (not yet).
+
+**Quantum Lab 1**: NUCLEAR MISSION's lab equipment, two levels (a lift pad in the
+middle up to a deck on the right). On the floor: a fridge of samples, mouse
+cages, a bench of test tubes, an old computer terminal (a beige monitor,
+Q-TERM LOGIN), and under the deck the glove box (lit inside), a microscope and
+a centrifuge. On the deck: the silver fridge, an incubator, an isolation box,
+a nitrogen tank and a filing cabinet. **Three scientists**: one working at the
+glove box, one walking the floor, one walking the deck - they get suspicious
+like everyone else. No hazards: 12 things to search.
+
+**Quantum Lab 2**: the same kind of lab after an accident. **Two holes in the
+floor** (taped off, jump them: fall in and it's FELL DOWN A PIT!, 30 seconds
+and health), a ceiling panel hanging down, two loose cables **sparking** (with a
+crackle), the glove box's window smashed and sparking, the terminal's screen
+cracked and sparking, soot and cracks on the walls, a DANGER - UNSAFE FLOOR
+sign, a light hanging off one wire, the lights stuttering now and then. Nobody
+in it, no hazards: 7 things to search.
 
 **The clone lab** (EXPERIMENTAL CLONE LAB): NUCLEAR MISSION's, wider. Two
 levels, a lift pad by the door up to the deck. Up on the deck are **five
