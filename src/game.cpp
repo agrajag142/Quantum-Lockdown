@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "040"
+#define GAME_VERSION      "041"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -232,7 +232,7 @@ static bool subUnlocked = false;
 // launched ones landed: the game is over.
 #define NUKE_SITES 5
 static const char *const siteName[NUKE_SITES] = { "NORTH ATLANTIC", "EASTERN EUROPE", "PACIFIC", "CENTRAL ASIA", "SOUTHERN REGION" };
-static const float HACK_MINUTES[NUKE_SITES] = { 10, 6, 5, 4, 3 };
+static float hackSecs[NUKE_SITES];          // how long each hack takes, picked each game: the first 7-10 minutes, then 2-4 each
 static const float LAUNCH_MINUTES[NUKE_SITES] = { 5, 4, 3, 2, 1 };
 #define LAND_MIN_MINUTES 10
 #define LAND_MAX_MINUTES 15
@@ -475,6 +475,7 @@ static void layOut(uint32_t seed) {
   sitesHacked = sitesLaunched = 0;
   hackT = launchT = 0;
   memset(prevented, 0, sizeof(prevented));
+  for (int i = 0; i < NUKE_SITES; i++) hackSecs[i] = i == 0 ? 7 * 60.0f + rnd(3 * 60 + 1) : 2 * 60.0f + rnd(2 * 60 + 1);
   for (int i = 0; i < FLYERS; i++) flyers[i].on = false;
   launchOn = false;
   launchQueued = 0;
@@ -6068,7 +6069,7 @@ static void updateNukes(float dt) {
   char b[64];
   if (!lockdown && sitesHacked < NUKE_SITES) {
     hackT += dt;
-    if (hackT >= HACK_MINUTES[sitesHacked] * 60) {
+    if (hackT >= hackSecs[sitesHacked]) {
       hackT = 0;
       snprintf(b, sizeof(b), "%s HACKED", siteName[sitesHacked]);
       flyerAdd(b);
@@ -6128,7 +6129,7 @@ static void drawNukePanel(int x0, int y0, int x1, int y1) {
     float fill[3] = { hacked ? 1.0f : 0.0f, launched ? 1.0f : 0.0f, landed ? 1.0f : 0.0f };
     if (launched && !landed && landTotal[i] > 0) fill[2] = clampv(1.0f - landLeft[i] / landTotal[i], 0.0f, 1.0f);
     else if (hacked && !launched && !stopped && i == sitesLaunched && (sitesHacked == NUKE_SITES || lockdown)) fill[1] = clampv(launchT / (LAUNCH_MINUTES[i] * 60), 0.0f, 1.0f);
-    else if (!hacked && !lockdown && i == sitesHacked) fill[0] = clampv(hackT / (HACK_MINUTES[i] * 60), 0.0f, 1.0f);
+    else if (!hacked && !lockdown && i == sitesHacked) fill[0] = clampv(hackT / hackSecs[i], 0.0f, 1.0f);
     (void)blink;
     for (int c = 0; c < 3; c++) {
       int bx = bx0 + c * (bw + gap);

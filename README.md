@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 040: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 041: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -175,8 +175,9 @@ stages; the clock is play time, so it stops when the game is paused, on the
 map, in the settings and during the cut scenes). Each goes through three
 stages:
 
-1. **HACKED**, one after another: the first after 10 minutes, the next 6
-   minutes later (16 in all), then 5, 4 and 3 more (21, 25, 28 minutes).
+1. **HACKED**, one after another, each time picked at random each game: the
+   first after 7 to 10 minutes, then each of the other four 2 to 4 minutes
+   after the one before (all five hacked after 15 to 26 minutes).
 2. **LAUNCHED**: only once all five are hacked, or QUANTUM LOCKDOWN is on.
    The hacked sites launch in turn: 5 minutes, then 4, 3, 2, 1 more.
 3. **LANDED**: 10 to 15 minutes (at random) after its launch.
