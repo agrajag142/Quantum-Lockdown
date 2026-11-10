@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "039"
+#define GAME_VERSION      "040"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -325,6 +325,7 @@ enum S2Hold : uint8_t { S2H_NONE, S2H_VEST, S2H_DOC, S2H_PASS };
 #define S2_PASSWORDS 4                       // QUANTUM PASSWORDS: in lift A's and lift B's rooms (for the server room's terminals, later)
 #define PASS_SCORE 500
 static int s2PassFound = 0;
+static bool s2RoomShot[S2_ROOMS];            // (a room someone was shot in: when all its people are dead a drone comes)
 static bool nodeUsed[4];                     // the server room's terminals: used (each takes one password, once)
 static int passUsed = 0, curNode = 0, snSite = -1;
 static char s2PassCode[S2_PASSWORDS][12];    // (what each one says)
@@ -623,6 +624,7 @@ static void layOutStage2() {
   passShowT = 0;
   passUsed = 0;
   memset(nodeUsed, 0, sizeof(nodeUsed));
+  memset(s2RoomShot, 0, sizeof(s2RoomShot));
   bool passRoom[S2_ROOMS] = {};
   for (int k = 0; k < 1 + S2_DOCS + S2_PASSWORDS; k++)
     for (int tries = 0; tries < 500; tries++) {
@@ -736,6 +738,21 @@ static bool drScan = true;             // scanning with its beam (else flying to
 static float drScanAng = 0, drScanDir = 1;   // the beam (degrees from straight down, + to the right), turning right round
 static float drTX = 0, drTY = 0;       // where it is flying to
 static bool drAlerted = false;         // (it has found him once since he came in)
+static float drWakeT = 0;              // a drone just called in (gunfire, everyone dead): it hovers this long before it scans
+#define DRONE_WAKE_SECONDS 5.0f
+// The clone lab's hot gas: a duct under the deck, 5 vents; they blast down 2 at a time in a 3-step sequence
+#define GAS_VENTS 5
+#define GAS_WARN 0.9f                  // (a vent's lamp flashes this long first)
+#define GAS_BLAST 1.3f
+#define GAS_GAP 0.5f
+#define GAS_PAUSE 1.4f                 // (after the third step, before it starts again)
+#define GAS_HURT 26                    // (a full bar to under half; a second hit and he's done)
+static const int16_t gasX[GAS_VENTS] = { 309, 529, 749, 969, 1189 };
+static const uint8_t gasSeq[3][2] = { { 0, 2 }, { 1, 3 }, { 2, 4 } };
+static float gasT = 0;
+static int gasHitStep = -1;            // (one hit a blast)
+#define GAS_STEP (GAS_WARN + GAS_BLAST + GAS_GAP)
+#define GAS_CYCLE (3 * GAS_STEP + GAS_PAUSE)
 static void endGame(int why);
 #define MAX_BULLETS 8
 struct Bullet { float x, y, vx, vy, life; };
@@ -868,7 +885,8 @@ void micromod4_get_audio(short *output_buffer, long count);
 enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND,
                      SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN, SFX_SCREAM, SFX_ALARM, SFX_SHOT, SFX_HIT,
                      SFX_POWERUP, SFX_CLICK, SFX_DENIED, SFX_KEY, SFX_SHUTDOWN, SFX_WARN, SFX_LOOPPOWER, SFX_DOORS, SFX_TICK24,
-                     SFX_KLAXON, SFX_IGNITE, SFX_BIGROAR, SFX_ROAR, SFX_TYPE };   // (the last five: NUCLEAR MISSION's launch)
+                     SFX_KLAXON, SFX_IGNITE, SFX_BIGROAR, SFX_ROAR, SFX_TYPE,   // (those five: NUCLEAR MISSION's launch)
+                     SFX_HISS };   // (the clone lab's hot gas)
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -1050,6 +1068,10 @@ static void startEffect(uint8_t sfx) {
       startVoice(WAVE_SQUARE, 100, 100, 0, 400, 0.10f);
       startVoice(WAVE_SQUARE, 150, 150, 0, 400, 0.06f);
       startVoice(WAVE_NOISE, 4000, 4000, 0, 120, 0.06f);
+      break;
+    case SFX_HISS:                             // hot gas blasting out of a vent
+      startVoice(WAVE_NOISE, 7000, 3000, 0, 1100, 0.16f);
+      startVoice(WAVE_NOISE, 900, 500, 0, 1100, 0.10f);
       break;
     case SFX_ZAP:                              // ...the crackle while it is live
       startVoice(WAVE_NOISE, 6000, 2500, 0, 140, 0.22f);
@@ -3375,15 +3397,28 @@ static void paintCloneLab() {
   paintDeckSlab(CLONE_DECK_Y);
   for (int x : { 224, 425, 615, 805, 995, 1185, SCREEN_W - 20 }) fillRect(x, CLONE_DECK_Y - 62, x + 3, CLONE_DECK_Y - 1, rgb565(150, 156, 166));   // a rail in front (posts between the tanks, a top rail)
   fillRect(224, CLONE_DECK_Y - 64, SCREEN_W - 17, CLONE_DECK_Y - 59, rgb565(222, 226, 232));
-  for (int x = 224; x < SCREEN_W - 16; x += 20) {
-    int xs[4] = { x, x + 10, x + 14, x + 4 }, ys[4] = { CLONE_DECK_Y + PLAT_T + 5, CLONE_DECK_Y + PLAT_T + 5, CLONE_DECK_Y + PLAT_T + 12, CLONE_DECK_Y + PLAT_T + 12 };
-    fillRect(x, CLONE_DECK_Y + PLAT_T + 5, x + 19, CLONE_DECK_Y + PLAT_T + 11, rgb565(20, 20, 22));
-    fillPolygon(xs, ys, 4, rgb565(236, 196, 40));
-  }
-  // under the deck: red lamps along the wall
-  for (int x = 300; x < SCREEN_W - 60; x += 220) {
-    fillRect(x, CLONE_DECK_Y + 34, x + 18, CLONE_DECK_Y + 44, rgb565(90, 20, 20));
-    fillRect(x + 2, CLONE_DECK_Y + 35, x + 16, CLONE_DECK_Y + 42, rgb565(240, 40, 40));
+  // under the deck: the hot gas duct, a nozzle over each vent (and its lamp, lit by drawGas)
+  {
+    int y0 = CLONE_DECK_Y + PLAT_T + 2, y1 = y0 + 24;
+    static const uint8_t shade[24] = { 120, 150, 176, 196, 210, 218, 222, 220, 214, 206, 196, 186, 176, 166, 156, 146, 136, 126, 116, 106, 96, 86, 76, 66 };
+    for (int y = y0; y < y1; y++) { int v = shade[y - y0]; fillRect(224, y, SCREEN_W - 17, y, rgb565(v - 10, v - 4, v + 4)); }
+    for (int x = 270; x < SCREEN_W - 30; x += 110) {                   // its flanges, bolted
+      fillRect(x, y0 - 3, x + 8, y1 + 2, rgb565(130, 136, 146));
+      fillRect(x, y0 - 3, x + 2, y1 + 2, rgb565(200, 206, 214));
+      fillCircle(x + 4, y0 + 2, 2, rgb565(70, 74, 82));
+      fillCircle(x + 4, y1 - 3, 2, rgb565(70, 74, 82));
+    }
+    fillRect(224, y0, 232, y1, rgb565(90, 96, 106));                    // (its end cap)
+    drawVectorText("HOT GAS", 640, y0 + 12, 1.2f, rgb565(200, 60, 40), true);
+    for (int v = 0; v < GAS_VENTS; v++) {                                // the nozzles
+      int x = gasX[v];
+      int px[4] = { x - 16, x + 16, x + 10, x - 10 }, py[4] = { y1, y1, y1 + 18, y1 + 18 };
+      fillPolygon(px, py, 4, rgb565(110, 116, 126));
+      fillRect(x - 10, y1 + 16, x + 10, y1 + 18, rgb565(40, 40, 44));
+      fillRect(x + 14, y1, x + 28, y1 + 10, rgb565(70, 74, 82));          // (the lamp's housing)
+      for (int y = y1 + 22; y < ROOM_FLOOR_Y - 2; y += 18)                // scorched streaks down the wall
+        fillRect(x - 3, y, x + 3, y + 8, rgb565(214, 210, 200));
+    }
   }
   // the bench: a test tube rack (NUCLEAR MISSION's, a fifth bigger)
   nmAt(1.2f, 98, 560, 340, ROOM_FLOOR_Y);
@@ -5082,6 +5117,9 @@ static void resetHazardsForEntry(bool fromLeft) {
     cams[k].movingT = 0;
     cams[k].view = 0;
   }
+  drWakeT = 0;
+  gasT = -1.5f;                        // (the clone lab's gas: a moment before the first step)
+  gasHitStep = -1;
   drX = fromLeft ? SCREEN_W - 180.0f : 180.0f;
   drY = CEIL_Y + 90.0f;
   drVX = drVY = 0;
@@ -6473,6 +6511,33 @@ static bool targetInLine() {
   return false;
 }
 // His bullets: across the room on his level; the first one they reach goes down (not the door guard)
+// Someone killed (shot, or with the knife). A room with no hazard of its own whose people are all dead,
+// one of them shot: the gunfire brings a security drone. It comes down from the ceiling on the far side,
+// hovers for 5 seconds, then scans for him like any drone - and it stays in that room.
+static void roomKill(bool shot) {
+  if (stage != 2 || curRoom >= S2_ROOMS) return;
+  if (shot) s2RoomShot[curRoom] = true;
+  RoomInfo &ri = rooms[curRoom];
+  if (ri.hazard != HZ_NONE || s2Kind[curRoom] == LK_CLONE || !s2RoomShot[curRoom]) return;
+  for (int i = 0; i < npcCount; i++) if (!npcs[i].dead) return;
+  ri.hazard = HZ_DRONE;
+  curHazard = HZ_DRONE;
+  drX = agX < SCREEN_W / 2 ? SCREEN_W - 160.0f : 160.0f;
+  drY = CEIL_Y + 10.0f;
+  drTX = drX;
+  drTY = CEIL_Y + 110.0f;
+  drVX = drVY = 0;
+  drScan = false;
+  drAlerted = false;
+  drGrace = 0;
+  drLight = 0;
+  drFlashT = 0;
+  drWakeT = DRONE_WAKE_SECONDS;
+  for (int i = 0; i < MAX_BULLETS; i++) bullets[i].life = 0;
+  showMsg("GUNFIRE HEARD - SECURITY DRONE DISPATCHED", 3.0f);
+  sfxPlay(SFX_ALARM);
+}
+
 static void updateMyShots(float dt) {
   for (int k = 0; k < MY_SHOTS; k++) {
     MyShot &b = myShots[k];
@@ -6505,6 +6570,7 @@ static void updateMyShots(float dt) {
       showMsg("+5:00 ON THE CLOCK", 2.0f);
       susp = 0;
       suspT = 0;
+      roomKill(true);
       break;
     }
   }
@@ -6623,6 +6689,7 @@ static void updateS2Act(float dt) {
       showMsg("+5:00 ON THE CLOCK", 2.0f);
       susp = 0;
       suspT = 0;
+      roomKill(false);
       if (n.knifeOnly && s2Kind[curRoom] == LK_SECURITY) {   // the door guard: the others will open fire
         secAlertT = SEC_ALERT_SECONDS;
         for (int k = 0; k < npcCount; k++) npcs[k].watching = false;
@@ -7042,6 +7109,76 @@ static void drawS2Prompts() {
   drawVectorText(t, x, CAR_FLOOR_Y - 184, 2.4f, rgb565(255, 220, 120), true);
 }
 
+// The clone lab's hot gas: which step of its sequence it's in (-1: none), and how far (0 warn, 1 blasting)
+static int gasStep(float &into, int &phase) {
+  if (gasT < 0) return -1;
+  float t = fmodf(gasT, GAS_CYCLE);
+  int st = (int)(t / GAS_STEP);
+  if (st > 2) return -1;
+  into = t - st * GAS_STEP;
+  if (into < GAS_WARN) phase = 0;
+  else if (into < GAS_WARN + GAS_BLAST) { phase = 1; into -= GAS_WARN; }
+  else return -1;
+  return st;
+}
+static void updateGas(float dt) {
+  float was = gasT;
+  gasT += dt;
+  float into;
+  int ph, st = gasStep(into, ph);
+  if (st < 0) return;
+  float into0;
+  int ph0, st0 = was >= 0 ? (gasStep(into0, ph0)) : -1;
+  if (ph == 1 && (st0 != st || ph0 != 1)) sfxPlay(SFX_HISS);       // (a blast starting)
+  if (ph != 1 || agState == ST_KO || agState == ST_CAUGHT || gameOver != END_NONE) return;
+  if (fabsf(agY - ROOM_FLOOR_Y) > 2) return;                          // (only on the floor; not on the deck)
+  int blastId = (int)(gasT / GAS_CYCLE) * 3 + st;
+  if (gasHitStep == blastId) return;
+  for (int k = 0; k < 2; k++) {
+    float spread = 26 + 14 * fminf(1.0f, into / 0.3f);
+    if (fabsf(agX - gasX[gasSeq[st][k]]) < spread) {
+      gasHitStep = blastId;
+      hurt(GAS_HURT);
+      sfxPlay(SFX_SCREAM);
+      showMsg("SCALDED BY HOT GAS", 1.6f);
+      break;
+    }
+  }
+}
+
+static void drawGas() {
+  float into = 0;
+  int ph = 0, st = gasStep(into, ph);
+  int ny = CLONE_DECK_Y + PLAT_T + 44;                                  // (the nozzles' mouths)
+  for (int v = 0; v < GAS_VENTS; v++) {
+    bool on = st >= 0 && (gasSeq[st][0] == v || gasSeq[st][1] == v);
+    bool lit = on && (ph == 1 || ((int)(into * 10) & 1));
+    fillRect(gasX[v] + 16, ny - 16, gasX[v] + 26, ny - 10, lit ? rgb565(255, 50, 40) : rgb565(90, 20, 20));   // its lamp
+    if (lit) glowDisc(gasX[v] + 21, ny - 13, 18, 255, 60, 40, 0.35f);
+    if (!on) continue;
+    if (ph == 0) {                                                       // the warning: wisps
+      for (int k = 0; k < 3; k++) {
+        float u = fmodf(into * 1.6f + k * 0.33f, 1.0f);
+        glowDisc(gasX[v] + (k - 1) * 6, ny + u * 30, 6 + u * 6, 230, 220, 200, 0.25f * (1 - u));
+      }
+      continue;
+    }
+    float grow = fminf(1.0f, into / 0.25f), fade = into > GAS_BLAST - 0.3f ? (GAS_BLAST - into) / 0.3f : 1.0f;
+    float bottom = ny + (ROOM_FLOOR_Y - ny) * grow;
+    for (int y = ny; y < bottom; y += 4) {                               // the column: widening, hot at the core
+      float k = (y - ny) / (float)(ROOM_FLOOR_Y - ny), w = 12 + 30 * k;
+      blendRect(gasX[v] - (int)w, y, gasX[v] + (int)w, y + 3, 240, 236, 226, 0.45f * fade);
+      blendRect(gasX[v] - (int)(w * 0.45f), y, gasX[v] + (int)(w * 0.45f), y + 3, 255, 190, 120, 0.45f * fade);
+    }
+    for (int k = 0; k < 6; k++) {                                        // puffs rushing down
+      float u = fmodf(clockT * 2.2f + k / 6.0f + v * 0.13f, 1.0f), y = ny + u * (bottom - ny);
+      glowDisc(gasX[v] + 10 * sinf(clockT * 7 + k * 2), y, 14 + 20 * u, 255, 245, 230, 0.32f * fade);
+    }
+    if (grow >= 1) for (int s2 = -1; s2 <= 1; s2 += 2)                   // spreading along the floor
+      glowDisc(gasX[v] + s2 * (30 + 20 * fmodf(clockT * 3, 1.0f)), ROOM_FLOOR_Y - 14, 30, 250, 240, 225, 0.35f * fade);
+  }
+}
+
 // Each frame of play in stage 2
 static void updateStage2(float dt) {
   if (s2BumpT > 0) s2BumpT -= dt;
@@ -7049,6 +7186,7 @@ static void updateStage2(float dt) {
   if (mode == MODE_ROOM && curRoom < S2_ROOMS) {
     updateSuspicion(dt);
     updateNpcs(dt);
+    if (s2Kind[curRoom] == LK_CLONE) updateGas(dt);
   }
   if (bodyT >= 0) {                          // he'll be found
     float was = bodyT;
@@ -7603,6 +7741,22 @@ static void updateDrone(float dt) {
   float fy = feetY();
   float ax = agX, ay = fy - 65 * myScale;           // his chest
   if (drGrace > 0) drGrace -= dt;
+  if (drWakeT > 0) {                   // just called in: down out of the ceiling to hover, no beam, no gun - then it scans
+    drWakeT -= dt;
+    float dx = drTX - drX, dy = drTY - drY;
+    drX += dx * fminf(1.0f, dt * 1.5f);
+    drY += dy * fminf(1.0f, dt * 1.5f);
+    drVX = drVY = 0;
+    drLight = 0;
+    drFireT = 0.45f;
+    if (drWakeT <= 0) {
+      drScan = true;
+      drScanAng = agX > drX ? -90.0f : 90.0f;      // (starting away from him)
+      drScanDir = agX > drX ? -1.0f : 1.0f;
+      sfxPlay(SFX_BEEP);
+    }
+    return;
+  }
   if (drScan) {                        // the red beam turning right round it: it sees him through anything, still or not
     drScanAng += drScanDir * DRONE_SCAN_DEG_S * dt;
     if (drScanAng > 180.0f) drScanAng -= 360.0f;
@@ -10079,6 +10233,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   }
   if (mode == MODE_ROOM && agState == ST_SHOCK) drawShockSparks();
   if (mode == MODE_ROOM && camCount > 0) drawCameras();
+  if (mode == MODE_ROOM && stage == 2 && curRoom < S2_ROOMS && s2Kind[curRoom] == LK_CLONE) drawGas();
   if (mode == MODE_ROOM && (curHazard == HZ_DRONE || curHazard == HZ_CAMDRONE)) drawDrone();
   if (mode == MODE_ROOM && powerPanelT > 0 && !mapOn) drawPowerPanel();
   if (termOn && mode == MODE_ROOM) drawTerminal();

@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 039: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 040: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -448,8 +448,17 @@ levels, a lift pad by the door up to the deck. Up on the deck are **five
 cloning tanks**, each with a suited clone floating in green fluid with bubbles
 rising (SUBJECT 01..05). Below are the test tube bench, the DNA and body-scan
 monitors, the green machine feeding the tanks, three gas cylinders, a gurney
-with a clone under a sheet (a tag on his toe) and the orange robot arm. There
-are no hazards: 12 things to search.
+with a clone under a sheet (a tag on his toe) and the orange robot arm. 12
+things to search.
+
+**Its hazard: hot gas, on the bottom level only.** A HOT GAS duct runs along
+under the deck with five nozzles. They blast hot gas down to the floor **two at
+a time, in a sequence of three you can learn**: vents 1 and 3, then 2 and 4,
+then 3 and 5 (counting from the left), then a short pause and round again.
+Before each blast the two nozzles' red lamps flash and wisps drip out (0.9
+seconds), then the gas roars down (1.3 seconds). Caught in it (SCALDED BY HOT
+GAS): a full health bar drops to under half - a second hit and he's dead. The
+deck is safe.
 
 **The super soldier lab**: one level, under **two security cameras** (as in
 NUCLEAR MISSION). The big glowing tank in the middle holds SUBJECT X. Around it
@@ -514,6 +523,13 @@ it: a guard's shot then only does half damage and he stays on his feet - the
 guard keeps firing every half second - until he's nearly out of health, when
 the next shot knocks him down as usual) and **3 TOP SECRET DOCUMENTS**
 (1000 points each, the TOP SECRET DOCUMENTS panel with n OF 3 FOUND).
+
+**Gunfire brings a drone**: in a room with no hazard of its own (the kitchen,
+cleaning room, medical bay, security room, admin room, Quantum Lab 1), once
+all its people are dead and at least one of them was shot, a security drone
+comes down from the ceiling on the far side (GUNFIRE HEARD - SECURITY DRONE
+DISPATCHED), hovers for 5 seconds, then scans for him like any drone. It stays
+in that room. Kill them all with the knife and no drone comes.
 
 **Each person he kills** (knife or pistol) puts **5 minutes** back on the
 clock (+5:00 ON THE CLOCK).
