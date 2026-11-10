@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "041"
+#define GAME_VERSION      "042"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -243,7 +243,8 @@ static float landTotal[NUKE_SITES];         // (and how long its flight is)
 static bool lockdown = false;               // QUANTUM LOCKDOWN (the main computer): no more hacking
 static bool prevented[NUKE_SITES];          // its launch stopped from one of the server room's terminals (it never launches)
 #define PREVENT_SCORE 2000
-static bool launchOn = false;               // a launch's cut scene playing (beside the game)
+static bool launchOn = false;               // a launch's (or a landing's) cut scene playing (beside the game)
+static void resetStrikes();
 static int launchQueued = 0;
 #define FLYERS 4                            // (their news, flying out at him: see drawFlyers)
 #define FLYER_SECONDS 2.6f
@@ -479,6 +480,7 @@ static void layOut(uint32_t seed) {
   for (int i = 0; i < FLYERS; i++) flyers[i].on = false;
   launchOn = false;
   launchQueued = 0;
+  resetStrikes();
   lockdown = false;
   // the rooms with one more piece of equipment, to make EQUIPMENT_TOTAL
   for (int extra = EQUIPMENT_TOTAL - ROOM_COUNT * (EQUIPMENT_TOTAL / ROOM_COUNT); extra > 0;) {
@@ -887,7 +889,8 @@ enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX
                      SFX_BUZZ, SFX_ZAP, SFX_POWERDOWN, SFX_SCREAM, SFX_ALARM, SFX_SHOT, SFX_HIT,
                      SFX_POWERUP, SFX_CLICK, SFX_DENIED, SFX_KEY, SFX_SHUTDOWN, SFX_WARN, SFX_LOOPPOWER, SFX_DOORS, SFX_TICK24,
                      SFX_KLAXON, SFX_IGNITE, SFX_BIGROAR, SFX_ROAR, SFX_TYPE,   // (those five: NUCLEAR MISSION's launch)
-                     SFX_HISS };   // (the clone lab's hot gas)
+                     SFX_HISS,     // (the clone lab's hot gas)
+                     SFX_FALL, SFX_BOOM };   // (a landing: the warhead falling, the detonation)
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -1069,6 +1072,16 @@ static void startEffect(uint8_t sfx) {
       startVoice(WAVE_SQUARE, 100, 100, 0, 400, 0.10f);
       startVoice(WAVE_SQUARE, 150, 150, 0, 400, 0.06f);
       startVoice(WAVE_NOISE, 4000, 4000, 0, 120, 0.06f);
+      break;
+    case SFX_FALL:                             // a warhead falling: a long whistle down
+      startVoice(WAVE_TRIANGLE, 2400, 500, 0, 1600, 0.16f);
+      startVoice(WAVE_NOISE, 3000, 1500, 0, 1600, 0.04f);
+      break;
+    case SFX_BOOM:                             // the detonation: a crack, then a deep long rumble
+      startVoice(WAVE_NOISE, 9000, 2000, 0, 250, 0.40f);
+      startVoice(WAVE_NOISE, 400, 60, 0, 2600, 0.45f);
+      startVoice(WAVE_SQUARE, 50, 22, 0, 2600, 0.22f);
+      startVoice(WAVE_TRIANGLE, 80, 30, 0, 2000, 0.30f);
       break;
     case SFX_HISS:                             // hot gas blasting out of a vent
       startVoice(WAVE_NOISE, 7000, 3000, 0, 1100, 0.16f);
@@ -5657,7 +5670,7 @@ static void drawFlyers() {
 #define LS_FIRE 40
 struct LsFire { bool on; float x, y, vx, vy, r, age, life; };
 static LsFire lsFire[LS_FIRE];
-static int launchSite = 0, launchQueue[NUKE_SITES];
+static int launchSite = 0, launchQueue[NUKE_SITES * 2];   // (queued: a launch is its site, a landing 8 + its site)
 static int lsScene = 0, lsTyped = 0;
 static float lsT = 0, lsSoundT = 0, lsX = 0, lsY = 0, lsAng = 0, lsDir = 1, lsSpeed = 0, lsScale = 1.6f;
 static uint32_t frameSave[FB_W * FB_H];       // (the game's frame, to shrink beside the scene)
@@ -5702,6 +5715,247 @@ static void lsAddFire(float x, float y, float vx, float vy, float r, float life)
     if (!lsFire[i].on) { lsFire[i] = { true, x, y, vx, vy, r, 0, life }; return; }
 }
 
+
+// ============================================================ a landing: the city hit
+// When a missile lands, a city (at random, a different one each time) is hit: in the same square beside
+// the game, the city's skyline at night, the warhead falling, the flash, the fireball, the shock wave
+// flattening it, the mushroom cloud rising, fires; the city's name and its death toll counting up.
+struct City { const char *name, *country; uint32_t lo, hi; };
+static const City cities[] = {
+  { "SYDNEY", "AUSTRALIA", 100000, 500000 },       { "DHAKA", "BANGLADESH", 2500000, 5000000 },
+  { "TOKYO", "JAPAN", 2000000, 3000000 },          { "NEW YORK", "AMERICA", 600000, 700000 },
+  { "SHANGHAI", "CHINA", 2900000, 4000000 },       { "CAIRO", "EGYPT", 2500000, 5000000 },
+  { "MANILA", "PHILIPPINES", 2500000, 5000000 },   { "SEOUL", "SOUTH KOREA", 1500000, 2500000 } };
+#define N_CITIES ((int)(sizeof(cities) / sizeof(cities[0])))
+#define LD_SECONDS 12.0f
+#define LD_FALL 1.6f                   // (the warhead falling; then the flash)
+#define LD_GZ 360                      // ground zero, in the square
+static int landCity[NUKE_SITES];
+static uint32_t landDeaths[NUKE_SITES], deathTotal = 0;
+static bool cityUsed[N_CITIES];
+static int lsKind = 0;                 // the cut scene playing: 0 a launch, 1 a landing
+static int ldSite = 0, ldBuildings = 0;
+static int16_t ldBX[32], ldBW[32], ldBH[32];
+
+static void resetStrikes() {
+  deathTotal = 0;
+  memset(cityUsed, 0, sizeof(cityUsed));
+}
+
+static void pickCity(int site) {       // (one not hit yet)
+  int left = 0;
+  for (int c = 0; c < N_CITIES; c++) left += !cityUsed[c];
+  if (left == 0) memset(cityUsed, 0, sizeof(cityUsed));
+  int c;
+  do c = (int)(rnd32() % N_CITIES); while (cityUsed[c]);
+  cityUsed[c] = true;
+  landCity[site] = c;
+  const City &ct = cities[c];
+  landDeaths[site] = ct.lo + rnd32() % (ct.hi - ct.lo + 1);
+  deathTotal += landDeaths[site];
+}
+
+static void commas(char *out, int n, uint32_t v) {   // 2,512,904
+  char t[16];
+  snprintf(t, sizeof(t), "%u", v);
+  int len = (int)strlen(t), o = 0;
+  for (int i = 0; i < len && o < n - 1; i++) {
+    out[o++] = t[i];
+    if ((len - 1 - i) % 3 == 0 && i < len - 1 && o < n - 1) out[o++] = ',';
+  }
+  out[o] = 0;
+}
+
+static void startLandScene(int site) {
+  ldSite = site;
+  lsT = 0;
+  lsSoundT = 0;
+  lsTyped = 0;
+  for (int i = 0; i < LS_FIRE; i++) lsFire[i].on = false;
+  uint32_t h = 2166136261u ^ (uint32_t)(landCity[site] * 7919 + 13);   // the city's skyline (the same each time for that city)
+  int x = -10;
+  ldBuildings = 0;
+  while (x < LS_SIZE && ldBuildings < 32) {
+    h = h * 1103515245u + 12345u;
+    int w = 34 + (h >> 16) % 46;
+    h = h * 1103515245u + 12345u;
+    int dist = abs(x + w / 2 - LD_GZ);
+    int ht = 70 + (h >> 16) % 150 + (dist < 200 ? (200 - dist) * 3 / 4 : 0);   // (taller towards the middle)
+    ldBX[ldBuildings] = (int16_t)x;
+    ldBW[ldBuildings] = (int16_t)w;
+    ldBH[ldBuildings] = (int16_t)ht;
+    ldBuildings++;
+    x += w + 2 + (h >> 24) % 8;
+  }
+  sfxPlay(SFX_FALL);
+}
+
+static void updateLandScene(float dt) {
+  float was = lsT;
+  lsT += dt;
+  for (int i = 0; i < LS_FIRE; i++) {           // (the debris: up, out and falling)
+    LsFire &f = lsFire[i];
+    if (!f.on) continue;
+    f.age += dt;
+    if (f.age >= f.life) { f.on = false; continue; }
+    f.x += f.vx * dt;
+    f.y += f.vy * dt;
+    f.vy += 160 * dt;
+  }
+  if (was < LD_FALL && lsT >= LD_FALL) {        // detonation
+    sfxPlay(SFX_BOOM);
+    sfxPlay(SFX_BIGROAR);
+    lsSoundT = 0.3f;
+    for (int i = 0; i < 26; i++) {
+      float a = -3.0f + (i % 13) * 0.115f + (i / 13) * 0.05f, sp = 160 + (i * 37) % 220;
+      lsAddFire((float)LD_GZ, (float)LS_GROUND - 20, cosf(a) * sp, sinf(a) * sp, 3 + i % 4, 2.4f + (i % 5) * 0.3f);
+    }
+  }
+  if (lsT > LD_FALL && lsT < LD_FALL + 5) {     // the roar dying away
+    lsSoundT -= dt;
+    if (lsSoundT <= 0) { lsSoundT = 0.35f; sfxPlay(lsT < LD_FALL + 2 ? SFX_BIGROAR : SFX_ROAR); }
+  }
+  if (lsT > LD_FALL + 1.0f) {                   // the words: typed on
+    int want = (int)((lsT - LD_FALL - 1.0f) * 18);
+    if (want > lsTyped) { lsTyped = want; if (lsTyped < 40) sfxPlay(SFX_TYPE); }
+  }
+}
+
+// A building: whole (lit windows), or after the shock wave a burning ruin
+static void ldBuilding(int i, bool ruined, float t, float glow) {
+  int x0 = ldBX[i], w = ldBW[i], h = ldBH[i], g = LS_GROUND;
+  if (!ruined) {
+    int v = 18 + (i * 5) % 14;
+    lsRect(x0, g - h, x0 + w, g, rgb565(v, v + 4, v + 16));
+    if (glow > 0) lsRect(x0, g - h, x0 + w, g, rgb565((int)(v + 180 * glow), (int)(v + 120 * glow), (int)(v + 60 * glow)));
+    for (int y = g - h + 10; y < g - 10; y += 14)                      // windows
+      for (int x = x0 + 6; x < x0 + w - 8; x += 11) {
+        uint32_t hh = (uint32_t)(x * 31 + y * 17 + i * 101);
+        if ((hh * 2654435761u >> 28) < 7) lsRect(x, y, x + 4, y + 6, rgb565(250, 220, 120));
+      }
+    if (i % 3 == 0) lsRect(x0 + w / 2 - 1, g - h - 18, x0 + w / 2 + 1, g - h, rgb565(80, 84, 96));   // an aerial
+    return;
+  }
+  int top = g - h * 2 / 5;                                             // a jagged stump, black, glowing at its edges
+  int xs[6] = { x0, x0 + w / 4, x0 + w / 2, x0 + w * 3 / 4, x0 + w, x0 }, ys[6] = { top + 16, top, top + 22, top + 6, g, g };
+  int px[6], py[6];
+  for (int k = 0; k < 5; k++) { px[k] = xs[k]; py[k] = ys[k]; }
+  px[4] = x0 + w; py[4] = g; px[5] = x0; py[5] = g;
+  lsPoly(px, py, 6, rgb565(24, 14, 12));
+  for (int k = 0; k < 2; k++) {                                        // its fires
+    float fx = x0 + w * (0.3f + 0.4f * k), fy = top + 8;
+    float fl = 14 + 8 * sinf(t * 13 + i * 3 + k * 2) + lsRand(0, 6);
+    int tx[3] = { (int)fx - 9, (int)fx + 9, (int)(fx + 3 * sinf(t * 9 + i)) }, ty[3] = { (int)fy, (int)fy, (int)(fy - fl) };
+    lsPoly(tx, ty, 3, rgb565(255, 120, 20));
+    int ix[3] = { (int)fx - 4, (int)fx + 4, (int)fx }, iy[3] = { (int)fy, (int)fy, (int)(fy - fl * 0.55f) };
+    lsPoly(ix, iy, 3, rgb565(255, 230, 90));
+  }
+}
+
+static void drawLandScene() {
+  gfxClip((int)(LS_Y / UNIT_K), (int)((LS_Y + LS_SIZE - 1) / UNIT_K));
+  float t = lsT, b = t - LD_FALL;                                      // b: since the detonation
+  const City &ct = cities[landCity[ldSite]];
+  // the sky: night, then lit red and orange
+  float burn = b < 0 ? 0 : fminf(1.0f, b / 2.5f);
+  for (int y = 0; y < LS_GROUND; y += 8) {
+    float k = y / (float)LS_GROUND;
+    int r = (int)(8 + 20 * k + burn * (120 + 90 * k)), gg = (int)(10 + 14 * k + burn * (30 + 60 * k)), bb = (int)(30 + 30 * k - burn * 20);
+    lsRect(0, y, LS_SIZE - 1, y + 7, rgb565(clampv(r, 0, 255), clampv(gg, 0, 255), clampv(bb, 0, 255)));
+  }
+  if (b < 0)
+    for (int s = 0; s < 40; s++) lsRect((s * 197) % LS_SIZE, (s * 131) % 300, (s * 197) % LS_SIZE + 1, (s * 131) % 300 + 1, rgb565(220, 220, 240));
+  // the shock wave and what it has flattened
+  float shock = b < 0 ? -1 : 140 + 420 * b;
+  float glow = b < 0 ? 0 : fmaxf(0, 0.9f - b * 0.6f);
+  // the mushroom cloud (behind the near buildings): stem, cap, its ring
+  if (b > 0) {
+    float rise = fminf(1.0f, b / 6.0f), ease = 1 - (1 - rise) * (1 - rise);
+    float capY = LS_GROUND - 60 - 300 * ease, capR = 70 + 70 * ease;
+    float stemW = 26 + 22 * ease;
+    for (int y = (int)capY; y < LS_GROUND; y += 6) {                   // the stem: brighter low down, churning
+      float k = (y - capY) / (LS_GROUND - capY), w = stemW * (0.75f + 0.5f * k) + 4 * sinf(y * 0.08f + t * 5);
+      int r = (int)(150 + 90 * k), gg = (int)(70 + 70 * k), bl = 30;
+      lsRect(LD_GZ - (int)w, y, LD_GZ + (int)w, y + 5, rgb565(r, gg, bl));
+    }
+    for (int ring = 0; ring < 3; ring++) {                             // the cap: dark smoke outside, fire inside
+      float rr = capR * (1.0f - ring * 0.28f);
+      int col[3][3] = { { 90, 60, 50 }, { 210, 110, 40 }, { 255, 210, 110 } };
+      for (int k = 0; k < 10; k++) {
+        float a = k * 0.628f + t * (0.3f + ring * 0.2f);
+        float cx = LD_GZ + cosf(a) * rr * 0.75f, cy = capY + sinf(a) * rr * 0.32f;
+        lsCircle(cx, cy, rr * 0.48f, rgb565(col[ring][0], col[ring][1], col[ring][2]));
+      }
+    }
+    lsCircle(LD_GZ, capY, capR * 0.3f, rgb565(255, 240, 180));
+    if (b > 2.0f) {                                                    // the condensation ring round the stem
+      float a = fminf(1.0f, (b - 2.0f) / 1.5f) * fmaxf(0.0f, 1.0f - (b - 6.0f) / 3.0f), rx = capR * 1.3f + 30 * (b - 2.0f);
+      for (int k = 0; k < 56; k++) {
+        float th = k * 0.1122f;
+        lsTint(LD_GZ + cosf(th) * rx, capY + 120 + sinf(th) * rx * 0.18f, 20, 255, 236, 220, 0.12f * a);
+      }
+    }
+    if (b < 1.6f) {                                                    // the fireball at the ground
+      float fr = 40 + 180 * fminf(1.0f, b / 0.8f);
+      lsCircle(LD_GZ, LS_GROUND - 10, fr, rgb565(255, (int)(250 - 120 * b / 1.6f), (int)(200 - 180 * b / 1.6f)));
+    }
+    float dust = 120 + 260 * ease;                                      // dust rolling out along the ground
+    for (int k = -6; k <= 6; k++) {
+      float dx = k / 6.0f * dust;
+      lsCircle(LD_GZ + dx, LS_GROUND - 8, 26 + 10 * fabsf(sinf(k + t)), rgb565(110, 70, 50));
+    }
+  }
+  // the buildings
+  for (int i = 0; i < ldBuildings; i++) {
+    float cx = ldBX[i] + ldBW[i] / 2.0f;
+    ldBuilding(i, shock >= 0 && fabsf(cx - LD_GZ) < shock, t, glow);
+  }
+  lsRect(0, LS_GROUND, LS_SIZE - 1, LS_SIZE - 1, b < 0 ? rgb565(14, 14, 20) : rgb565(36, 18, 14));   // the ground
+  if (shock > 0 && shock < 800) {                                      // the shock wave's front along the ground
+    for (int s = -1; s <= 1; s += 2) lsTint(LD_GZ + s * shock, LS_GROUND - 6, 36, 255, 220, 170, 0.5f * fmaxf(0, 1 - shock / 800));
+  }
+  for (int i = 0; i < LS_FIRE; i++) {                                  // debris
+    const LsFire &f = lsFire[i];
+    if (f.on) lsCircle(f.x, f.y, f.r, f.age < 0.8f ? rgb565(255, 200, 80) : rgb565(160, 60, 30));
+  }
+  // the warhead coming down
+  if (b < 0) {
+    float k = t / LD_FALL, wx = LD_GZ + 260 * (1 - k), wy = -20 + (LS_GROUND - 60) * k;
+    for (int j = 1; j <= 8; j++) lsTint(wx + j * 12, wy - j * 26, 6 + j, 255, 190, 120, 0.35f - j * 0.035f);
+    lsCircle(wx, wy, 6, rgb565(255, 250, 230));
+  }
+  // the flash
+  if (b >= 0 && b < 0.8f) {
+    float a = 1.0f - b / 0.8f;
+    lsTint(LS_SIZE / 2, LS_SIZE / 2, 560, 255, 255, 250, a);
+  }
+  // the words: the city, the toll
+  if (b > 1.0f) {
+    char name[48], line[64], num[24];
+    snprintf(name, sizeof(name), "%s, %s", ct.name, ct.country);
+    int n = clampv(lsTyped, 0, (int)strlen(name));
+    char shown[48];
+    snprintf(shown, sizeof(shown), "%.*s", n, name);
+    lsRect(0, 18, LS_SIZE - 1, 120, rgb565(10, 6, 6));
+    lsText("NUCLEAR STRIKE", LS_SIZE / 2, 44, 3.6f, rgb565(255, 70, 50), true);
+    lsText(shown, LS_SIZE / 2, 92, 4.2f, rgb565(255, 230, 200), true);
+    if (b > 2.5f) {
+      float k = fminf(1.0f, (b - 2.5f) / 4.0f);
+      uint32_t shownDeaths = (uint32_t)(landDeaths[ldSite] * (1 - (1 - k) * (1 - k)));
+      commas(num, sizeof(num), shownDeaths);
+      lsRect(0, LS_GROUND + 24, LS_SIZE - 1, LS_SIZE - 20, rgb565(10, 6, 6));
+      lsText("ESTIMATED DEATHS", LS_SIZE / 2, LS_GROUND + 54, 2.6f, rgb565(230, 200, 190), false);
+      lsText(num, LS_SIZE / 2, LS_GROUND + 100, 5.0f, rgb565(255, 60, 40), true);
+      if (k >= 1 && deathTotal > landDeaths[ldSite]) {
+        commas(num, sizeof(num), deathTotal);
+        snprintf(line, sizeof(line), "WORLD TOTAL: %s", num);
+        lsText(line, LS_SIZE / 2, LS_GROUND + 140, 2.2f, rgb565(230, 200, 190), false);
+      }
+    }
+  }
+  gfxClipAll();
+}
+
 // The site's sign: yellow and black edged, its name stencilled
 static void lsSign(int cx, int cy, int w, float size) {
   lsRect(cx - w / 2 - 6, cy - 34, cx + w / 2 + 6, cy + 34, rgb565(20, 20, 22));
@@ -5711,12 +5965,17 @@ static void lsSign(int cx, int cy, int w, float size) {
   lsText(siteName[launchSite], cx, cy, size, rgb565(240, 200, 60), true);
 }
 
-static void startLaunchScene(int site) {
+static void startLaunchScene(int site) {     // (site: a launch; 8 + site: a landing)
   if (launchOn) {                             // (one at a time: the next after this one)
-    if (launchQueued < NUKE_SITES) launchQueue[launchQueued++] = site;
+    if (launchQueued < NUKE_SITES * 2) launchQueue[launchQueued++] = site;
     return;
   }
   launchOn = true;
+  lsKind = site >> 3;
+  if (lsKind) {
+    startLandScene(site & 7);
+    return;
+  }
   launchSite = site;
   lsScene = 1;
   lsT = 0;
@@ -5726,8 +5985,23 @@ static void startLaunchScene(int site) {
   sfxPlay(SFX_KLAXON);
 }
 
+static void finishCutScene() {
+  launchOn = false;
+  if (launchQueued > 0) {                     // (another launched or landed meanwhile)
+    int next = launchQueue[0];
+    for (int i = 1; i < launchQueued; i++) launchQueue[i - 1] = launchQueue[i];
+    launchQueued--;
+    startLaunchScene(next);
+  }
+}
+
 static void updateLaunchScene(float dt) {
   if (!launchOn) return;
+  if (lsKind == 1) {
+    updateLandScene(dt);
+    if (lsT >= LD_SECONDS) finishCutScene();
+    return;
+  }
   lsT += dt;
   for (int i = 0; i < LS_FIRE; i++) {
     LsFire &f = lsFire[i];
@@ -5791,15 +6065,7 @@ static void updateLaunchScene(float dt) {
       if (want > len) want = len;
       while (lsTyped < want) { lsTyped++; sfxPlay(SFX_TYPE); }
     }
-    if (lsT >= LS_SCENE3_SECONDS) {
-      launchOn = false;
-      if (launchQueued > 0) {                  // (another launched meanwhile)
-        int next = launchQueue[0];
-        for (int i = 1; i < launchQueued; i++) launchQueue[i - 1] = launchQueue[i];
-        launchQueued--;
-        startLaunchScene(next);
-      }
-    }
+    if (lsT >= LS_SCENE3_SECONDS) finishCutScene();
   }
 }
 
@@ -5952,6 +6218,10 @@ static void lsSiloTop() {
 }
 
 static void drawLaunchScene() {
+  if (lsKind == 1) {
+    drawLandScene();
+    return;
+  }
   gfxClip((int)(LS_Y / UNIT_K), (int)((LS_Y + LS_SIZE - 1) / UNIT_K));
   if (lsScene == 1) {
     float t = lsT;
@@ -6060,7 +6330,7 @@ static void composeLaunchFrame() {
     }
   }
   pxRect(GW, 0, GW + 1, FB_H - 1, c32(rgb565(60, 64, 80)));   // (a line between them)
-  drawVectorText("NUCLEAR LAUNCH", (LS_X + LS_SIZE / 2) / UNIT_K, (LS_Y - 50) / UNIT_K, 3.0f,
+  drawVectorText(lsKind ? "NUCLEAR IMPACT" : "NUCLEAR LAUNCH", (LS_X + LS_SIZE / 2) / UNIT_K, (LS_Y - 50) / UNIT_K, 3.0f,
                  fmodf(clockT, 0.6f) < 0.35f ? rgb565(255, 60, 40) : rgb565(140, 30, 20), true);
 }
 
@@ -6098,15 +6368,16 @@ static void updateNukes(float dt) {
     flown++;
     if (landLeft[i] > 0) {
       landLeft[i] -= dt;
-      if (landLeft[i] <= 0) {
-        snprintf(b, sizeof(b), "%s IMPACT", siteName[i]);
+      if (landLeft[i] <= 0) {                  // landed: a city hit (its cut scene beside the game)
+        pickCity(i);
+        snprintf(b, sizeof(b), "NUCLEAR STRIKE ON %s", cities[landCity[i]].name);
         flyerAdd(b);
-        sfxPlay(SFX_SHUTDOWN);
+        startLaunchScene(8 + i);
       }
     }
     landed += landLeft[i] <= 0;
   }
-  if (launching && flown > 0 && sitesLaunched == sitesHacked && landed == flown && gameOver == END_NONE) endGame(END_NUKES);
+  if (launching && flown > 0 && sitesLaunched == sitesHacked && landed == flown && !launchOn && gameOver == END_NONE) endGame(END_NUKES);   // (once the last strike's scene is over)
 }
 
 // The left of the panel: the five sites, a box each for HACKED, LAUNCHED, LANDED (yellow, orange,

@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 041: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 042: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -180,7 +180,20 @@ stages:
    after the one before (all five hacked after 15 to 26 minutes).
 2. **LAUNCHED**: only once all five are hacked, or QUANTUM LOCKDOWN is on.
    The hacked sites launch in turn: 5 minutes, then 4, 3, 2, 1 more.
-3. **LANDED**: 10 to 15 minutes (at random) after its launch.
+3. **LANDED**: 10 to 15 minutes (at random) after its launch. **A city is
+   hit** (NUCLEAR STRIKE ON ... flies out) and **its cut scene plays** in the
+   square beside the game, like a launch's (NUCLEAR IMPACT over it, the game
+   still going, shrunk, on the left): the city's skyline at night, the warhead
+   whistling down, a white flash, the fireball, the shock wave flattening the
+   buildings into burning ruins, the mushroom cloud rising (its ring round the
+   stem), the sky lit red, then the city's name typed on and its ESTIMATED
+   DEATHS counting up (and the WORLD TOTAL after more than one). The city is one
+   of these, a different one each time, its death toll at random between:
+   Sydney, Australia 100,000-500,000; Dhaka, Bangladesh 2.5-5 million; Tokyo,
+   Japan 2-3 million; New York, America 600,000-700,000; Shanghai, China
+   2.9-4 million; Cairo, Egypt 2.5-5 million; Manila, Philippines 2.5-5 million;
+   Seoul, South Korea 1.5-2.5 million. (Launches and landings that happen while
+   one is playing wait their turn; the game ends after the last one's scene.)
 
 When every launched missile has landed: MISSION FAILED - THE NUCLEAR MISSILES
 HAVE LANDED. Each change is announced without stopping the game: red words
