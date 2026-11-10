@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 042: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 043: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -202,7 +202,9 @@ the screen, small and faint, and fly at you, growing huge as they fade
 away (2.6 seconds), while you carry on playing. A hack sounds like a heavy
 digital clock ticking (as on the TV show 24), dying away over about 4
 seconds; a launch has the ticking and the alarm; an impact the power
-failing.
+failing. The screen says how
+many missiles landed and how many died in all (e.g. 3 NUCLEAR MISSILES LANDED -
+8,412,903 DEAD).
 
 **A launch** plays NUCLEAR MISSION's launch cut scene and sounds (the
 klaxon, ignition, the roar, the typing) while the game carries on: the game
@@ -434,11 +436,11 @@ cupboard, stacks of boxes. Nobody in it: 16 things to search.
 clone lab, the super soldier lab, the server room, QUANTUM LAB 1 and QUANTUM
 LAB 2. Everything in them can be searched.
 
-**4 QUANTUM PASSWORDS** (500 points each) are hidden in lift A's and lift B's
-rooms, at most one a room (never in the knife's, the pistol's or the level 2
-card's place). Each one shows the QUANTUM PASSWORD FOUND panel with its access
-code (e.g. QX7-R41K) and n OF 4 FOUND; the panel's PASSWORDS line counts them.
-Each one opens one of the server room's four terminals, once (below).
+**16 QUANTUM PASSWORDS** (500 points each) are hidden in lift A's and lift B's
+rooms (never in the knife's, the pistol's or the level 2 card's place, nor in
+the server room's terminals). Each one shows the QUANTUM PASSWORD FOUND panel
+with its access code (e.g. QX7-R41K) and n OF 16 FOUND; the panel's PASSWORDS
+line counts them. **A server room terminal takes 4 of them to log in.**
 
 **Quantum Lab 1**: NUCLEAR MISSION's lab equipment, two levels (a lift pad in the
 middle up to a deck on the right). On the floor: a fridge of samples, mouse
@@ -491,19 +493,54 @@ and two metal cupboards either side. The 4 cupboards can be searched.
 Square to log in (NODE n - HOLD SQUARE: LOG IN). **The camera and the drone wait
 while you're logged in** (the screen says HAZARDS DISABLED WHILE LOGGED IN), but
 **you can't log in while the drone's light is red** - it's firing at you (UNDER
-FIRE - CAN'T LOG IN). Logging in types in your next unused QUANTUM PASSWORD;
+FIRE - CAN'T LOG IN). Logging in types in your next 4 unused QUANTUM PASSWORDS;
 then pick a hacked site that hasn't launched yet (PREVENT LAUNCH: PACIFIC...),
 the abort code goes (3 seconds) and that site never launches: LAUNCH PREVENTED,
 2000 points, the site's name flying out in green when you log off, STOPPED in
 its LAUNCH box on the panel, and the next site's launch countdown starts. Each
-terminal and each password works once: that terminal then shows LOCKED. With no
-password left it's ACCESS DENIED; with nothing to stop (no site hacked, or all
+terminal and each password works once: that terminal then shows LOCKED. With
+fewer than 4 unused passwords it's ACCESS DENIED; with nothing to stop (no site hacked, or all
 launched or stopped) it's NO LAUNCHES TO STOP and the password isn't used;
 logging off from the list doesn't use it either. If the site launches while the
 abort is going, it's TOO LATE (the password isn't used). The clock and the
-sites keep going while you're logged in. Four terminals, four passwords: four
+sites keep going while you're logged in. Four terminals, 16 passwords: four
 launches can be stopped, so with all five sites hacked one always gets through.
 The game ends when every site that launched has landed.
+
+**Quantum Lab 2's hazard: hot gas up out of its two holes**, one at a time in a
+sequence of three: the left hole, the left again, then the right (then a pause
+and round again). Before each blast the hole glows and wisps rise (0.9
+seconds); then a column of gas roars up to the ceiling (1.3 seconds). Caught in
+it - jumping across, or right at the hole - is the same as the clone lab's gas:
+a full bar to under half, twice and he's dead.
+
+**Lift C's foyer guards**: on the walkway left of lift C, at each of its 4
+levels (where you come in from lift B's rooms), a soldier stands guard
+(NUCLEAR MISSION's: camouflage, helmet, rifle). Like NUCLEAR MISSION's
+soldiers, once you're on his walkway he turns to you, waits half a second,
+aims (0.55 seconds) and fires a bullet you can see, then again every 1 to 1.8
+seconds: each hit is 10 health (5 with the vest). Jump and it misses. Kill
+him with the knife, the pistol or the QX-9. **One of the four has the ACCESS
+CARD LEVEL 3**: search his body (Square) - the others have nothing on them.
+
+**Lift C's rooms** (access level 3): two of its four, at random:
+
+**The EXPERIMENTAL ARMORY**: dark gunmetal walls; in the middle, on a plinth
+under glass and a blue spotlight, the prototype **QX-9** turning slowly. Around
+it: a rack of prototypes, a workbench (a vice, parts, a laptop), an energy cell
+charger, a block of ballistic gel, ammo crates and a firing booth with a
+target. Two scientists walk either side of the case (they get suspicious like
+anyone). **Search the case and the QX-9 is yours** (EXPERIMENTAL GUN FOUND): it
+replaces your knife or pistol (one weapon at a time; you won't swap it for
+either again). Fire it like the pistol (R1 / R2, or Square with someone in
+line): a blue bolt. **Each hit halves someone's size** - shot twice they're a
+quarter size and gone (a kill: +5:00, as any) - but **1 shot in 10 doubles them
+instead** (up to 4 times the size). It works on the door guard's vest too.
+
+**The TEST CHAMBER**: a basic room to try the QX-9 out in - a TEST CHAMBER sign,
+an observation window, two height charts on the wall, a bench, a water cooler,
+a locker (3 things to search) and **three test subjects** in orange jumpsuits
+walking about.
 
 **The admin room**: two levels, most of it on the floor - the ADMINISTRATION
 front counter by the door (ENQUIRIES board, an in-tray, a bell), a desk with
@@ -532,11 +569,11 @@ person a bullet reaches goes down (500 points); the door guard's vest stops
 it.
 
 **In lift A's six rooms** (at random, never in the knife's, the pistol's or
-the level 2 card's place) are a **BULLET-PROOF VEST** (500 points; he wears
+the level 2 card's place) is a **BULLET-PROOF VEST** (500 points; he wears
 it: a guard's shot then only does half damage and he stays on his feet - the
 guard keeps firing every half second - until he's nearly out of health, when
-the next shot knocks him down as usual) and **3 TOP SECRET DOCUMENTS**
-(1000 points each, the TOP SECRET DOCUMENTS panel with n OF 3 FOUND).
+the next shot knocks him down as usual) and, across lift A's and lift B's rooms, **15 TOP SECRET DOCUMENTS**
+(1000 points each, the TOP SECRET DOCUMENTS panel with n OF 15 FOUND).
 
 **Gunfire brings a drone**: in a room with no hazard of its own (the kitchen,
 cleaning room, medical bay, security room, admin room, Quantum Lab 1), once

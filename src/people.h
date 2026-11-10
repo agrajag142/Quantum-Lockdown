@@ -24,7 +24,7 @@
 
 #include "agent_rig.h"
 
-enum PersonKind : uint8_t { PK_NONE, PK_GUARD, PK_OFFICER, PK_COMMANDER, PK_SCIENTIST, PK_STRIPPED, PK_DISGUISE, PK_SECURITY, PK_SCI_DIM, PK_SENIOR, PK_ADVANCED, PK_FIGHTER, PK_RADSUIT, PK_CHEF, PK_MAINT, PK_MAINT_UNDIES, PK_CLEANER, PK_NURSE, PK_PATIENT, PK_OFFICE };   // (QUANTUM LOCKDOWN: the kitchen's chef, the maintenance man, him in his vest and shorts)   // PK_FIGHTER: the guard, bare-headed, no rifle (SL1R4)
+enum PersonKind : uint8_t { PK_NONE, PK_GUARD, PK_OFFICER, PK_COMMANDER, PK_SCIENTIST, PK_STRIPPED, PK_DISGUISE, PK_SECURITY, PK_SCI_DIM, PK_SENIOR, PK_ADVANCED, PK_FIGHTER, PK_RADSUIT, PK_CHEF, PK_MAINT, PK_MAINT_UNDIES, PK_CLEANER, PK_NURSE, PK_PATIENT, PK_OFFICE, PK_SUBJECT };   // (QUANTUM LOCKDOWN: the kitchen's chef, the maintenance man, him in his vest and shorts)   // PK_FIGHTER: the guard, bare-headed, no rifle (SL1R4)
 
 struct PersonLook {
   uint16_t suit, suitFar, shade, trouser, trouserFar, boot, bootFar, skin, skinFar, hair;
@@ -91,6 +91,9 @@ static const PersonLook PL_PATIENT = {   // a patient: a hospital gown, bare leg
   agentRgb(196, 218, 232), agentRgb(150, 172, 188), agentRgb(176, 200, 216), agentRgb(214, 170, 138), agentRgb(164, 128, 102),
   agentRgb(214, 170, 138), agentRgb(164, 128, 102), agentRgb(214, 170, 138), agentRgb(164, 128, 102), agentRgb(80, 60, 40) };
 
+static const PersonLook PL_SUBJECT = {   // a test subject: an orange jumpsuit, white sneakers
+  agentRgb(236, 120, 40), agentRgb(176, 84, 26), agentRgb(210, 100, 32), agentRgb(236, 120, 40), agentRgb(176, 84, 26),
+  agentRgb(236, 236, 236), agentRgb(180, 180, 184), agentRgb(200, 156, 122), agentRgb(150, 112, 88), agentRgb(50, 36, 26) };
 static const PersonLook PL_OFFICE = {    // an office worker: a white shirt, dark trousers, a tie
   agentRgb(232, 236, 242), agentRgb(180, 186, 196), agentRgb(210, 214, 222), agentRgb(50, 56, 74), agentRgb(32, 36, 50),
   agentRgb(30, 24, 20), agentRgb(18, 14, 12), agentRgb(222, 180, 148), agentRgb(168, 132, 106), agentRgb(110, 70, 40) };
@@ -147,7 +150,7 @@ static void personDraw(const AgentPose &p, float x, float floorY, int facing, fl
                         (kind == PK_SCIENTIST) ? PL_SCIENTIST : (kind == PK_STRIPPED) ? PL_STRIPPED :
                         (kind == PK_DISGUISE) ? PL_DISGUISE : (kind == PK_RADSUIT) ? PL_RADSUIT : (kind == PK_SECURITY) ? PL_SECURITY :
                         (kind == PK_SCI_DIM) ? PL_SCI_DIM : (kind == PK_SENIOR) ? PL_SENIOR : (kind == PK_ADVANCED) ? PL_ADVANCED :
-                        (kind == PK_CHEF) ? PL_CHEF : (kind == PK_MAINT) ? PL_MAINT : (kind == PK_MAINT_UNDIES) ? PL_MAINT_UNDIES : (kind == PK_CLEANER) ? PL_CLEANER : (kind == PK_NURSE) ? PL_NURSE : (kind == PK_PATIENT) ? PL_PATIENT : (kind == PK_OFFICE) ? PL_OFFICE : PL_COMMANDER;
+                        (kind == PK_CHEF) ? PL_CHEF : (kind == PK_MAINT) ? PL_MAINT : (kind == PK_MAINT_UNDIES) ? PL_MAINT_UNDIES : (kind == PK_CLEANER) ? PL_CLEANER : (kind == PK_NURSE) ? PL_NURSE : (kind == PK_PATIENT) ? PL_PATIENT : (kind == PK_OFFICE) ? PL_OFFICE : (kind == PK_SUBJECT) ? PL_SUBJECT : PL_COMMANDER;
   bool coat = (kind == PK_SCIENTIST || kind == PK_DISGUISE || kind == PK_SCI_DIM || kind == PK_SENIOR || kind == PK_ADVANCED);
   AgentJoints j;
   agentSolve(p, j);
