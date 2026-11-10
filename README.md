@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 038: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 039: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -668,9 +668,10 @@ pauses the game and the clock:
   high scores). With the elevator music off, the stage music (if it's on)
   carries on playing in the lift car instead of going quiet.
 - **JUMP TO STAGE 2** (for testing): straight to the sub basement's lift
-  area at the end of stage 1 (unlocked), ready to go into the station
+  area at the end of stage 1 (unlocked), ready to go into the station, with
+  all 5 nuclear sites hacked (so the launch countdowns start straight away)
 - **ALL ACCESS (TEST)** ON / OFF (for testing stage 2): every card reader
-  opens (the panel's ACCESS CARD says ALL (TEST))
+  opens (the panel's ACCESS CARD says ALL)
 - **QUIT TO TITLE** (X twice): drops the game there and then, no score
 - **RESUME** (or Triangle again)
 

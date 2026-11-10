@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "038"
+#define GAME_VERSION      "039"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -9510,7 +9510,12 @@ static void jumpToStage2() {
   powerPanelT = 0;
   enterShaft(subShaft, SUB_FLOOR, true);
   placeAgent((SHAFT_X0 + SHAFT_X1) / 2.0f, CAR_FLOOR_Y, 1);
-  showMsg("JUMPED TO THE END OF STAGE 1", 2.5f);
+  if (sitesHacked < NUKE_SITES) {                    // (and, for testing the launches: all 5 nuclear sites hacked)
+    sitesHacked = NUKE_SITES;
+    hackT = 0;
+    if (sitesLaunched == 0) launchT = 0;
+  }
+  showMsg("JUMPED TO THE END OF STAGE 1 - ALL 5 SITES HACKED", 2.5f);
 }
 
 static void updateSettings() {
