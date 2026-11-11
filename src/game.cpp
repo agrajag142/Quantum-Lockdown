@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "044"
+#define GAME_VERSION      "045"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -2074,9 +2074,8 @@ static void paintTestRoom() {
 
 
 // ---- lift C: HAZARDOUS STORAGE. Drums of green waste on a shelf up the wall, three of them leaking - a drip
-// from each in turn - and a puddle of it on the floor to jump. The fumes eat at him while he's in here, and
-// searching (his hands in it) more: from full health, three searches and he's done - the fourth would kill
-// him. The ACCESS CARD LEVEL 4 is in one of its 6 things.
+// from each in turn - and a puddle of it on the floor to jump. The fumes eat at him steadily while he's in
+// here: from full health, about long enough to walk in, search three things and start a fourth. The ACCESS CARD LEVEL 4 is in one of its 6 things.
 static const LabItem hazItems[] = {
   { 180, ROOM_FLOOR_Y, 90, 200 }, { 310, ROOM_FLOOR_Y, 110, 150 }, { 455, ROOM_FLOOR_Y, 120, 110 },   // the hazmat locker, the chemical cabinet, barrels on a pallet
   { 830, ROOM_FLOOR_Y, 110, 100 }, { 965, ROOM_FLOOR_Y, 100, 120 }, { 1105, ROOM_FLOOR_Y, 100, 210 } };  // the lead container, the spill cart, the decon shower
@@ -2085,8 +2084,8 @@ static const LabItem hazItems[] = {
 #define HZ_PUDDLE_W 92                       // (jumpable)
 #define HZ_PUDDLE_HURT 26                    // 51% of a full bar
 #define HZ_DRIP_HURT 13                      // 26%
-#define HZ_AIR_RATE 0.5f                     // health a second, just for being in here...
-#define HZ_SEARCH_COST 14.0f                 // ...and this much more a search (spread over it)
+#define HZ_AIR_RATE 4.5f                     // health a second, just for being in here: from full, about the time to walk in,
+                                             // search three things and start a fourth (9 seconds at the quickest, ~11 usually)
 #define HZ_DRIP_EVERY 0.9f                   // (the leaks in turn: left, middle, right, a pause)
 #define HZ_DRIP_CYCLE 3.3f
 #define HZ_DRIP_GROW 0.5f                    // (a drop swelling at the leak before it falls)
@@ -2212,7 +2211,7 @@ static void paintHazPuddle() {   // (after the floor: the green on it)
 // Each frame in there: the air, the searching, the drips, the puddle
 static void updateHazStorage(float dt) {
   if (agState == ST_KO || gameOver != END_NONE) return;
-  float rate = HZ_AIR_RATE + ((agState == ST_USE && searchItem >= 0) ? HZ_SEARCH_COST / SEARCH_SECONDS : 0);
+  float rate = HZ_AIR_RATE;
   hzAcc += rate * dt;
   int whole = (int)hzAcc;
   if (whole > 0) {
@@ -2239,7 +2238,7 @@ static void updateHazStorage(float dt) {
   }
   // the puddle: on the floor in it and it burns - and back out the way he came
   if (hzPuddleCool > 0) hzPuddleCool -= dt;
-  bool inIt = fabsf(agY - ROOM_FLOOR_Y) < 1 && fabsf(agX - HZ_PUDDLE_X) < HZ_PUDDLE_W / 2.0f;
+  bool inIt = agState != ST_JUMP && fabsf(agY - ROOM_FLOOR_Y) < 1 && fabsf(agX - HZ_PUDDLE_X) < HZ_PUDDLE_W / 2.0f;   // (over it in a jump: fine)
   if (inIt && hzPuddleCool <= 0 && gameOver == END_NONE) {
     hzPuddleCool = 1.0f;
     hurt(HZ_PUDDLE_HURT);
