@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "046"
+#define GAME_VERSION      "047"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -2084,8 +2084,7 @@ static const LabItem hazItems[] = {
 #define HZ_PUDDLE_W 92                       // (jumpable)
 #define HZ_PUDDLE_HURT 26                    // 51% of a full bar
 #define HZ_DRIP_HURT 13                      // 26%
-#define HZ_DRAIN_SECONDS 7.5f                // just being in here: a full bar gone in this long...
-#define HZ_AIR_RATE ((float)HEALTH_MAX / HZ_DRAIN_SECONDS)   // ...health a second
+#define HZ_AIR_RATE 2.0f                     // health a second, just for being in here (a full bar in 25 seconds)
 #define HZ_DRIP_EVERY 0.9f                   // (the leaks in turn: left, middle, right, a pause)
 #define HZ_DRIP_CYCLE 3.3f
 #define HZ_DRIP_GROW 0.5f                    // (a drop swelling at the leak before it falls)

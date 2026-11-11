@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 046: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 047: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -535,8 +535,8 @@ turn, left, middle, right**, then a short pause - and **a puddle of it on the
 floor** in the middle to jump over. A drip that lands on you costs 26% of a full
 health bar (TOXIC DRIP!); stepping in the puddle 51% (BURNT BY TOXIC WASTE!,
 and back out the way you came). **The fumes eat at you steadily just for
-being in there**: a full health bar is gone in 7.5 seconds - be quick, two or
-three searches a visit at most (TOXIC FUMES - GET OUT AND FIND FIRST AID at a quarter). So get out, use a
+being in there**: 2 health a second (a full bar in 25 seconds), more with
+any drip or puddle (TOXIC FUMES - GET OUT AND FIND FIRST AID at a quarter). So get out, use a
 walkway's first aid, and come back. **6 things to search** (a hazmat locker, a
 chemical cabinet, barrels on a pallet, a lead container, a spill kit cart, a
 decontamination shower), and **one of them has the ACCESS CARD LEVEL 4**
