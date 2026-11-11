@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "047"
+#define GAME_VERSION      "048"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -319,7 +319,7 @@ static float s2NpcScale[S2_ROOMS][MAX_NPCS];  // (their sizes, the QX-9's doing)
 #define FG_MAXS 2
 #define FG_X (SHAFT_X0 - 190)
 static const int fgLevels[FG_LIFTS] = { 4, 3 }, fgSlots[FG_LIFTS] = { 1, 2 };
-static const float fgPostX[FG_LIFTS][FG_MAXS] = { { FG_X, 0 }, { FG_X, FG_X - 150 } };
+static const float fgPostX[FG_LIFTS][FG_MAXS] = { { FG_X, 0 }, { FG_X, FG_X - 100 } };   // (clear of the first aid cabinet)
 #define FG_AIM 0.55f                         // NUCLEAR MISSION's soldier: aims this long, fires...
 #define FG_RECOVER 0.35f                     // ...lowers it...
 #define FG_GRACE 0.5f                        // (and waits this long when he arrives)
@@ -8231,7 +8231,7 @@ static void updateAgent(float dt) {
       } else if ((pressed & BTN_USE) && atGuardBody() == 1) {
         startS2Act(6);                  // ...lift C's foyer guard: the level 3 card on him
         agFacing = npcs[bodyGuard].x < agX ? -1 : 1;
-      } else if ((pressed & BTN_USE) && atGuardBody() == 2) {
+      } else if ((pressed & BTN_USE) && atGuardBody() == 2 && !atFoyerAid()) {   // (a body by the first aid: the first aid comes first)
         const Npc &g = npcs[bodyGuard];
         showMsg(g.fsh == 0 && g.lvl == fgCard ? "NOTHING MORE ON HIM" : "NOTHING ON HIM", 1.6f);
       } else if ((pressed & BTN_USE) && atBody()) {
