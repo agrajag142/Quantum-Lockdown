@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "049"
+#define GAME_VERSION      "050"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -270,8 +270,8 @@ static std::atomic<int> rideHum{0};    // the journey's rumble
 // levels (from the top level down: A 6, B 5 ... F 1). A room's left door is on its lift's right
 // walkway, its right door (where the next lift comes down that far) on the next lift's left one;
 // each door has a card reader (access level 1..5: once in, always open). In rooms[0..20].
-enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE, LK_CLONE, LK_SOLDIER, LK_SERVER, LK_QLAB1, LK_QLAB2, LK_ARMORY, LK_TEST, LK_HAZARD };
-static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM", "QUANTUM LAB 1", "QUANTUM LAB 2", "ARMORY", "TEST CHAMBER", "HAZ STORAGE" };
+enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE, LK_CLONE, LK_SOLDIER, LK_SERVER, LK_QLAB1, LK_QLAB2, LK_ARMORY, LK_TEST, LK_HAZARD, LK_ARMORY2, LK_ARENA };
+static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM", "QUANTUM LAB 1", "QUANTUM LAB 2", "ARMORY", "TEST CHAMBER", "HAZ STORAGE", "ARMORY 2", "SECURITY ZONE" };
 static int8_t s2Room[S2_LIFTS][S2_LEVELS];   // the room on the right of each lift at each level (-1 none)
 static uint8_t s2Kind[S2_ROOMS], s2Lvl[S2_ROOMS];   // what it is, the access level its doors need
 static bool s2Aid[S2_LIFTS][S2_LEVELS];      // each left walkway's first aid cabinet: used
@@ -301,6 +301,7 @@ struct Npc {                                 // the lab's people (the chef, the 
   bool knifeOnly;                            // (the security room's door guard: a bullet won't stop him)
   bool seated;                               // (at a desk)
   float scale, fxT;                          // his size (the QX-9: halved, or doubled); the QX-9's flash on him
+  bool burn;                                 // (killed by the FX-5: burning to ash)
   bool foyer;                                // one of lift C's foyer guards (NUCLEAR MISSION's soldier: sees him, aims, fires)
   int8_t lvl, fsh, fslot;                    // (which level's, which lift's (0 C, 1 D), which of its guards)
   uint8_t fstate;                            // (0 waiting, 1 aiming, 2 just fired)
@@ -312,6 +313,7 @@ static bool s2NpcDead[S2_ROOMS][MAX_NPCS];  // who has been killed, where they l
 static float s2NpcDX[S2_ROOMS][MAX_NPCS], s2NpcDY[S2_ROOMS][MAX_NPCS];
 static int8_t s2NpcDDir[S2_ROOMS][MAX_NPCS];
 static float s2NpcScale[S2_ROOMS][MAX_NPCS];  // (their sizes, the QX-9's doing)
+static bool s2NpcAsh[S2_ROOMS][MAX_NPCS];     // (burnt to ash: nothing left of them)
 // The foyer guards, on the walkway left of the lift: lift C, one at each of its 4 levels (one of them with the
 // level 3 card); lift D, two at each of its 3 levels
 #define FG_LIFTS 2                           // (lifts C and D: shafts 2 and 3)
@@ -327,11 +329,16 @@ static const float fgPostX[FG_LIFTS][FG_MAXS] = { { FG_X, 0 }, { FG_X, FG_X - 10
 static bool fgDead[FG_LIFTS][FG_MAXL][FG_MAXS], fgSearched[FG_MAXL];
 static float fgDX[FG_LIFTS][FG_MAXL][FG_MAXS], fgScale[FG_LIFTS][FG_MAXL][FG_MAXS];
 static int8_t fgDDir[FG_LIFTS][FG_MAXL][FG_MAXS];
+static bool fgAsh[FG_LIFTS][FG_MAXL][FG_MAXS];
 static int fgCard = 0, fgLoaded = -1;        // (lift C's level whose guard has the card; the walkway in npcs[] now: lift*8 + level)
 struct GShot { bool on; float x, y; int dir; };
 static GShot gShots[4];
 // The QX-9 (the EXPERIMENTAL ARMORY's prototype): a shot halves someone (1 in 10 doubles them); a quarter size and they're gone
 static bool hasXGun = false, xGunTaken = false;
+static bool hasFlamer = false, flamerTaken = false;   // the FX-5 (the second armory's flamethrower)
+static int arKilled[S2_ROOMS];               // (lift D's top-down rooms: how many each has lost; they don't come back)
+static void paintArmory2();
+static void arenaEnter(bool fromLeft);
 static int s2HazCard = 0;                    // (hazardous storage: which of its 6 things has the level 4 card)
 static bool hasKnife = false;                // the kitchen's knife
 static bool hasGun = false;                  // the security room's pistol (R1 / R2 to fire)
@@ -594,7 +601,7 @@ static void layOutStage2() {
       s2Kind[n] = LK_LAB;
       s2Lvl[n] = (uint8_t)(s + 1 > 5 ? 5 : s + 1);   // a column's rooms all the same: lift A's level 1, B's 2 ... E's and F's 5
       for (int k = 0; k < S2_ITEMS; k++) { s2Searched[n][k] = false; s2Prog[n][k] = 0; }
-      for (int k = 0; k < MAX_NPCS; k++) { s2NpcDead[n][k] = false; s2NpcScale[n][k] = 1; }
+      for (int k = 0; k < MAX_NPCS; k++) { s2NpcDead[n][k] = false; s2NpcScale[n][k] = 1; s2NpcAsh[n][k] = false; }
       s2Room[s][f] = (int8_t)n++;
     }
   // lift A's six rooms, in a random order: the kitchen (level 1: the maintenance man's card), the rest 2..5
@@ -631,14 +638,19 @@ static void layOutStage2() {
     s2Kind[s2Room[2][fl[0]]] = LK_ARMORY;
     s2Kind[s2Room[2][fl[1]]] = LK_TEST;
     s2Kind[s2Room[2][fl[2]]] = LK_HAZARD;
+    s2Kind[s2Room[2][fl[3]]] = LK_ARMORY2;     // (the FX-5)
     s2HazCard = rnd(6);                      // (the level 4 card: one of its 6 things)
   }
   memset(fgDead, 0, sizeof(fgDead));
+  memset(fgAsh, 0, sizeof(fgAsh));
   memset(fgSearched, 0, sizeof(fgSearched));
   for (int a = 0; a < FG_LIFTS; a++) for (int l = 0; l < FG_MAXL; l++) for (int k = 0; k < FG_MAXS; k++) fgScale[a][l][k] = 1;
   fgCard = rnd(fgLevels[0]);
   fgLoaded = -1;
   hasXGun = xGunTaken = false;
+  hasFlamer = flamerTaken = false;
+  for (int f = 0; f < 3; f++) s2Kind[s2Room[3][f]] = LK_ARENA;   // lift D: SECURITY ZONES, seen from above
+  memset(arKilled, 0, sizeof(arKilled));
   memset(roomAt, -1, sizeof(roomAt));
   wkFloor = rnd(S2_LEVELS);
   wkState = WK_WAIT;
@@ -935,7 +947,8 @@ enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX
                      SFX_HISS,     // (the clone lab's hot gas)
                      SFX_FALL, SFX_BOOM,     // (a landing: the warhead falling, the detonation)
                      SFX_RAY,                // (the QX-9)
-                     SFX_HEART, SFX_HPALERT };   // (low health: a heartbeat, the warning)
+                     SFX_HEART, SFX_HPALERT,   // (low health: a heartbeat, the warning)
+                     SFX_FLAME };              // (the FX-5: a roaring whoosh)
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -1117,6 +1130,10 @@ static void startEffect(uint8_t sfx) {
       startVoice(WAVE_SQUARE, 100, 100, 0, 400, 0.10f);
       startVoice(WAVE_SQUARE, 150, 150, 0, 400, 0.06f);
       startVoice(WAVE_NOISE, 4000, 4000, 0, 120, 0.06f);
+      break;
+    case SFX_FLAME:                            // the FX-5: a roaring whoosh (again and again while it's held)
+      startVoice(WAVE_NOISE, 1400, 900, 0, 260, 0.20f);
+      startVoice(WAVE_NOISE, 300, 200, 0, 260, 0.16f);
       break;
     case SFX_HEART:                            // a heartbeat: two low thumps
       startVoice(WAVE_TRIANGLE, 90, 40, 0, 110, 0.55f);
@@ -2304,6 +2321,7 @@ static int s2ItemCount(int kind) {   // how many things a stage 2 room has to se
     case LK_ARMORY: return (int)(sizeof(armoryItems) / sizeof(armoryItems[0]));
     case LK_TEST: return (int)(sizeof(testItems) / sizeof(testItems[0]));
     case LK_HAZARD: return (int)(sizeof(hazItems) / sizeof(hazItems[0]));
+    case LK_ARMORY2: return (int)(sizeof(armoryItems) / sizeof(armoryItems[0]));
   }
   return 0;
 }
@@ -2327,7 +2345,7 @@ static void placeLabItems(int idx) {
   if (s2Kind[idx] == LK_SERVER) for (const LabItem &it : serverItems) add(it);
   if (s2Kind[idx] == LK_QLAB1) for (const LabItem &it : qlab1Items) add(it);
   if (s2Kind[idx] == LK_QLAB2) for (const LabItem &it : qlab2Items) add(it);
-  if (s2Kind[idx] == LK_ARMORY) for (const LabItem &it : armoryItems) add(it);
+  if (s2Kind[idx] == LK_ARMORY || s2Kind[idx] == LK_ARMORY2) for (const LabItem &it : armoryItems) add(it);
   if (s2Kind[idx] == LK_TEST) for (const LabItem &it : testItems) add(it);
   if (s2Kind[idx] == LK_HAZARD) for (const LabItem &it : hazItems) add(it);
 }
@@ -4751,7 +4769,7 @@ static void paintLabRoom() {
   bool clean = s2Kind[idx] == LK_CLEANING || s2Kind[idx] == LK_STORE;   // (three levels: no duct)
   if (!clean) labDuctBand(0, SCREEN_W - 1, CEIL_Y + 16, CEIL_Y + 58);   // (the cleaning room: its top level up there instead)
   if (s2Kind[idx] == LK_SERVER) serverWall(0, SCREEN_W - 1, CEIL_Y + 61, ROOM_FLOOR_Y - 1);   // (shiny metal, not white tiles)
-  else if (s2Kind[idx] == LK_ARMORY) armoryWall();                                            // (dark gunmetal)
+  else if (s2Kind[idx] == LK_ARMORY || s2Kind[idx] == LK_ARMORY2) armoryWall();               // (dark gunmetal)
   else labWall(0, SCREEN_W - 1, clean ? CEIL_Y + 13 : CEIL_Y + 61, ROOM_FLOOR_Y - 1);
   if (s2Kind[idx] == LK_CLONE) {
     paintCloneLab();
@@ -4765,6 +4783,8 @@ static void paintLabRoom() {
     paintQuantumLab2();
   } else if (s2Kind[idx] == LK_ARMORY) {
     paintArmory();
+  } else if (s2Kind[idx] == LK_ARMORY2) {
+    paintArmory2();
   } else if (s2Kind[idx] == LK_TEST) {
     paintTestRoom();
   } else if (s2Kind[idx] == LK_HAZARD) {
@@ -5047,8 +5067,13 @@ static void personWalk(AgentPose &p, float t) {
 
 // The live parts of the lab rooms behind the people: the monitors' traces, the CCTV pictures, the patients
 static int decorAt();
+static void drawArmory2Anim();
 // Lift B's rooms, moving: bubbles in the clone tanks, the vitals traces, the fans and the big screen's scan
 static void drawLiftBRoomAnim(int k) {
+  if (k == LK_ARMORY2) {
+    drawArmory2Anim();
+    return;
+  }
   if (k == LK_ARMORY) {   // the blue spotlight down on the case, the glass, the QX-9 turning slowly (till he takes it)
     float pulse = 0.5f + 0.5f * sinf(clockT * 2.2f);
     float bx[4] = { 622, 658, ARMORY_CASE_X1 + 30.0f, ARMORY_CASE_X0 - 30.0f }, by[4] = { CEIL_Y + 88.0f, CEIL_Y + 88.0f, 600, 600 };
@@ -5163,7 +5188,7 @@ static void drawLiftBRoomAnim(int k) {
 
 static void drawLabRoomBack() {
   int k = s2Kind[curRoom];
-  if (k == LK_CLONE || k == LK_SOLDIER || k == LK_SERVER || k == LK_QLAB1 || k == LK_QLAB2 || k == LK_ARMORY) {
+  if (k == LK_CLONE || k == LK_SOLDIER || k == LK_SERVER || k == LK_QLAB1 || k == LK_QLAB2 || k == LK_ARMORY || k == LK_ARMORY2) {
     drawLiftBRoomAnim(k);
     return;
   }
@@ -5694,6 +5719,7 @@ static void enterRoom(int idx, bool fromLeft) {
     c.view = 0;
   }
   resetHazardsForEntry(fromLeft);
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_ARENA) arenaEnter(fromLeft);
   // the lab's people: on their paths, walking away from the door he came in by
   npcCount = 0;
   for (int k = 0; k < MY_SHOTS; k++) myShots[k].on = false;
@@ -5721,8 +5747,11 @@ static void enterRoom(int idx, bool fromLeft) {
     n.fxT = 0;
     int slot = npcCount - 1;
     n.scale = (idx < S2_ROOMS) ? s2NpcScale[idx][slot] : 1.0f;
-    if (s2NpcDead[idx][slot]) {              // killed: where he fell
+    n.burn = false;
+    if (s2NpcDead[idx][slot]) {              // killed: where he fell (or burnt: nothing)
       n.dead = true;
+      n.burn = s2NpcAsh[idx][slot];
+      if (n.burn) n.dieT = 99;
       n.x = s2NpcDX[idx][slot];
       n.y = s2NpcDY[idx][slot];
       n.dir = s2NpcDDir[idx][slot];
@@ -5759,7 +5788,7 @@ static void enterRoom(int idx, bool fromLeft) {
     bool others = !npcs[1].dead || !npcs[2].dead;
     if (npcs[0].dead && others) secAlertT = SEC_ALERT_SECONDS;   // (back after knifing the door guard: they're waiting for him)
   }
-  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_ARMORY) {    // two scientists walking, either side of the case
+  if (stage == 2 && idx < S2_ROOMS && (s2Kind[idx] == LK_ARMORY || s2Kind[idx] == LK_ARMORY2)) {   // two scientists walking, either side of the case
     addNpc(PK_SCIENTIST, ROOM_FLOOR_Y, 160, 620, 120);
     addNpc(PK_SENIOR, ROOM_FLOOR_Y, 660, 1150, 300);
   }
@@ -7336,7 +7365,7 @@ static int atNpcToKill() {
 static int killTarget = -1;
 static bool onWalkway();
 static bool canFire() {                      // the pistol (or the QX-9): in a lab room, or on a walkway
-  return (hasGun || hasXGun) && stage == 2 && ((mode == MODE_ROOM && curRoom < S2_ROOMS) || onWalkway()) && gameOver == END_NONE;
+  return (hasGun || hasXGun || hasFlamer) && stage == 2 && ((mode == MODE_ROOM && curRoom < S2_ROOMS) || onWalkway()) && gameOver == END_NONE;
 }
 // Someone alive in line on his level, the way he faces (then Square fires, as in NUCLEAR MISSION; else it searches)
 static bool targetInLine() {
@@ -7384,6 +7413,7 @@ static void npcPersist(int i) {
     fgDX[n.fsh][n.lvl][n.fslot] = n.x;
     fgDDir[n.fsh][n.lvl][n.fslot] = (int8_t)n.dir;
     fgScale[n.fsh][n.lvl][n.fslot] = n.scale;
+    fgAsh[n.fsh][n.lvl][n.fslot] = n.burn;
     return;
   }
   if (mode != MODE_ROOM || curRoom >= S2_ROOMS) return;
@@ -7392,6 +7422,7 @@ static void npcPersist(int i) {
   s2NpcDY[curRoom][i] = n.y;
   s2NpcDDir[curRoom][i] = (int8_t)n.dir;
   s2NpcScale[curRoom][i] = n.scale;
+  s2NpcAsh[curRoom][i] = n.burn;
 }
 static void npcKilled(int i, bool shot) {
   Npc &n = npcs[i];
@@ -7426,6 +7457,160 @@ static void xGunHit(int i) {               // the QX-9: half the size (1 in 10: 
     showMsg("SHRUNK TO HALF SIZE", 1.6f);
   }
   npcPersist(i);
+}
+
+
+// ============================================================ the FX-5 INFERNO (the second EXPERIMENTAL ARMORY's)
+// A flamethrower: held, it pours out burning gas (unlimited fuel, for now). Anyone it catches burns, falls,
+// chars and crumbles to ash - nothing left. Flames are particles: in a room or on a walkway they fly flat
+// out from the nozzle; in lift D's top-down rooms they fly where he faces.
+#define FLAMES 96
+struct Flame { bool on; float x, y, vx, vy, age, life; };
+static Flame flames[FLAMES];
+static float flameSndT = 0;
+static float frnd(float a, float b) { return a + (b - a) * (fxRnd(0, 10001) / 10000.0f); }
+static void flameEmit(float x, float y, float dx, float dy, float dt) {   // (dx, dy: the direction, unit)
+  int n = (int)(dt * 140) + 1;
+  for (int k = 0; k < n; k++) {
+    int f = -1;
+    for (int i = 0; i < FLAMES; i++) if (!flames[i].on) { f = i; break; }
+    if (f < 0) return;
+    float a = atan2f(dy, dx) + frnd(-0.18f, 0.18f), sp = frnd(430, 560);
+    flames[f] = { true, x, y, cosf(a) * sp, sinf(a) * sp, 0, frnd(0.38f, 0.52f) };
+  }
+  flameSndT -= dt;
+  if (flameSndT <= 0) { flameSndT = 0.22f; sfxPlay(SFX_FLAME); }
+}
+static void updateFlames(float dt) {
+  for (int i = 0; i < FLAMES; i++) {
+    Flame &f = flames[i];
+    if (!f.on) continue;
+    f.age += dt;
+    if (f.age >= f.life) { f.on = false; continue; }
+    f.x += f.vx * dt;
+    f.y += f.vy * dt;
+    f.vx *= (1 - 1.6f * dt);
+    f.vy = f.vy * (1 - 1.6f * dt) - 40 * dt;   // (rising a little as it slows)
+  }
+}
+static void drawFlames() {
+  for (int i = 0; i < FLAMES; i++) {
+    const Flame &f = flames[i];
+    if (!f.on) continue;
+    float k = f.age / f.life, r = 8 + 26 * k;
+    if (k < 0.55f) {
+      glowDisc(f.x, f.y, r * 1.6f, 255, (int)(200 - 140 * k), 40, 0.55f * (1 - k));
+      fillCircle((int)f.x, (int)f.y, (int)(r * 0.45f), k < 0.2f ? rgb565(255, 250, 200) : rgb565(255, 170, 40));
+    } else {
+      glowDisc(f.x, f.y, r * 1.4f, 90, 80, 76, 0.4f * (1 - k));       // smoke
+    }
+  }
+}
+
+// The flamer itself: a stubby gun, a fuel tank under it, a nozzle with a pilot light (facing right; sc 1 ~ 220 long)
+static void drawFlamer(float cx, float cy, float sc, float glow, int dir = 1) {
+  auto P = [&](float x, float y, float &ox, float &oy) { ox = cx + x * sc * dir; oy = cy + y * sc; };
+  float xs[6], ys[6], a, b, c, d;
+  const float body[6][2] = { { -110, -16 }, { 30, -16 }, { 46, -8 }, { 46, 10 }, { -60, 14 }, { -110, 10 } };
+  for (int i = 0; i < 6; i++) P(body[i][0], body[i][1], xs[i], ys[i]);
+  fillPolygonF(xs, ys, 6, rgb565(70, 74, 82));
+  P(-100, -16, a, b); P(30, -10, c, d);
+  fillRectF(a, b, c, d, rgb565(130, 136, 146));
+  P(-80, 14, a, b); P(10, 44, c, d);                       // the fuel tank, red, a hazard band
+  fillRectF(a, b, c, d, rgb565(200, 40, 30));
+  P(-80, 24, a, b); P(10, 30, c, d);
+  fillRectF(a, b, c, d, rgb565(240, 200, 40));
+  P(-80, 29, a, b);
+  fillCircle((int)a, (int)b, (int)(15 * sc), rgb565(170, 34, 26));
+  P(10, 29, a, b);
+  fillCircle((int)a, (int)b, (int)(15 * sc), rgb565(170, 34, 26));
+  const float grip[4][2] = { { -50, 12 }, { -26, 12 }, { -34, 58 }, { -60, 58 } };
+  for (int i = 0; i < 4; i++) P(grip[i][0], grip[i][1], xs[i], ys[i]);
+  fillPolygonF(xs, ys, 4, rgb565(40, 34, 30));
+  P(46, -6, a, b); P(110, 6, c, d);                        // the barrel, the nozzle
+  fillRectF(a, b, c, d, rgb565(110, 116, 126));
+  P(104, -10, a, b); P(118, 10, c, d);
+  fillRectF(a, b, c, d, rgb565(60, 64, 72));
+  P(124, 0, a, b);
+  glowDisc(a, b, 16 * sc, 120, 170, 255, 0.5f * glow);      // the pilot light: blue
+  fillCircle((int)a, (int)b, (int)(4 * sc) + 1, rgb565(150, 200, 255));
+  P(-60, -2, a, b);
+  drawVectorText("FX-5", a, b, 1.2f * sc, rgb565(240, 200, 60), true);
+}
+
+
+// In a room (or on a walkway): his flames catching someone - he burns
+static void flameHitNpcs() {
+  for (int i = 0; i < npcCount; i++) {
+    Npc &n = npcs[i];
+    if (n.dead) continue;
+    for (int k = 0; k < FLAMES; k++) {
+      const Flame &f = flames[k];
+      if (!f.on || f.age > f.life * 0.75f) continue;
+      if (fabsf(f.x - n.x) < 30 * fmaxf(n.scale, 0.5f) && f.y > n.y - 170 * n.scale && f.y < n.y + 4) {
+        n.burn = true;
+        npcKilled(i, true);
+        sfxPlay(SFX_SCREAM);
+        break;
+      }
+    }
+  }
+}
+
+// A body burning: flames on him standing, falling; charred black on the floor; ash crumbling; then nothing
+static void drawBurning(const Npc &n) {
+  float t = n.dieT, sc = AGENT_SCALE * n.scale;
+  if (t < 0.9f) {
+    AgentPose p = PERSON_IDLE;
+    p.armN = 60 + 40 * sinf(t * 18); p.armF = 50 - 40 * sinf(t * 16);
+    drawPersonU(p, n.x, n.y, n.dir, sc, t < 0.4f ? n.kind : PK_CHAR);
+  } else if (t < 1.8f) {
+    AgentPose p = PERSON_LIE;
+    p.spin = -90;
+    drawPersonU(p, n.x, n.y, n.dir, sc, PK_CHAR);
+  } else if (t < 3.2f) {
+    float k = (t - 1.8f) / 1.4f, w = 60 * n.scale * (1 - 0.6f * k), h = 18 * n.scale * (1 - k);
+    for (int j = 0; j < 5; j++) fillCircle((int)(n.x - w + j * w / 2), (int)(n.y - h * 0.5f), (int)(h * 0.9f) + 1, rgb565(110, 106, 100));
+    glowDisc(n.x, n.y - 30 - 60 * k, 30, 120, 116, 110, 0.3f * (1 - k));
+    return;
+  } else {
+    return;
+  }
+  for (int j = 0; j < 7; j++) {                                // the flames on him
+    float fx = n.x + (j - 3) * 9 * n.scale + 4 * sinf(clockT * 13 + j);
+    float base = t < 0.9f ? n.y - 20 * n.scale - (j % 3) * 45 * n.scale : n.y - 10;
+    float hgt = (18 + 14 * sinf(clockT * 17 + j * 2)) * n.scale * (t < 1.8f ? 1.0f : 0.5f);
+    glowDisc(fx, base - hgt * 0.5f, 22 * n.scale, 255, 140, 40, 0.5f);
+    int tx[3] = { (int)fx - 7, (int)fx + 7, (int)fx }, ty[3] = { (int)base, (int)base, (int)(base - hgt) };
+    fillPolygon(tx, ty, 3, rgb565(255, 150, 30));
+  }
+}
+
+// ---- lift C's second armory: the FX-5 INFERNO under glass, red light
+static void paintArmory2() {
+  paintArmory();
+  fillRect(380, 140, 900, 200, rgb565(24, 8, 6));                 // its own sign over the first's
+  drawRectOutline(380, 140, 900, 200, rgb565(255, 110, 40), 3);
+  drawVectorText("EXPERIMENTAL ARMORY 2", 640, 170, 3.2f, rgb565(255, 170, 90), true);
+  fillRect(560, 636, 720, 660, rgb565(14, 10, 8));
+  drawVectorText("PROTOTYPE FX-5", 640, 648, 1.4f, rgb565(255, 150, 80), true);
+  fillRect(620, CEIL_Y + 80, 660, CEIL_Y + 88, rgb565(255, 160, 90));
+}
+static void drawArmory2Anim() {
+  float pulse = 0.5f + 0.5f * sinf(clockT * 2.6f);
+  float bx[4] = { 622, 658, ARMORY_CASE_X1 + 30.0f, ARMORY_CASE_X0 - 30.0f }, by[4] = { CEIL_Y + 88.0f, CEIL_Y + 88.0f, 600, 600 };
+  blendPolygonF(bx, by, 4, 255, 120, 50, 0.10f + 0.04f * pulse);
+  glowDisc(640, 595, 160, 255, 110, 40, 0.18f + 0.08f * pulse);
+  if (!flamerTaken) {
+    float bob = 4 * sinf(clockT * 1.6f);
+    glowDisc(640, 500 + bob, 110, 255, 120, 50, 0.22f + 0.1f * pulse);
+    drawFlamer(640, 490 + bob, 0.72f, pulse);
+  } else {
+    drawVectorText("EMPTY", 640, 500, 2.0f, rgb565(170, 110, 80), true);
+  }
+  blendRect(ARMORY_CASE_X0, ARMORY_CASE_Y0, ARMORY_CASE_X1, ARMORY_CASE_Y1, 255, 200, 160, 0.10f);
+  drawLine(ARMORY_CASE_X0 + 16, ARMORY_CASE_Y1 - 10, ARMORY_CASE_X0 + 70, ARMORY_CASE_Y0 + 10, rgb565(255, 230, 210), false);
+  fillRect(560, 620, 720, 623, pulse > 0.5f ? rgb565(255, 150, 70) : rgb565(220, 80, 40));
 }
 
 static void updateMyShots(float dt) {
@@ -7579,6 +7764,16 @@ static void updateS2Act(float dt) {
     if (t >= 0.8f) {
       s2Act = 0;
       setState(ST_IDLE, 0.2f);
+    }
+  } else if (s2Act == 5 && hasFlamer) {      // the FX-5: arm out, flames pouring out while it's held
+    static const AgentPose AIMF = { 0, -2, 88, 2, 80, 14, 6, -4, -8, -3, 0, 0, 0, 1, 0 };
+    p = AIMF;
+    int hx, hy, mx, my;
+    agentHand(AIMF, agX, agY, agFacing, myScale, hx, hy, mx, my);
+    flameEmit((float)hx + agFacing * 40.0f, (float)hy - 3.0f, (float)agFacing, 0, dt);
+    if (t >= 0.15f && !((held & (BTN_FIRE | BTN_USE)) && canFire())) {
+      s2Act = 0;
+      setState(ST_IDLE, 0.15f);
     }
   } else if (s2Act == 5) {                   // the pistol: arm out, fire
     static const AgentPose AIMP = { 0, -2, 88, 2, 80, 14, 6, -4, -8, -3, 0, 0, 0, 1, 0 };
@@ -7836,6 +8031,10 @@ static void drawNpcs() {
     const Npc &n = npcs[i];
     AgentPose p;
     if (n.fxT > 0) glowDisc(n.x, n.y - 90 * n.scale, 90 * fmaxf(n.scale, 0.5f), 90, 180, 255, n.fxT * 1.4f);
+    if (n.dead && n.burn) {                  // the FX-5's: burning, charred, ash, gone
+      drawBurning(n);
+      continue;
+    }
     if (n.dead) {                            // killed: down, a pool spreading under him
       float f = fminf(1.0f, n.dieT / 0.5f);
       int pw = (int)((10 + 50 * fminf(1.0f, n.dieT / 3.0f)) * n.scale);
@@ -7900,6 +8099,7 @@ static void drawNpcs() {
 static void drawFoyerGuardAt(int sh, int L, int fy) {   // (not the ones in npcs[]: standing at their posts, or where they fell)
   for (int k = 0; k < fgSlots[sh]; k++) {
     float sc = fgScale[sh][L][k];
+    if (fgAsh[sh][L][k]) continue;           // (burnt to ash)
     if (fgDead[sh][L][k]) {
       AgentPose p = PERSON_LIE;
       p.spin = -90;
@@ -7927,9 +8127,10 @@ static void drawSuspicionMeter() {
 }
 
 // ACCESS CARD LEVEL n FOUND: the card, big, for a moment
-static bool panelGun = false, panelVest = false, panelXGun = false;
-static void foundCard(int level) {          // (-1: the knife, -2: the pistol, -3: the vest, -4: the QX-9)
+static bool panelGun = false, panelVest = false, panelXGun = false, panelFlamer = false;
+static void foundCard(int level) {          // (-1: the knife, -2: the pistol, -3: the vest, -4: the QX-9, -5: the FX-5)
   panelXGun = level == -4;
+  panelFlamer = level == -5;
   panelKnife = level == -1;
   panelGun = level == -2;
   panelVest = level == -3;
@@ -7946,6 +8147,14 @@ static void drawCardPanel() {
   blendRect(x0, y0, x1, y1, 0, 0, 0, 0.78f * k);
   drawRectOutline(x0, y0, x1, y1, rgb565(90, 200, 255), 3);
   char b[40];
+  if (panelFlamer) {                         // the FX-5
+    drawVectorText("EXPERIMENTAL FLAMETHROWER FOUND", SCREEN_W / 2, y0 + 40, 3.0f, rgb565(255, 170, 90), true);
+    glowDisc(SCREEN_W / 2, y0 + 130, 140, 255, 120, 50, 0.3f);
+    drawFlamer(SCREEN_W / 2, y0 + 120, 1.3f, 0.5f + 0.5f * sinf(clockT * 3));
+    drawVectorText("HOLD R1 OR R2 - THEY BURN TO ASH", SCREEN_W / 2, y1 - 52, 2.0f, rgb565(255, 220, 120), false);
+    drawVectorText("(UNLIMITED FUEL - FOR NOW)", SCREEN_W / 2, y1 - 24, 1.7f, rgb565(190, 200, 220), false);
+    return;
+  }
   if (panelXGun) {                           // the QX-9
     drawVectorText("EXPERIMENTAL GUN FOUND", SCREEN_W / 2, y0 + 40, 3.2f, rgb565(140, 200, 255), true);
     glowDisc(SCREEN_W / 2, y0 + 130, 140, 80, 170, 255, 0.3f);
@@ -8150,6 +8359,450 @@ static void drawHoleGas() {
     glowDisc(x + s2 * (40 + 30 * fmodf(clockT * 3, 1.0f)), top + 20, 40, 250, 240, 225, 0.35f * fade);
 }
 
+
+// ============================================================ lift D's rooms: SECURITY ZONES, seen from above
+// A different game: the room from above, him walking any of 8 ways, from the door at the bottom left to the
+// one at the top right (or back). Desks, crates, cabinets in the way - cover for both sides. Soldiers hold
+// the room and more come in through the door at the top in threes, in a V, till 15 have come; each one
+// that sees him aims (0.55s, NUCLEAR MISSION's) and fires, and again every 1 to 1.8 seconds. He fires back
+// the way he's facing (R1 / R2 or Square): the pistol, the QX-9, or the FX-5's flames (they burn to ash).
+#define AR_X0 30
+#define AR_X1 1250
+#define AR_Y0 70
+#define AR_Y1 700
+#define AR_DOOR_L0 588                       // the left door (bottom left): its gap in the left wall
+#define AR_DOOR_L1 684
+#define AR_DOOR_R0 86                        // the right door (top right): its gap in the right wall
+#define AR_DOOR_R1 182
+#define AR_SPAWN_X0 580                      // the soldiers' door, in the top wall
+#define AR_SPAWN_X1 700
+#define AR_R 21                              // (him, them: their radius)
+#define AR_SC 1.35f                          // (and how big they're drawn)
+#define AR_SPEED 260.0f
+#define AR_GUARD_SPEED 150.0f
+#define AR_TOTAL 15                          // soldiers a room, all told
+#define AR_GMAX 16                           // (room for all 15: the shot stay where they fell)
+#define AR_SHOTS 24
+#define AR_KILL_SCORE 250
+enum ObKind : uint8_t { OB_DESK, OB_CRATE, OB_CABINET, OB_SOFA, OB_PILLAR, OB_TABLE };
+struct Obstacle { int16_t x0, y0, x1, y1; uint8_t kind; };
+static const Obstacle arObs[] = {
+  { 200, 440, 340, 490, OB_DESK },   { 400, 560, 470, 630, OB_CRATE },  { 470, 590, 530, 650, OB_CRATE },
+  { 560, 330, 710, 380, OB_DESK },   { 820, 470, 870, 640, OB_CABINET }, { 900, 220, 980, 300, OB_CRATE },
+  { 1000, 420, 1150, 476, OB_SOFA }, { 290, 190, 350, 250, OB_PILLAR }, { 690, 540, 800, 600, OB_TABLE },
+  { 1080, 250, 1130, 300, OB_PILLAR }, { 140, 290, 200, 350, OB_CRATE } };
+#define AR_OBS ((int)(sizeof(arObs) / sizeof(arObs[0])))
+struct AGuard { bool on, dead, burn, walking; float x, y, tx, ty, face, aimT, cool, t, dieT, scale, strafeT; uint8_t fstate; };
+struct AShot { bool on, mine, ray; float x, y, vx, vy; };
+static AGuard ag[AR_GMAX];
+static AShot ash[AR_SHOTS];
+static int arSpawned = 0;
+static float apX = 0, apY = 0, apFace = 0, apWalkT = 0, apFireT = 0, arWaveT = 0, arFlashT = 0;
+static bool arOn() { return stage == 2 && mode == MODE_ROOM && curRoom < S2_ROOMS && s2Kind[curRoom] == LK_ARENA; }
+
+static bool arBlocked(float x, float y, float r) {   // in a wall (not a door's gap) or something
+  for (int i = 0; i < AR_OBS; i++) {
+    const Obstacle &o = arObs[i];
+    float cx = clampv(x, (float)o.x0, (float)o.x1), cy = clampv(y, (float)o.y0, (float)o.y1);
+    if ((x - cx) * (x - cx) + (y - cy) * (y - cy) < r * r) return true;
+  }
+  if (y - r < AR_Y0 && !(x > AR_SPAWN_X0 && x < AR_SPAWN_X1)) return true;
+  if (y + r > AR_Y1) return true;
+  if (x - r < AR_X0 && !(y - r > AR_DOOR_L0 && y + r < AR_DOOR_L1)) return true;
+  if (x + r > AR_X1 && !(y - r > AR_DOOR_R0 && y + r < AR_DOOR_R1 && !rooms[curRoom].noRightDoor)) return true;
+  return false;
+}
+static bool arSolid(float x, float y) {      // (for shots and flames: inside something or past a wall)
+  if (x < AR_X0 || x > AR_X1 || y < AR_Y0 || y > AR_Y1) return true;
+  for (int i = 0; i < AR_OBS; i++) {
+    const Obstacle &o = arObs[i];
+    if (x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1) return true;
+  }
+  return false;
+}
+static bool arSight(float x0, float y0, float x1, float y1) {   // a clear line between
+  float d = sqrtf((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+  int n = (int)(d / 12) + 1;
+  for (int k = 1; k < n; k++) {
+    float u = k / (float)n, x = x0 + (x1 - x0) * u, y = y0 + (y1 - y0) * u;
+    for (int i = 0; i < AR_OBS; i++) {
+      const Obstacle &o = arObs[i];
+      if (x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1) return false;
+    }
+  }
+  return true;
+}
+
+static void arSpawnGuard(float x, float y, float tx, float ty, bool walking) {
+  for (int i = 0; i < AR_GMAX; i++)
+    if (!ag[i].on) {
+      AGuard &g = ag[i];
+      memset(&g, 0, sizeof(g));
+      g.on = true;
+      g.x = x; g.y = y; g.tx = tx; g.ty = ty;
+      g.walking = walking;
+      g.face = atan2f(ty - y, tx - x);
+      g.scale = 1;
+      g.cool = 1.4f + i * 0.35f;
+      g.strafeT = frnd(1.5f, 3.0f);
+      arSpawned++;
+      return;
+    }
+}
+static void arWave() {                       // three in through the top door, in a V, to a spot with cover
+  static const float spots[3][2] = { { 640, 250 }, { 470, 300 }, { 820, 330 } };
+  const float *c = spots[fxRnd(0, 3)];
+  static const float form[3][2] = { { 0, 0 }, { -90, 40 }, { 90, 40 } };
+  int n = (AR_TOTAL - arSpawned < 3 ? AR_TOTAL - arSpawned : 3);
+  for (int k = 0; k < n; k++)
+    arSpawnGuard(640 + form[k][0] * 0.5f, AR_Y0 - 30 - form[k][1], c[0] + form[k][0], c[1] + form[k][1], true);
+  sfxPlay(SFX_ALARM);
+  showMsg("MORE SOLDIERS!", 1.6f);
+}
+
+static void arenaEnter(bool fromLeft) {
+  memset(ag, 0, sizeof(ag));
+  memset(ash, 0, sizeof(ash));
+  for (int i = 0; i < FLAMES; i++) flames[i].on = false;
+  apX = fromLeft ? 70.0f : 1210.0f;
+  apY = fromLeft ? 636.0f : 134.0f;
+  apFace = fromLeft ? 0.0f : 3.14159f;
+  apWalkT = apFireT = arWaveT = arFlashT = 0;
+  arSpawned = arKilled[curRoom];
+  static const float posts[3][2] = { { 640, 250 }, { 960, 380 }, { 1100, 560 } };
+  int n = (AR_TOTAL - arSpawned < 3 ? AR_TOTAL - arSpawned : 3);
+  for (int k = 0; k < n; k++) arSpawnGuard(posts[k][0], posts[k][1], posts[k][0], posts[k][1], false);
+  if (arSpawned >= AR_TOTAL && n == 0) showMsg("THE ROOM IS CLEAR", 2.0f);
+  else showMsg("GET TO THE DOOR AT THE TOP RIGHT", 2.5f);
+}
+
+static void arKill(int i, int how) {         // (how: 0 shot / knifed, 1 burnt, 2 shrunk to nothing)
+  AGuard &g = ag[i];
+  g.dead = true;
+  g.burn = how == 1;
+  g.dieT = 0;
+  if (how == 2) g.dieT = 9;                  // (gone)
+  arKilled[curRoom]++;
+  addScore(AR_KILL_SCORE, g.x, g.y - 30);
+  sfxPlay(how == 1 ? SFX_SCREAM : SFX_HIT);
+  if (arKilled[curRoom] >= AR_TOTAL) showMsg("ALL 15 DOWN - THE ROOM IS CLEAR", 2.5f);
+}
+
+static void updateArena(float dt) {
+  if (agState == ST_KO || gameOver != END_NONE) return;
+  // him: 8 ways
+  float dx = ((held & BTN_RIGHT) ? 1.0f : 0.0f) - ((held & BTN_LEFT) ? 1.0f : 0.0f);
+  float dy = ((held & BTN_DOWN) ? 1.0f : 0.0f) - ((held & BTN_UP) ? 1.0f : 0.0f);
+  if (dx != 0 || dy != 0) {
+    float l = sqrtf(dx * dx + dy * dy);
+    dx /= l; dy /= l;
+    apFace = atan2f(dy, dx);
+    float nx = apX + dx * AR_SPEED * dt, ny = apY + dy * AR_SPEED * dt;
+    if (!arBlocked(nx, apY, AR_R)) apX = nx;
+    if (!arBlocked(apX, ny, AR_R)) apY = ny;
+    apWalkT += dt;
+  }
+  agX = apX;                                 // (for anything that asks where he is)
+  // out through a door
+  if (apX < AR_X0 - 6) { leaveThroughEdge(false); return; }
+  if (apX > AR_X1 + 6) { leaveThroughEdge(true); return; }
+  // firing, the way he faces
+  float fx = cosf(apFace), fy = sinf(apFace), mx = apX + fx * 46, my = apY + fy * 46;
+  if (apFireT > 0) apFireT -= dt;
+  if (arFlashT > 0) arFlashT -= dt;
+  bool trig = (held & (BTN_FIRE | BTN_USE)) != 0;
+  if (trig && hasFlamer) {
+    flameEmit(mx, my, fx, fy, dt);
+  } else if (trig && (hasGun || hasXGun) && apFireT <= 0) {
+    apFireT = 0.32f;
+    for (int k = 0; k < AR_SHOTS; k++)
+      if (!ash[k].on) {
+        float sp = hasXGun ? 700.0f : 900.0f;
+        ash[k] = { true, true, hasXGun, mx, my, fx * sp, fy * sp };
+        break;
+      }
+    sfxPlay(hasXGun ? SFX_RAY : SFX_SHOT);
+    arFlashT = 0.07f;
+  } else if ((pressed & (BTN_FIRE | BTN_USE)) && !hasGun && !hasXGun && !hasFlamer) {
+    showMsg(hasKnife ? "NO GUN - X TO USE THE KNIFE UP CLOSE" : "NO WEAPON - KEEP MOVING", 1.6f);
+  }
+  if ((pressed & BTN_JUMP) && hasKnife)        // the knife: up close
+    for (int i = 0; i < AR_GMAX; i++) {
+      AGuard &g = ag[i];
+      if (g.on && !g.dead && hypotf(g.x - apX, g.y - apY) < 52) { arKill(i, 0); break; }
+    }
+  // the flames: past walls and through things they stop; they burn whoever they reach
+  for (int k = 0; k < FLAMES; k++) {
+    Flame &f = flames[k];
+    if (!f.on) continue;
+    if (arSolid(f.x, f.y)) { f.on = false; continue; }
+    if (f.age > f.life * 0.75f) continue;
+    for (int i = 0; i < AR_GMAX; i++) {
+      AGuard &g = ag[i];
+      if (g.on && !g.dead && hypotf(g.x - f.x, g.y - f.y) < 30 * fmaxf(g.scale, 0.6f)) { arKill(i, 1); break; }
+    }
+  }
+  // the shots
+  for (int k = 0; k < AR_SHOTS; k++) {
+    AShot &s = ash[k];
+    if (!s.on) continue;
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    if (arSolid(s.x, s.y)) { s.on = false; continue; }
+    if (s.mine) {
+      for (int i = 0; i < AR_GMAX; i++) {
+        AGuard &g = ag[i];
+        if (!g.on || g.dead || hypotf(g.x - s.x, g.y - s.y) > (AR_R + 4) * fmaxf(g.scale, 0.5f)) continue;
+        s.on = false;
+        if (s.ray) {
+          if (fxRnd(0, 10) == 0) { g.scale = fminf(3.0f, g.scale * 2); showMsg("DOUBLED IN SIZE!", 1.4f); }
+          else if ((g.scale *= 0.5f) < 0.3f) arKill(i, 2);
+          sfxPlay(SFX_POWERUP);
+        } else {
+          arKill(i, 0);
+        }
+        break;
+      }
+    } else if (hypotf(apX - s.x, apY - s.y) < AR_R + 3) {
+      s.on = false;
+      if (hasVest) { hurt(SHOT_HURT / 2); showMsg("HIT - THE VEST HELD", 1.2f); }
+      else { hurt(SHOT_HURT); showMsg("SHOT!", 1.0f); }
+      sfxPlay(SFX_HIT);
+    }
+  }
+  // the soldiers
+  int alive = 0;
+  for (int i = 0; i < AR_GMAX; i++) {
+    AGuard &g = ag[i];
+    if (!g.on) continue;
+    g.t += dt;
+    if (g.dead) {
+      g.dieT += dt;
+      if (g.burn && g.dieT > 3.5f) g.on = false;
+      continue;
+    }
+    alive++;
+    if (g.walking) {                         // in through the door, to his spot
+      float ddx = g.tx - g.x, ddy = g.ty - g.y, d = sqrtf(ddx * ddx + ddy * ddy);
+      if (d < 4) { g.walking = false; g.cool = frnd(0.6f, 1.4f); }
+      else { g.x += ddx / d * AR_GUARD_SPEED * dt; g.y += ddy / d * AR_GUARD_SPEED * dt; g.face = atan2f(ddy, ddx); }
+      continue;
+    }
+    bool see = arSight(g.x, g.y, apX, apY) && hypotf(apX - g.x, apY - g.y) < 1100;
+    if (see) g.face = atan2f(apY - g.y, apX - g.x);
+    if (g.fstate == 0) {
+      g.cool -= dt;
+      g.strafeT -= dt;
+      if (g.strafeT <= 0) {                  // a step to one side now and then
+        g.strafeT = frnd(1.8f, 3.2f);
+        float a = g.face + (fxRnd(0, 2) ? 1.57f : -1.57f), nx = g.x + cosf(a) * 50, ny = g.y + sinf(a) * 50;
+        if (!arBlocked(nx, ny, AR_R + 2)) { g.tx = nx; g.ty = ny; }
+      }
+      float ddx = g.tx - g.x, ddy = g.ty - g.y, d = sqrtf(ddx * ddx + ddy * ddy);
+      if (d > 2) { g.x += ddx / d * 70 * dt; g.y += ddy / d * 70 * dt; }
+      if (g.cool <= 0 && see) { g.fstate = 1; g.aimT = 0.001f; }
+    } else if (g.fstate == 1) {
+      g.aimT += dt;
+      if (g.aimT >= FG_AIM) {
+        float a = g.face, sp = 520;
+        for (int k = 0; k < AR_SHOTS; k++)
+          if (!ash[k].on) { ash[k] = { true, false, false, g.x + cosf(a) * 30 * g.scale, g.y + sinf(a) * 30 * g.scale, cosf(a) * sp, sinf(a) * sp }; break; }
+        sfxPlay(SFX_SHOT);
+        g.fstate = 2;
+        g.t = 0;
+      }
+    } else if (g.t >= FG_RECOVER) {
+      g.fstate = 0;
+      g.aimT = 0;
+      g.cool = frnd(1.0f, 1.8f);
+    }
+  }
+  // the next three, when he's down to one (till 15 have come)
+  if (alive <= 1 && arSpawned < AR_TOTAL) {
+    arWaveT += dt;
+    if (arWaveT >= 2.5f) { arWaveT = 0; arWave(); }
+  } else {
+    arWaveT = 0;
+  }
+}
+
+// ---- drawing it
+static void arEllipse(float cx, float cy, float rx, float ry, float ang, uint16_t c) {
+  float xs[16], ys[16];
+  float ca = cosf(ang), sa = sinf(ang);
+  for (int k = 0; k < 16; k++) {
+    float t = k * 6.2832f / 16, ex = cosf(t) * rx, ey = sinf(t) * ry;
+    xs[k] = cx + ex * ca - ey * sa;
+    ys[k] = cy + ex * sa + ey * ca;
+  }
+  fillPolygonF(xs, ys, 16, c);
+}
+// Someone from above: shadow, feet stepping, shoulders across the way he faces, a gun out front, the head
+static void arPerson(float x, float y, float face, float sc, float walkT, bool walking, uint16_t body, uint16_t bodyD, uint16_t head, int gun) {
+  float ca = cosf(face), sa = sinf(face);
+  arEllipse(x + 5, y + 6, 20 * sc, 16 * sc, face, rgb565(20, 22, 26));
+  if (walking) {
+    float s = sinf(walkT * 10) * 9 * sc;
+    for (int f = -1; f <= 1; f += 2) {
+      float fx = x - sa * 7 * sc * f + ca * s * f, fy = y + ca * 7 * sc * f + sa * s * f;
+      arEllipse(fx, fy, 7 * sc, 4 * sc, face, rgb565(24, 24, 28));
+    }
+  }
+  float gl = gun == 3 ? 40 : gun == 2 ? 36 : gun == 1 ? 26 : 30;     // its gun: out ahead, both hands on it
+  if (gun >= 0) {
+    float gx0 = x + ca * 6 * sc, gy0 = y + sa * 6 * sc, gx1 = x + ca * gl * sc, gy1 = y + sa * gl * sc;
+    uint16_t gc = gun == 2 ? rgb565(180, 190, 206) : gun == 3 ? rgb565(70, 74, 82) : rgb565(26, 26, 30);
+    drawLineF(gx0, gy0, gx1, gy1, gc, (gun == 3 ? 8.0f : 5.0f) * sc);
+    if (gun == 3) arEllipse(x + ca * 16 * sc - sa * 6 * sc, y + sa * 16 * sc + ca * 6 * sc, 9 * sc, 5 * sc, face, rgb565(200, 40, 30));   // (the FX-5's tank)
+    if (gun == 2) fillCircle((int)gx1, (int)gy1, (int)(4 * sc) + 1, rgb565(120, 210, 255));
+    for (int h = -1; h <= 1; h += 2)                                    // arms out to it
+      drawLineF(x - sa * 12 * sc * h, y + ca * 12 * sc * h, x + ca * 18 * sc, y + sa * 18 * sc, bodyD, 5 * sc);
+  }
+  arEllipse(x, y, 11 * sc, 19 * sc, face, bodyD);                       // shoulders
+  arEllipse(x - ca * 1 * sc, y - sa * 1 * sc, 9 * sc, 16 * sc, face, body);
+  fillCircle((int)x, (int)y, (int)(9 * sc) + 1, head);                  // head (or helmet)
+}
+
+static void drawObstacle(const Obstacle &o) {
+  fillRect(o.x0 + 6, o.y0 + 6, o.x1 + 6, o.y1 + 6, rgb565(30, 32, 38));   // its shadow
+  int cx = (o.x0 + o.x1) / 2, cy = (o.y0 + o.y1) / 2;
+  switch (o.kind) {
+    case OB_DESK:
+      fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(130, 96, 64));
+      drawRectOutline(o.x0, o.y0, o.x1, o.y1, rgb565(90, 64, 40), 2);
+      fillRect(cx - 22, o.y0 + 6, cx + 22, o.y0 + 14, rgb565(30, 32, 38));   // a monitor (from above), a keyboard
+      fillRect(cx - 18, o.y0 + 22, cx + 18, o.y0 + 32, rgb565(200, 200, 204));
+      fillRect(o.x1 - 30, o.y0 + 10, o.x1 - 12, o.y0 + 34, rgb565(236, 236, 230));
+      break;
+    case OB_CRATE:
+      fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(170, 130, 80));
+      drawRectOutline(o.x0, o.y0, o.x1, o.y1, rgb565(110, 80, 46), 3);
+      drawLineF(o.x0 + 3, o.y0 + 3, o.x1 - 3, o.y1 - 3, rgb565(120, 88, 50), 3);
+      drawLineF(o.x1 - 3, o.y0 + 3, o.x0 + 3, o.y1 - 3, rgb565(120, 88, 50), 3);
+      break;
+    case OB_CABINET:
+      fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(150, 156, 166));
+      drawRectOutline(o.x0, o.y0, o.x1, o.y1, rgb565(100, 106, 116), 2);
+      for (int y = o.y0 + 28; y < o.y1; y += 28) fillRect(o.x0 + 4, y, o.x1 - 4, y + 1, rgb565(100, 106, 116));
+      break;
+    case OB_SOFA:
+      fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(120, 40, 46));
+      fillRect(o.x0, o.y0, o.x1, o.y0 + 14, rgb565(90, 28, 34));
+      for (int k = 0; k < 3; k++) {
+        int x0 = o.x0 + 6 + k * (o.x1 - o.x0 - 12) / 3;
+        fillRect(x0 + 2, o.y0 + 18, x0 + (o.x1 - o.x0 - 12) / 3 - 2, o.y1 - 4, rgb565(150, 54, 60));
+      }
+      break;
+    case OB_PILLAR:
+      fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(150, 150, 146));
+      drawRectOutline(o.x0, o.y0, o.x1, o.y1, rgb565(110, 110, 106), 3);
+      fillCircle(cx, cy, 8, rgb565(120, 120, 116));
+      break;
+    default:   // a table, chairs at it
+      fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(200, 204, 210));
+      drawRectOutline(o.x0, o.y0, o.x1, o.y1, rgb565(140, 146, 156), 2);
+      for (int k = 0; k < 2; k++) fillRect(o.x0 + 14 + k * 50, o.y1 + 4, o.x0 + 38 + k * 50, o.y1 + 16, rgb565(60, 64, 72));
+      break;
+  }
+}
+
+static void drawArena() {
+  // the floor: tiles
+  for (int y = HUD_H; y < SCREEN_H; y += 80)
+    for (int x = 0; x < SCREEN_W; x += 80) {
+      bool alt = ((x / 80) + (y / 80)) & 1;
+      fillRect(x, y, x + 79, y + 79, alt ? rgb565(78, 82, 92) : rgb565(72, 76, 86));
+      fillRect(x, y, x + 79, y, rgb565(60, 64, 72));
+      fillRect(x, y, x, y + 79, rgb565(60, 64, 72));
+    }
+  // the walls (gaps for the doors)
+  uint16_t wc = rgb565(40, 44, 52), wl = rgb565(96, 102, 116);
+  fillRect(0, HUD_H, SCREEN_W - 1, AR_Y0 - 1, wc);
+  fillRect(0, AR_Y1 + 1, SCREEN_W - 1, SCREEN_H - 1, wc);
+  fillRect(0, HUD_H, AR_X0 - 1, SCREEN_H - 1, wc);
+  fillRect(AR_X1 + 1, HUD_H, SCREEN_W - 1, SCREEN_H - 1, wc);
+  fillRect(AR_X0, AR_Y0 - 3, AR_X1, AR_Y0 - 1, wl);
+  fillRect(AR_X0 - 3, AR_Y0, AR_X0 - 1, AR_Y1, wl);
+  fillRect(AR_X1 + 1, AR_Y0, AR_X1 + 3, AR_Y1, wl);
+  fillRect(AR_X0, AR_Y1 + 1, AR_X1, AR_Y1 + 3, wl);
+  // the doors: in at the bottom left, out at the top right, the soldiers' at the top
+  fillRect(0, AR_DOOR_L0, AR_X0 + 3, AR_DOOR_L1, rgb565(72, 76, 86));
+  drawVectorText("IN", AR_X0 + 34, (AR_DOOR_L0 + AR_DOOR_L1) / 2.0f, 1.6f, rgb565(120, 220, 140), true);
+  bool sealed = rooms[curRoom].noRightDoor;
+  if (!sealed) {
+    fillRect(AR_X1 - 3, AR_DOOR_R0, SCREEN_W - 1, AR_DOOR_R1, rgb565(72, 76, 86));
+    float p = 0.5f + 0.5f * sinf(clockT * 4);
+    drawVectorText("EXIT", AR_X1 - 44, (AR_DOOR_R0 + AR_DOOR_R1) / 2.0f, 1.8f, rgb565((int)(140 + 100 * p), 255, (int)(140 + 100 * p)), true);
+    int ax[3] = { AR_X1 - 10, AR_X1 + 14, AR_X1 - 10 }, ay[3] = { (AR_DOOR_R0 + AR_DOOR_R1) / 2 - 14, (AR_DOOR_R0 + AR_DOOR_R1) / 2, (AR_DOOR_R0 + AR_DOOR_R1) / 2 + 14 };
+    fillPolygon(ax, ay, 3, rgb565(120, 255, 140));
+  } else {
+    fillRect(AR_X1 - 3, AR_DOOR_R0, AR_X1 + 12, AR_DOOR_R1, rgb565(120, 40, 36));
+    drawVectorText("SEALED", AR_X1 - 50, (AR_DOOR_R0 + AR_DOOR_R1) / 2.0f, 1.5f, rgb565(255, 120, 100), true);
+  }
+  fillRect(AR_SPAWN_X0, HUD_H, AR_SPAWN_X1, AR_Y0 + 2, rgb565(30, 30, 34));
+  fillRect(AR_SPAWN_X0 - 8, HUD_H, AR_SPAWN_X0 - 1, AR_Y0, rgb565(240, 196, 40));
+  fillRect(AR_SPAWN_X1 + 1, HUD_H, AR_SPAWN_X1 + 8, AR_Y0, rgb565(240, 196, 40));
+  fillCircle(AR_SPAWN_X1 + 24, HUD_H + 14, 6, (int)(clockT * 3) & 1 ? rgb565(255, 50, 40) : rgb565(110, 20, 20));
+  // things in the room
+  for (int i = 0; i < AR_OBS; i++) drawObstacle(arObs[i]);
+  // the dead (shot: where they fell; burnt: burning, charred, ash, gone)
+  for (int i = 0; i < AR_GMAX; i++) {
+    const AGuard &g = ag[i];
+    if (!g.on || !g.dead) continue;
+    if (!g.burn) {
+      if (g.dieT > 5) continue;                                     // (shrunk to nothing: dieT 9)
+      float ds = g.scale * AR_SC;
+      fillCircle((int)g.x, (int)g.y + 4, (int)(18 * ds), rgb565(110, 10, 14));
+      arEllipse(g.x, g.y, 24 * ds, 11 * ds, g.face + 1.2f, rgb565(70, 86, 52));
+      fillCircle((int)(g.x + cosf(g.face + 1.2f) * 18 * ds), (int)(g.y + sinf(g.face + 1.2f) * 18 * ds), (int)(8 * ds), rgb565(60, 72, 44));
+      continue;
+    }
+    float t = g.dieT;
+    if (t < 1.8f) {
+      arPerson(g.x, g.y, g.face, g.scale * AR_SC, 0, false, rgb565(34, 30, 28), rgb565(20, 18, 16), rgb565(26, 22, 20), -1);
+      for (int j = 0; j < 6; j++) {
+        float a = j * 1.05f + clockT * 3, r = 12 * g.scale;
+        glowDisc(g.x + cosf(a) * r, g.y + sinf(a) * r, (14 + 6 * sinf(clockT * 15 + j)) * g.scale, 255, 140, 40, t < 1.0f ? 0.6f : 0.35f);
+      }
+    } else if (t < 3.5f) {
+      float k = (t - 1.8f) / 1.7f;
+      for (int j = 0; j < 5; j++) fillCircle((int)(g.x + (j - 2) * 6), (int)(g.y + ((j * 7) % 5) - 2), (int)((10 - 7 * k) * g.scale) + 1, rgb565(118, 114, 108));
+      glowDisc(g.x, g.y - 20 * k, 24, 120, 116, 110, 0.3f * (1 - k));
+    }
+  }
+  // the soldiers
+  for (int i = 0; i < AR_GMAX; i++) {
+    const AGuard &g = ag[i];
+    if (!g.on || g.dead) continue;
+    if (g.fstate == 1)                                              // (aiming: a red sight line)
+      drawLineF(g.x + cosf(g.face) * 34 * g.scale, g.y + sinf(g.face) * 34 * g.scale, g.x + cosf(g.face) * 160, g.y + sinf(g.face) * 160, rgb565(255, 40, 40), 1.0f);
+    arPerson(g.x, g.y, g.face, g.scale * AR_SC, g.t, g.walking, rgb565(90, 110, 70), rgb565(64, 80, 50), rgb565(70, 86, 50), 0);
+    fillCircle((int)g.x, (int)g.y, (int)(5 * g.scale * AR_SC) + 1, rgb565(88, 104, 64));   // (his helmet's top)
+    if (g.fstate == 2 && g.t < 0.08f) glowDisc(g.x + cosf(g.face) * 40, g.y + sinf(g.face) * 40, 18, 255, 220, 120, 0.9f);
+  }
+  // him
+  if (healthPct() <= 40 && hpBeat > 0) glowDisc(apX, apY, 60, 255, 30, 30, (0.35f + 0.4f * (1 - healthPct() / 40.0f)) * hpBeat);
+  int gun = hasFlamer ? 3 : hasXGun ? 2 : hasGun ? 1 : -1;
+  bool walking = (held & (BTN_LEFT | BTN_RIGHT | BTN_UP | BTN_DOWN)) != 0;
+  if (s2Disguised) arPerson(apX, apY, apFace, AR_SC, apWalkT, walking, rgb565(60, 100, 160), rgb565(40, 70, 120), rgb565(60, 44, 30), gun);
+  else arPerson(apX, apY, apFace, AR_SC, apWalkT, walking, rgb565(44, 46, 56), rgb565(28, 30, 38), rgb565(40, 30, 24), gun);
+  if (arFlashT > 0) glowDisc(apX + cosf(apFace) * 40, apY + sinf(apFace) * 40, 20, hasXGun ? 120 : 255, hasXGun ? 200 : 220, hasXGun ? 255 : 120, 0.9f);
+  // shots, flames
+  for (int k = 0; k < AR_SHOTS; k++) {
+    const AShot &s = ash[k];
+    if (!s.on) continue;
+    float l = sqrtf(s.vx * s.vx + s.vy * s.vy), ux = s.vx / l, uy = s.vy / l;
+    if (s.ray) { glowDisc(s.x, s.y, 18, 90, 180, 255, 0.6f); drawLineF(s.x - ux * 22, s.y - uy * 22, s.x, s.y, rgb565(170, 220, 255), 3); }
+    else drawLineF(s.x - ux * 16, s.y - uy * 16, s.x, s.y, s.mine ? rgb565(255, 240, 160) : rgb565(255, 150, 90), 3);
+  }
+  drawFlames();
+  // how many are left
+  int left = AR_TOTAL - arKilled[curRoom];
+  char b[40];
+  snprintf(b, sizeof(b), left > 0 ? "SOLDIERS LEFT: %d" : "ROOM CLEAR", left);
+  drawVectorText(b, 170, AR_Y0 + 20, 1.8f, left > 0 ? rgb565(255, 140, 120) : rgb565(120, 255, 140), true);
+}
+
 // Lift C's foyer guard at the level the car's stopped at: into npcs[] (the knife, the guns, the drawing all
 // work on him there); everywhere else his record (fgDead...) is what's drawn
 static void syncFoyerGuard() {
@@ -8170,6 +8823,8 @@ static void syncFoyerGuard() {
       n.dieT = 9;
       n.sight = 2000;
       n.scale = fgScale[sh][L][k];
+      n.burn = fgAsh[sh][L][k];
+      if (n.burn) n.dieT = 99;
       n.foyer = true;
       n.lvl = (int8_t)L;
       n.fsh = (int8_t)sh;
@@ -8224,6 +8879,8 @@ static void updateStage2(float dt) {
   syncFoyerGuard();
   if (fgLoaded >= 0) updateNpcs(dt);
   updateGShots(dt);
+  updateFlames(dt);
+  if (!arOn()) flameHitNpcs();
   if (mode == MODE_ROOM && curRoom < S2_ROOMS) {
     updateSuspicion(dt);
     updateNpcs(dt);
@@ -8536,6 +9193,20 @@ static void updateAgent(float dt) {
             bool first = !s2Searched[curRoom][i];
             s2Searched[curRoom][i] = true;
             if (first) addScore(SEARCH_SCORE, px, py - 26);
+            if (first && s2Kind[curRoom] == LK_ARMORY2 && i == 0) {        // the FX-5, out of its case
+              flamerTaken = true;
+              bool had = hasGun || hasKnife || hasXGun;
+              hasFlamer = true;
+              hasGun = hasKnife = hasXGun = false;
+              foundCard(-5);
+              if (had) showMsg("YOU LEAVE YOUR OLD WEAPON IN THE CASE", 3.0f);
+              break;
+            }
+            if (first && s2Kind[curRoom] == LK_ARMORY && i == 0 && hasFlamer) {   // (he keeps the FX-5)
+              showMsg("THE QX-9 - YOU KEEP THE FX-5", 2.5f);
+              sfxPlay(SFX_CLUNK);
+              break;
+            }
             if (first && s2Kind[curRoom] == LK_ARMORY && i == 0) {         // the QX-9, out of its case
               xGunTaken = true;
               bool had = hasGun || hasKnife;
@@ -8546,8 +9217,8 @@ static void updateAgent(float dt) {
               break;
             }
             if (first && s2Kind[curRoom] == LK_KITCHEN && i == s2KnifeItem) {   // the kitchen's knife
-              if (hasGun || hasXGun) {         // (one weapon at a time: he keeps the stronger)
-                showMsg(hasXGun ? "A KNIFE - YOU KEEP THE QX-9" : "A KNIFE - YOU KEEP YOUR PISTOL", 2.5f);
+              if (hasGun || hasXGun || hasFlamer) {   // (one weapon at a time: he keeps the stronger)
+                showMsg(hasFlamer ? "A KNIFE - YOU KEEP THE FX-5" : hasXGun ? "A KNIFE - YOU KEEP THE QX-9" : "A KNIFE - YOU KEEP YOUR PISTOL", 2.5f);
                 sfxPlay(SFX_CLUNK);
                 break;
               }
@@ -8556,8 +9227,8 @@ static void updateAgent(float dt) {
               break;
             }
             if (first && s2Kind[curRoom] == LK_SECURITY && i == s2GunItem) {    // a pistol in a gun rack
-              if (hasXGun) {
-                showMsg("A PISTOL - YOU KEEP THE QX-9", 2.5f);
+              if (hasXGun || hasFlamer) {
+                showMsg(hasFlamer ? "A PISTOL - YOU KEEP THE FX-5" : "A PISTOL - YOU KEEP THE QX-9", 2.5f);
                 sfxPlay(SFX_CLUNK);
                 break;
               }
@@ -10134,7 +10805,7 @@ static void drawPanel() {
     snprintf(b, sizeof(b), "%d", aid);
     line("FIRST AID LEFT", b, PANEL_Y + 110, rgb565(120, 230, 140));
     {
-      const char *w = hasXGun ? "QX-9" : hasGun ? "PISTOL" : hasKnife ? "KNIFE" : NULL;
+      const char *w = hasFlamer ? "FX-5" : hasXGun ? "QX-9" : hasGun ? "PISTOL" : hasKnife ? "KNIFE" : NULL;
       snprintf(b, sizeof(b), "%s%s", w ? w : hasVest ? "" : "NONE", hasVest ? (w ? " VEST" : "VEST") : "");
     }
     line("GEAR", b, PANEL_Y + 136, rgb565(240, 240, 245));
@@ -11243,7 +11914,8 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
       }
     } else {
       if (introT < 0) {
-        if (s2Act) updateS2Act(dt);      // (stage 2: knocking out, searching, binning the maintenance man)
+        if (arOn()) updateArena(dt);      // (lift D's rooms: from above)
+        else if (s2Act) updateS2Act(dt); // (stage 2: knocking out, searching, binning the maintenance man)
         else updateAgent(dt);
       }
       if (introT < 0) updateHazards(dt);
@@ -11255,6 +11927,9 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   gfxTarget = g_frame;
   if (scene == SC_RIDE) {
     drawRide(sceneT);
+  } else if (arOn()) {
+    gfxClip(HUD_H, PLAY_Y1);
+    drawArena();
   } else if (mode == MODE_ROOM) {
     memcpy(g_frame, roomBg, sizeof(roomBg));
     gfxClip(HUD_H, PLAY_Y1);
@@ -11278,12 +11953,18 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     drawShaftScene();
   }
   gfxClip(introT >= 0 && introT < 1.9f ? CAR_FLOOR_Y - CORR_H + 1 : HUD_H, mode == MODE_SHAFT ? PANEL_Y - 1 : PLAY_Y1);   // (in the duct: hidden)
-  if (scene != SC_RIDE) {
+  if (scene != SC_RIDE && !arOn()) {
     drawHealthAura();
     if (stage == 2 && s2Disguised) drawPersonU(shownPose, agX, agY, agFacing, myScale, PK_MAINT);   // in the maintenance man's overalls
     else drawAgentU(shownPose, agX, agY, agFacing, myScale);
   }
-  if (stage == 2 && mode == MODE_ROOM && (s2Act == 5 || (hasGun && !s2Act && scene == SC_NONE))) {   // his pistol (and its flash)
+  if (stage == 2 && !arOn() && (mode == MODE_ROOM || onWalkway()) && hasFlamer && scene == SC_NONE) {   // the FX-5 in his hands
+    int hx, hy, mx, my;
+    agentHand(shownPose, agX, agY, agFacing, myScale, hx, hy, mx, my);
+    drawFlamer(hx + agFacing * 10.0f, (float)hy, 0.28f, 0.6f, agFacing);
+  }
+  if (stage == 2 && !arOn()) drawFlames();
+  if (stage == 2 && mode == MODE_ROOM && !arOn() && (s2Act == 5 || (hasGun && !s2Act && scene == SC_NONE))) {   // his pistol (and its flash)
     int hx, hy, mx, my;
     agentHand(shownPose, agX, agY, agFacing, myScale, hx, hy, mx, my);
     fillRect(hx - 4, hy - 4, hx + 4, hy + 8, rgb565(30, 30, 34));

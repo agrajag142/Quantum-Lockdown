@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 049: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 050: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -529,6 +529,14 @@ of its 3 levels (where you come in from lift C's rooms), firing the same way
 
 **Lift C's rooms** (access level 3): three of its four, at random:
 
+**EXPERIMENTAL ARMORY 2** (the fourth): like the first, in red light - under
+the glass the **FX-5**, a flamethrower (red fuel tank, a blue pilot light), and
+two scientists walking. Search the case (EXPERIMENTAL FLAMETHROWER FOUND): it
+replaces whatever you carry - knife, pistol or QX-9 - and nothing replaces it.
+**Hold R1 / R2** (or Square) and flames pour out (unlimited fuel, for now; a
+roaring whoosh). Anyone they reach catches fire: burning on his feet, falling
+charred black, crumbling to ash - and then nothing left (a kill, as any).
+
 **HAZARDOUS STORAGE** (one level, no people): drums of green waste along a
 shelf high on the wall, three of them split and leaking - **a drip from each in
 turn, left, middle, right**, then a short pause - and **a puddle of it on the
@@ -558,6 +566,23 @@ instead** (up to 4 times the size). It works on the door guard's vest too.
 an observation window, two height charts on the wall, a bench, a water cooler,
 a locker (3 things to search) and **three test subjects** in orange jumpsuits
 walking about.
+
+**Lift D's rooms: SECURITY ZONES, seen from above** (all three, the same
+room). A different kind of play: the room from above, you walking any of 8
+ways (the D-pad / stick), from the IN door at the bottom left to the EXIT at the
+top right (out to lift E's walkway; or back the way you came). Desks, crates,
+cabinets, a sofa, pillars and a table are in the way - cover for you and them;
+shots and flames stop at them. Three soldiers hold the room; when you've got
+them down to one, **three more come in through the door at the top in a V**
+(MORE SOLDIERS!) and take up a spot - **15 in all**, then no more (SOLDIERS LEFT
+counts down; ALL 15 DOWN - THE ROOM IS CLEAR). Each one that can see you aims
+(a red sight line, 0.55 seconds, NUCLEAR MISSION's), fires, and again every 1 to
+1.8 seconds, stepping aside now and then; a hit is 10 health (5 with the vest).
+You fire the way you face with R1 / R2 (or Square): the pistol, the QX-9 (it
+halves them, 1 in 10 doubles them), or the FX-5's flames (they burn to ash and
+disappear); X with the knife up close. Each is 250 points (no extra time here).
+Leave and come back and the ones you've killed stay dead; the rest are back at
+their posts. The bottom room's top right door is SEALED (no lift beyond it).
 
 **The admin room**: two levels, most of it on the floor - the ADMINISTRATION
 front counter by the door (ENQUIRIES board, an in-tray, a bell), a desk with
