@@ -303,6 +303,7 @@ static const char *vectorGlyph(char ch) {
     case '-': return "1333";
     case '+': return "2125|0343";
     case '/': return "0640";
+    case '%': return "0640|0010110100|3545463635";
     case '!': return "2024|2526";
     case ',': return "252617";
     case '.': return "2526";

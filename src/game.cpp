@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "048"
+#define GAME_VERSION      "049"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -934,7 +934,8 @@ enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX
                      SFX_KLAXON, SFX_IGNITE, SFX_BIGROAR, SFX_ROAR, SFX_TYPE,   // (those five: NUCLEAR MISSION's launch)
                      SFX_HISS,     // (the clone lab's hot gas)
                      SFX_FALL, SFX_BOOM,     // (a landing: the warhead falling, the detonation)
-                     SFX_RAY };              // (the QX-9)
+                     SFX_RAY,                // (the QX-9)
+                     SFX_HEART, SFX_HPALERT };   // (low health: a heartbeat, the warning)
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -1116,6 +1117,14 @@ static void startEffect(uint8_t sfx) {
       startVoice(WAVE_SQUARE, 100, 100, 0, 400, 0.10f);
       startVoice(WAVE_SQUARE, 150, 150, 0, 400, 0.06f);
       startVoice(WAVE_NOISE, 4000, 4000, 0, 120, 0.06f);
+      break;
+    case SFX_HEART:                            // a heartbeat: two low thumps
+      startVoice(WAVE_TRIANGLE, 90, 40, 0, 110, 0.55f);
+      startVoice(WAVE_TRIANGLE, 80, 36, 170, 120, 0.40f);
+      break;
+    case SFX_HPALERT:                          // health down to another 10%: two falling warning tones
+      startVoice(WAVE_SQUARE, 880, 660, 0, 160, 0.14f);
+      startVoice(WAVE_SQUARE, 660, 440, 190, 220, 0.14f);
       break;
     case SFX_RAY:                              // the QX-9: a falling, warbling zap
       startVoice(WAVE_SQUARE, 2200, 300, 0, 240, 0.12f);
@@ -6141,7 +6150,51 @@ static const char *const termItems[TERM_ITEMS] = {
 
 // The sites' news: red words coming out of the middle of the screen at you, growing and fading
 // (the game carries on underneath)
-static void flyerAdd(const char *text, bool good = false) {   // (a free one, else the oldest)
+static void flyerAdd(const char *text, bool good = false);
+// LOW HEALTH: at 40, 30, 20 and 10% a red "40% HEALTH" flies out at him (like a hack's), once each time he
+// falls to it; from 40% down a red glow pulses round him with his heartbeat, quicker the lower he is, and
+// from 20% down the screen's edges pulse red and the heartbeat is heard
+static int hpBand = 100;                     // (the lowest 10% mark announced since he was last above it)
+static float hpBeatT = 0, hpBeat = 0;        // (time to the next beat; the last beat's glow, fading)
+static int healthPct() { return health * 100 / HEALTH_MAX; }
+static void updateHealthAlerts(float dt) {
+  int pct = healthPct();
+  int band = pct <= 10 ? 10 : pct <= 20 ? 20 : pct <= 30 ? 30 : pct <= 40 ? 40 : 100;
+  if (band < hpBand && health > 0 && gameOver == END_NONE) {
+    char b[24];
+    snprintf(b, sizeof(b), "%d%% HEALTH", band);
+    flyerAdd(b);
+    sfxPlay(SFX_HPALERT);
+  }
+  hpBand = band;
+  hpBeat = fmaxf(0.0f, hpBeat - dt * 2.5f);
+  if (pct > 40 || health <= 0 || gameOver != END_NONE) { hpBeatT = 0; hpBeat = 0; return; }
+  hpBeatT -= dt;
+  if (hpBeatT <= 0) {
+    hpBeatT = 0.45f + 0.6f * pct / 40.0f;    // (1.05s at 40%, 0.6s at 10%)
+    hpBeat = 1;
+    if (pct <= 20) sfxPlay(SFX_HEART);
+  }
+}
+static void drawHealthAura() {   // (behind him)
+  if (hpBeat <= 0 || healthPct() > 40) return;
+  float k = 1.0f - healthPct() / 40.0f;      // (stronger the lower)
+  glowDisc(agX, agY - 70 * myScale, 120 * myScale, 255, 30, 30, (0.35f + 0.4f * k) * hpBeat);
+}
+static void drawHealthEdges() {  // (over everything: the screen's edges, from 20% down)
+  if (hpBeat <= 0 || healthPct() > 20) return;
+  float a = 0.35f * hpBeat;
+  for (int i = 0; i < 6; i++) {
+    float f = a * (1.0f - i / 6.0f);
+    int w = 8;
+    blendRect(i * w, HUD_H, i * w + w - 1, PLAY_Y1, 255, 20, 20, f);
+    blendRect(SCREEN_W - 1 - i * w - w + 1, HUD_H, SCREEN_W - 1 - i * w, PLAY_Y1, 255, 20, 20, f);
+    blendRect(0, HUD_H + i * w, SCREEN_W - 1, HUD_H + i * w + w - 1, 255, 20, 20, f);
+    blendRect(0, PLAY_Y1 - i * w - w + 1, SCREEN_W - 1, PLAY_Y1 - i * w, 255, 20, 20, f);
+  }
+}
+
+static void flyerAdd(const char *text, bool good) {   // (a free one, else the oldest)
   int k = 0;
   for (int i = 1; i < FLYERS; i++) if (flyers[i].t > flyers[k].t) k = i;
   for (int i = 0; i < FLYERS; i++) if (!flyers[i].on) { k = i; break; }
@@ -11143,6 +11196,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
       }
       timeLeft -= dt;
       updateNukes(dt);
+      updateHealthAlerts(dt);
       updateFlyers(dt);
       updateLaunchScene(dt);
       if (timeLeft > 60) warnSlot = 99;  // (the last minute: an alert and the lights flickering every ten seconds)
@@ -11225,6 +11279,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   }
   gfxClip(introT >= 0 && introT < 1.9f ? CAR_FLOOR_Y - CORR_H + 1 : HUD_H, mode == MODE_SHAFT ? PANEL_Y - 1 : PLAY_Y1);   // (in the duct: hidden)
   if (scene != SC_RIDE) {
+    drawHealthAura();
     if (stage == 2 && s2Disguised) drawPersonU(shownPose, agX, agY, agFacing, myScale, PK_MAINT);   // in the maintenance man's overalls
     else drawAgentU(shownPose, agX, agY, agFacing, myScale);
   }
@@ -11298,6 +11353,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (docShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawDocPanel();
   if (passShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawPassPanel();
   if (stage == 2 && mode == MODE_ROOM && npcCount > 0 && !mapOn && gameOver == END_NONE) drawSuspicionMeter();
+  if (!mapOn && !termOn) drawHealthEdges();
   if (!mapOn) drawFlyers();
   if (cardShowT > 0 && !mapOn && gameOver == END_NONE) drawCardPanel();
   if (mapOn) drawMap();

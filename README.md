@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 048: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 049: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -591,6 +591,13 @@ it: a guard's shot then only does half damage and he stays on his feet - the
 guard keeps firing every half second - until he's nearly out of health, when
 the next shot knocks him down as usual) and, across lift A's and lift B's rooms, **15 TOP SECRET DOCUMENTS**
 (1000 points each, the TOP SECRET DOCUMENTS panel with n OF 15 FOUND).
+
+**Low health warnings** (both stages): when your health falls to 40%, 30%, 20%
+and 10%, a red "40% HEALTH" (and so on) flies out at you from the middle of
+the screen like a site's HACKED, with two falling warning tones - once for each
+mark until first aid takes you back above it. From 40% down a red glow pulses
+around you with your heartbeat, quicker and stronger the lower you get; from
+20% down you hear the heartbeat and the edges of the screen pulse red.
 
 **Gunfire brings a drone**: in a room with no hazard of its own (the kitchen,
 cleaning room, medical bay, security room, admin room, Quantum Lab 1), once
