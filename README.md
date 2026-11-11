@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 043: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 044: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -523,7 +523,25 @@ seconds: each hit is 10 health (5 with the vest). Jump and it misses. Kill
 him with the knife, the pistol or the QX-9. **One of the four has the ACCESS
 CARD LEVEL 3**: search his body (Square) - the others have nothing on them.
 
-**Lift C's rooms** (access level 3): two of its four, at random:
+**Lift D's foyer guards**: two soldiers on the walkway left of lift D at each
+of its 3 levels (where you come in from lift C's rooms), firing the same way
+(the second a moment after the first). None of them has a card.
+
+**Lift C's rooms** (access level 3): three of its four, at random:
+
+**HAZARDOUS STORAGE** (one level, no people): drums of green waste along a
+shelf high on the wall, three of them split and leaking - **a drip from each in
+turn, left, middle, right**, then a short pause - and **a puddle of it on the
+floor** in the middle to jump over. A drip that lands on you costs 26% of a full
+health bar (TOXIC DRIP!); stepping in the puddle 51% (BURNT BY TOXIC WASTE!,
+and back out the way you came). **The fumes eat at you just for being in
+there** (a little, all the time), and **searching costs more** (your hands in
+it): from full health, three searches and you're nearly out - start a fourth
+and it kills you (TOXIC FUMES - GET OUT AND FIND FIRST AID). So get out, use a
+walkway's first aid, and come back. **6 things to search** (a hazmat locker, a
+chemical cabinet, barrels on a pallet, a lead container, a spill kit cart, a
+decontamination shower), and **one of them has the ACCESS CARD LEVEL 4**
+(lift D).
 
 **The EXPERIMENTAL ARMORY**: dark gunmetal walls; in the middle, on a plinth
 under glass and a blue spotlight, the prototype **QX-9** turning slowly. Around

@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "043"
+#define GAME_VERSION      "044"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -270,8 +270,8 @@ static std::atomic<int> rideHum{0};    // the journey's rumble
 // levels (from the top level down: A 6, B 5 ... F 1). A room's left door is on its lift's right
 // walkway, its right door (where the next lift comes down that far) on the next lift's left one;
 // each door has a card reader (access level 1..5: once in, always open). In rooms[0..20].
-enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE, LK_CLONE, LK_SOLDIER, LK_SERVER, LK_QLAB1, LK_QLAB2, LK_ARMORY, LK_TEST };
-static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM", "QUANTUM LAB 1", "QUANTUM LAB 2", "ARMORY", "TEST CHAMBER" };
+enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE, LK_CLONE, LK_SOLDIER, LK_SERVER, LK_QLAB1, LK_QLAB2, LK_ARMORY, LK_TEST, LK_HAZARD };
+static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM", "QUANTUM LAB 1", "QUANTUM LAB 2", "ARMORY", "TEST CHAMBER", "HAZ STORAGE" };
 static int8_t s2Room[S2_LIFTS][S2_LEVELS];   // the room on the right of each lift at each level (-1 none)
 static uint8_t s2Kind[S2_ROOMS], s2Lvl[S2_ROOMS];   // what it is, the access level its doors need
 static bool s2Aid[S2_LIFTS][S2_LEVELS];      // each left walkway's first aid cabinet: used
@@ -302,7 +302,7 @@ struct Npc {                                 // the lab's people (the chef, the 
   bool seated;                               // (at a desk)
   float scale, fxT;                          // his size (the QX-9: halved, or doubled); the QX-9's flash on him
   bool foyer;                                // one of lift C's foyer guards (NUCLEAR MISSION's soldier: sees him, aims, fires)
-  int8_t lvl;                                // (which level's)
+  int8_t lvl, fsh, fslot;                    // (which level's, which lift's (0 C, 1 D), which of its guards)
   uint8_t fstate;                            // (0 waiting, 1 aiming, 2 just fired)
   float fcool;
 };
@@ -312,21 +312,27 @@ static bool s2NpcDead[S2_ROOMS][MAX_NPCS];  // who has been killed, where they l
 static float s2NpcDX[S2_ROOMS][MAX_NPCS], s2NpcDY[S2_ROOMS][MAX_NPCS];
 static int8_t s2NpcDDir[S2_ROOMS][MAX_NPCS];
 static float s2NpcScale[S2_ROOMS][MAX_NPCS];  // (their sizes, the QX-9's doing)
-// Lift C's foyer guards: one on the walkway left of the lift at each of its 4 levels; one of them has the level 3 card
-#define FG_LEVELS 4
+// The foyer guards, on the walkway left of the lift: lift C, one at each of its 4 levels (one of them with the
+// level 3 card); lift D, two at each of its 3 levels
+#define FG_LIFTS 2                           // (lifts C and D: shafts 2 and 3)
+#define FG_MAXL 4
+#define FG_MAXS 2
 #define FG_X (SHAFT_X0 - 190)
+static const int fgLevels[FG_LIFTS] = { 4, 3 }, fgSlots[FG_LIFTS] = { 1, 2 };
+static const float fgPostX[FG_LIFTS][FG_MAXS] = { { FG_X, 0 }, { FG_X, FG_X - 150 } };
 #define FG_AIM 0.55f                         // NUCLEAR MISSION's soldier: aims this long, fires...
 #define FG_RECOVER 0.35f                     // ...lowers it...
 #define FG_GRACE 0.5f                        // (and waits this long when he arrives)
 #define FG_SHOT_SPEED 560.0f
-static bool fgDead[FG_LEVELS], fgSearched[FG_LEVELS];
-static float fgDX[FG_LEVELS], fgScale[FG_LEVELS];
-static int8_t fgDDir[FG_LEVELS];
-static int fgCard = 0, fgLoaded = -1;        // (whose the card is; the one in npcs[] now)
+static bool fgDead[FG_LIFTS][FG_MAXL][FG_MAXS], fgSearched[FG_MAXL];
+static float fgDX[FG_LIFTS][FG_MAXL][FG_MAXS], fgScale[FG_LIFTS][FG_MAXL][FG_MAXS];
+static int8_t fgDDir[FG_LIFTS][FG_MAXL][FG_MAXS];
+static int fgCard = 0, fgLoaded = -1;        // (lift C's level whose guard has the card; the walkway in npcs[] now: lift*8 + level)
 struct GShot { bool on; float x, y; int dir; };
 static GShot gShots[4];
 // The QX-9 (the EXPERIMENTAL ARMORY's prototype): a shot halves someone (1 in 10 doubles them); a quarter size and they're gone
 static bool hasXGun = false, xGunTaken = false;
+static int s2HazCard = 0;                    // (hazardous storage: which of its 6 things has the level 4 card)
 static bool hasKnife = false;                // the kitchen's knife
 static bool hasGun = false;                  // the security room's pistol (R1 / R2 to fire)
 static int s2GunItem = 0;                    // (which of the two gun racks it's in)
@@ -619,15 +625,18 @@ static void layOutStage2() {
       rooms[idx].hazard = bh[k];
     }
   }
-  {                                          // lift C: two of its four rooms the EXPERIMENTAL ARMORY and the TEST CHAMBER
-    int a = rnd(4), b = (a + 1 + rnd(3)) % 4;
-    s2Kind[s2Room[2][a]] = LK_ARMORY;
-    s2Kind[s2Room[2][b]] = LK_TEST;
+  {                                          // lift C: three of its four rooms the EXPERIMENTAL ARMORY, the TEST CHAMBER, HAZARDOUS STORAGE
+    int fl[4] = { 0, 1, 2, 3 };
+    for (int i = 3; i > 0; i--) { int j = rnd(i + 1), t = fl[i]; fl[i] = fl[j]; fl[j] = t; }
+    s2Kind[s2Room[2][fl[0]]] = LK_ARMORY;
+    s2Kind[s2Room[2][fl[1]]] = LK_TEST;
+    s2Kind[s2Room[2][fl[2]]] = LK_HAZARD;
+    s2HazCard = rnd(6);                      // (the level 4 card: one of its 6 things)
   }
   memset(fgDead, 0, sizeof(fgDead));
   memset(fgSearched, 0, sizeof(fgSearched));
-  for (int k = 0; k < FG_LEVELS; k++) fgScale[k] = 1;
-  fgCard = rnd(FG_LEVELS);
+  for (int a = 0; a < FG_LIFTS; a++) for (int l = 0; l < FG_MAXL; l++) for (int k = 0; k < FG_MAXS; k++) fgScale[a][l][k] = 1;
+  fgCard = rnd(fgLevels[0]);
   fgLoaded = -1;
   hasXGun = xGunTaken = false;
   memset(roomAt, -1, sizeof(roomAt));
@@ -2063,6 +2072,215 @@ static void paintTestRoom() {
   for (int y = ROOM_FLOOR_Y - 176; y < ROOM_FLOOR_Y - 150; y += 6) { fillRect(1066, y, 1094, y + 2, rgb565(90, 96, 108)); fillRect(1106, y, 1134, y + 2, rgb565(90, 96, 108)); }
 }
 
+
+// ---- lift C: HAZARDOUS STORAGE. Drums of green waste on a shelf up the wall, three of them leaking - a drip
+// from each in turn - and a puddle of it on the floor to jump. The fumes eat at him while he's in here, and
+// searching (his hands in it) more: from full health, three searches and he's done - the fourth would kill
+// him. The ACCESS CARD LEVEL 4 is in one of its 6 things.
+static const LabItem hazItems[] = {
+  { 180, ROOM_FLOOR_Y, 90, 200 }, { 310, ROOM_FLOOR_Y, 110, 150 }, { 455, ROOM_FLOOR_Y, 120, 110 },   // the hazmat locker, the chemical cabinet, barrels on a pallet
+  { 830, ROOM_FLOOR_Y, 110, 100 }, { 965, ROOM_FLOOR_Y, 100, 120 }, { 1105, ROOM_FLOOR_Y, 100, 210 } };  // the lead container, the spill cart, the decon shower
+#define HZ_SHELF_Y 300                       // the shelf's top (the drums stand on it)
+#define HZ_PUDDLE_X 640
+#define HZ_PUDDLE_W 92                       // (jumpable)
+#define HZ_PUDDLE_HURT 26                    // 51% of a full bar
+#define HZ_DRIP_HURT 13                      // 26%
+#define HZ_AIR_RATE 0.5f                     // health a second, just for being in here...
+#define HZ_SEARCH_COST 14.0f                 // ...and this much more a search (spread over it)
+#define HZ_DRIP_EVERY 0.9f                   // (the leaks in turn: left, middle, right, a pause)
+#define HZ_DRIP_CYCLE 3.3f
+#define HZ_DRIP_GROW 0.5f                    // (a drop swelling at the leak before it falls)
+static const int16_t hzLeakX[3] = { 400, 640, 880 };
+static void hurt(int amount);
+static void nkBio(int x, int y, int r);
+static float hzAcc = 0, hzPuddleCool = 0, hzLastX = 0;
+static int hzDripHit = -1;
+
+static void paintHazStorage() {
+  fillRect(380, 130, 900, 190, rgb565(240, 196, 40));                        // the sign
+  drawRectOutline(380, 130, 900, 190, rgb565(20, 20, 22), 3);
+  drawVectorText("HAZARDOUS STORAGE", 640, 160, 3.2f, rgb565(20, 20, 22), true);
+  nkBio(340, 160, 22);
+  nkBio(940, 160, 22);
+  // the shelf, its brackets, the drums on it
+  fillRect(120, HZ_SHELF_Y, 1160, HZ_SHELF_Y + 10, rgb565(120, 126, 136));
+  fillRect(120, HZ_SHELF_Y, 1160, HZ_SHELF_Y + 2, rgb565(190, 196, 206));
+  for (int x = 150; x < 1160; x += 200) {
+    int bx[3] = { x, x + 12, x }, by[3] = { HZ_SHELF_Y + 10, HZ_SHELF_Y + 10, HZ_SHELF_Y + 50 };
+    fillPolygon(bx, by, 3, rgb565(100, 106, 116));
+  }
+  for (int d = 0; d < 9; d++) {
+    int cx = 160 + d * 120, top = HZ_SHELF_Y - 92;
+    bool leak = cx == 400 || cx == 640 || cx == 880;
+    fillRect(cx - 34, top, cx + 34, HZ_SHELF_Y - 1, rgb565(40, 120, 50));
+    fillRect(cx - 34, top, cx - 24, HZ_SHELF_Y - 1, rgb565(70, 160, 80));
+    fillRect(cx + 24, top, cx + 34, HZ_SHELF_Y - 1, rgb565(26, 86, 34));
+    for (int r = 0; r < 2; r++) fillRect(cx - 34, top + 24 + r * 40, cx + 34, top + 28 + r * 40, rgb565(26, 80, 32));   // its hoops
+    fillRect(cx - 30, top - 4, cx + 30, top, rgb565(30, 90, 38));
+    int tx[3] = { cx, cx + 14, cx - 14 }, ty[3] = { top + 34, top + 58, top + 58 };   // a hazard triangle on it
+    fillPolygon(tx, ty, 3, rgb565(240, 200, 40));
+    drawVectorText("!", (float)cx, top + 50.0f, 1.2f, rgb565(20, 20, 22), true);
+    if (leak) {                                                              // split, its green running down it and off the shelf
+      drawLine(cx + 8, top + 64, cx + 14, top + 80, rgb565(20, 30, 20), true);
+      fillRect(cx + 10, top + 70, cx + 16, HZ_SHELF_Y + 10, rgb565(140, 255, 90));
+      fillRect(cx + 9, HZ_SHELF_Y + 10, cx + 17, HZ_SHELF_Y + 16, rgb565(140, 255, 90));
+    }
+  }
+  // the floor's things
+  {                                                                          // the hazmat locker: a yellow suit behind the glass
+    int x0 = 135, x1 = 225, top = ROOM_FLOOR_Y - 200;
+    fillRect(x0, top, x1, ROOM_FLOOR_Y - 1, rgb565(150, 160, 176));
+    fillRect(x0 + 10, top + 14, x1 - 10, ROOM_FLOOR_Y - 30, rgb565(60, 80, 96));
+    fillCircle((x0 + x1) / 2, top + 50, 18, rgb565(240, 210, 40));
+    fillRect((x0 + x1) / 2 - 10, top + 44, (x0 + x1) / 2 + 10, top + 56, rgb565(60, 100, 140));
+    fillRect(x0 + 22, top + 68, x1 - 22, top + 150, rgb565(240, 210, 40));
+    drawVectorText("HAZMAT", (x0 + x1) / 2, ROOM_FLOOR_Y - 16, 1.1f, rgb565(20, 20, 22), true);
+  }
+  {                                                                          // the chemical cabinet
+    int x0 = 255, x1 = 365, top = ROOM_FLOOR_Y - 150;
+    fillRect(x0, top, x1, ROOM_FLOOR_Y - 1, rgb565(240, 200, 40));
+    fillRect((x0 + x1) / 2 - 1, top + 6, (x0 + x1) / 2 + 1, ROOM_FLOOR_Y - 6, rgb565(150, 120, 20));
+    fillRect(x0 + 10, top + 14, x1 - 10, top + 40, rgb565(200, 40, 30));
+    drawVectorText("FLAMMABLE", (x0 + x1) / 2, top + 27, 1.0f, rgb565(250, 250, 250), true);
+    fillRect((x0 + x1) / 2 - 8, top + 70, (x0 + x1) / 2 - 4, top + 96, rgb565(60, 60, 66));
+    fillRect((x0 + x1) / 2 + 4, top + 70, (x0 + x1) / 2 + 8, top + 96, rgb565(60, 60, 66));
+  }
+  for (int k = 0; k < 4; k++) {                                              // barrels on a pallet
+    int bx = 410 + (k % 2) * 44 + (k / 2) * 6, by1 = ROOM_FLOOR_Y - 14 - (k / 2) * 0;
+    if (k >= 2) continue;
+    fillRect(bx - 18, by1 - 84, bx + 18, by1, k ? rgb565(60, 120, 180) : rgb565(220, 120, 40));
+    fillRect(bx - 18, by1 - 60, bx + 18, by1 - 56, rgb565(30, 30, 34));
+    fillRect(bx - 18, by1 - 30, bx + 18, by1 - 26, rgb565(30, 30, 34));
+  }
+  fillRect(395, ROOM_FLOOR_Y - 14, 515, ROOM_FLOOR_Y - 1, rgb565(150, 116, 70));
+  fillRect(395, ROOM_FLOOR_Y - 14, 515, ROOM_FLOOR_Y - 11, rgb565(190, 150, 90));
+  fillRect(482, ROOM_FLOOR_Y - 64, 512, ROOM_FLOOR_Y - 14, rgb565(220, 220, 224));   // (a small white drum, a skull)
+  fillCircle(497, ROOM_FLOOR_Y - 42, 7, rgb565(30, 30, 34));
+  {                                                                          // the lead-lined container
+    int x0 = 775, x1 = 885, top = ROOM_FLOOR_Y - 100;
+    fillRect(x0, top, x1, ROOM_FLOOR_Y - 1, rgb565(80, 86, 96));
+    fillRect(x0, top, x1, top + 8, rgb565(130, 136, 146));
+    drawVectorText("LEAD", (x0 + x1) / 2, top + 40, 1.6f, rgb565(200, 206, 216), true);
+    int rx = (x0 + x1) / 2, ry = top + 72;                                   // a radiation sign
+    fillCircle(rx, ry, 14, rgb565(240, 200, 40));
+    for (int k = 0; k < 3; k++) {
+      float a = -PI / 2 + k * 2 * PI / 3;
+      int px[3] = { rx, rx + (int)(13 * cosf(a - 0.5f)), rx + (int)(13 * cosf(a + 0.5f)) }, py[3] = { ry, ry + (int)(13 * sinf(a - 0.5f)), ry + (int)(13 * sinf(a + 0.5f)) };
+      fillPolygon(px, py, 3, rgb565(20, 20, 22));
+    }
+    fillCircle(rx, ry, 3, rgb565(240, 200, 40));
+  }
+  {                                                                          // the spill cart: absorbent pads, a bucket, a mop
+    int x0 = 918, x1 = 1012, top = ROOM_FLOOR_Y - 90;
+    fillRect(x0, top, x1, top + 6, rgb565(200, 40, 30));
+    fillRect(x0, top + 50, x1, top + 56, rgb565(200, 40, 30));
+    fillRect(x0 + 4, top, x0 + 8, ROOM_FLOOR_Y - 10, rgb565(120, 126, 136));
+    fillRect(x1 - 8, top, x1 - 4, ROOM_FLOOR_Y - 10, rgb565(120, 126, 136));
+    for (int k = 0; k < 3; k++) fillRect(x0 + 14, top - 10 - k * 9, x1 - 30, top - 2 - k * 9, rgb565(236, 236, 230));
+    fillRect(x0 + 20, top + 20, x0 + 50, top + 50, rgb565(240, 200, 40));
+    drawLine(x1 - 14, top - 70, x1 - 20, ROOM_FLOOR_Y - 8, rgb565(160, 120, 70), true);
+    drawVectorText("SPILL KIT", (x0 + x1) / 2, top + 30, 1.0f, rgb565(250, 250, 250), true);
+    fillCircle(x0 + 10, ROOM_FLOOR_Y - 6, 6, rgb565(30, 30, 34));
+    fillCircle(x1 - 10, ROOM_FLOOR_Y - 6, 6, rgb565(30, 30, 34));
+  }
+  {                                                                          // the decontamination shower
+    int x0 = 1055, x1 = 1155, top = ROOM_FLOOR_Y - 210;
+    fillRect(x0, top, x0 + 6, ROOM_FLOOR_Y - 1, rgb565(150, 156, 166));
+    fillRect(x1 - 6, top, x1, ROOM_FLOOR_Y - 1, rgb565(150, 156, 166));
+    fillRect(x0, top, x1, top + 8, rgb565(150, 156, 166));
+    fillRect(x0 + 6, top + 8, x1 - 6, ROOM_FLOOR_Y - 1, rgb565(200, 226, 236));
+    fillRect((x0 + x1) / 2 - 3, top + 8, (x0 + x1) / 2 + 3, top + 30, rgb565(120, 126, 136));
+    fillRect((x0 + x1) / 2 - 16, top + 30, (x0 + x1) / 2 + 16, top + 36, rgb565(120, 126, 136));
+    fillRect(x0 + 6, top + 50, x1 - 6, top + 70, rgb565(60, 170, 80));
+    drawVectorText("DECON", (x0 + x1) / 2, top + 60, 1.4f, rgb565(250, 250, 250), true);
+    fillRect(x1 - 26, top + 90, x1 - 14, top + 120, rgb565(30, 120, 50));    // its pull handle
+  }
+  // stains on the wall under the leaks
+  for (int k = 0; k < 3; k++)
+    for (int y = HZ_SHELF_Y + 24; y < ROOM_FLOOR_Y - 20; y += 22)
+      fillRect(hzLeakX[k] + 11, y, hzLeakX[k] + 15, y + 8, rgb565(196, 222, 186));
+}
+
+static void paintHazPuddle() {   // (after the floor: the green on it)
+  int x0 = HZ_PUDDLE_X - HZ_PUDDLE_W / 2, x1 = HZ_PUDDLE_X + HZ_PUDDLE_W / 2;
+  int px[8] = { x0 - 6, x0 + 10, x0 + 40, x1 - 20, x1 + 6, x1 - 4, x0 + 50, x0 + 4 };
+  int py[8] = { ROOM_FLOOR_Y + 2, ROOM_FLOOR_Y - 4, ROOM_FLOOR_Y - 5, ROOM_FLOOR_Y - 4, ROOM_FLOOR_Y + 2, ROOM_FLOOR_Y + 8, ROOM_FLOOR_Y + 10, ROOM_FLOOR_Y + 8 };
+  fillPolygon(px, py, 8, rgb565(90, 220, 60));
+  fillRect(x0 + 14, ROOM_FLOOR_Y - 2, x0 + 40, ROOM_FLOOR_Y, rgb565(200, 255, 160));
+}
+
+// Each frame in there: the air, the searching, the drips, the puddle
+static void updateHazStorage(float dt) {
+  if (agState == ST_KO || gameOver != END_NONE) return;
+  float rate = HZ_AIR_RATE + ((agState == ST_USE && searchItem >= 0) ? HZ_SEARCH_COST / SEARCH_SECONDS : 0);
+  hzAcc += rate * dt;
+  int whole = (int)hzAcc;
+  if (whole > 0) {
+    hzAcc -= whole;
+    health -= whole;
+    if (health <= 0) { health = 0; hurtFlashT = 1.0f; endGame(END_HEALTH); return; }
+    if (health <= HEALTH_MAX / 4 && msgT <= 0) showMsg("TOXIC FUMES - GET OUT AND FIND FIRST AID", 2.5f);
+  }
+  // the drips: each leak's drop, swelling then falling (they can be in the air together)
+  float c = fmodf(clockT, HZ_DRIP_CYCLE);
+  for (int k = 0; k < 3; k++) {
+    float u = c - k * HZ_DRIP_EVERY - HZ_DRIP_GROW;
+    if (u > 0 && u < 1.0f) {
+      float y = HZ_SHELF_Y + 16 + 0.5f * 1500 * u * u, x = hzLeakX[k] + 13;
+      int id = (int)(clockT / HZ_DRIP_CYCLE) * 3 + k;
+      float top = agY - 130 * myScale;
+      if (hzDripHit != id && y < ROOM_FLOOR_Y && y > top && y < agY && fabsf(agX - x) < 24) {
+        hzDripHit = id;
+        hurt(HZ_DRIP_HURT);
+        sfxPlay(SFX_SCREAM);
+        showMsg("TOXIC DRIP!", 1.4f);
+      }
+    }
+  }
+  // the puddle: on the floor in it and it burns - and back out the way he came
+  if (hzPuddleCool > 0) hzPuddleCool -= dt;
+  bool inIt = fabsf(agY - ROOM_FLOOR_Y) < 1 && fabsf(agX - HZ_PUDDLE_X) < HZ_PUDDLE_W / 2.0f;
+  if (inIt && hzPuddleCool <= 0 && gameOver == END_NONE) {
+    hzPuddleCool = 1.0f;
+    hurt(HZ_PUDDLE_HURT);
+    sfxPlay(SFX_SCREAM);
+    showMsg("BURNT BY TOXIC WASTE!", 1.6f);
+    agX = hzLastX < HZ_PUDDLE_X ? HZ_PUDDLE_X - HZ_PUDDLE_W / 2.0f - 30 : HZ_PUDDLE_X + HZ_PUDDLE_W / 2.0f + 30;
+  }
+  if (!inIt) hzLastX = agX;
+}
+
+static void drawHazStorage() {   // (in front: the drops, the puddle bubbling, the fumes)
+  float c = fmodf(clockT, HZ_DRIP_CYCLE);
+  for (int k = 0; k < 3; k++) {
+    float into = c - k * HZ_DRIP_EVERY, x = hzLeakX[k] + 13;
+    if (into < 0 || into > HZ_DRIP_GROW + 1.0f) continue;
+    if (into < HZ_DRIP_GROW) {                                              // swelling at the leak
+      float r = 3 + 5 * into / HZ_DRIP_GROW;
+      fillCircle((int)x, HZ_SHELF_Y + 16 + (int)r, (int)r, rgb565(140, 255, 90));
+    } else {
+      float u = into - HZ_DRIP_GROW, y = HZ_SHELF_Y + 16 + 0.5f * 1500 * u * u;
+      if (y < ROOM_FLOOR_Y) {
+        glowDisc(x, y, 18, 120, 255, 80, 0.4f);
+        fillCircle((int)x, (int)y, 7, rgb565(140, 255, 90));
+        fillRect((int)x - 3, (int)y - 16, (int)x + 3, (int)y - 4, rgb565(140, 255, 90));
+      } else if (y < ROOM_FLOOR_Y + 300) {                                  // a splash
+        float s2 = fminf(1.0f, (y - ROOM_FLOOR_Y) / 300);
+        for (int j = -2; j <= 2; j++) fillCircle((int)(x + j * 10 * (0.4f + s2)), ROOM_FLOOR_Y - 4 - (int)(10 * (1 - s2) * (2 - abs(j))), 3, rgb565(140, 255, 90));
+      }
+    }
+  }
+  for (int b = 0; b < 4; b++) {                                             // the puddle bubbling
+    float u = fmodf(clockT * 0.8f + b * 0.27f, 1.0f);
+    drawCircle(HZ_PUDDLE_X - 30 + b * 20, ROOM_FLOOR_Y - 2 - (int)(6 * u), 2 + (int)(3 * u), rgb565(200, 255, 160));
+  }
+  glowDisc(HZ_PUDDLE_X, ROOM_FLOOR_Y - 20, 90, 120, 255, 80, 0.18f + 0.05f * sinf(clockT * 3));
+  for (int f = 0; f < 5; f++) {                                             // fumes drifting up
+    float u = fmodf(clockT * 0.12f + f * 0.2f, 1.0f);
+    glowDisc(200 + f * 220 + 40 * sinf(clockT * 0.5f + f), ROOM_FLOOR_Y - u * 400, 70, 120, 220, 90, 0.10f * (1 - u));
+  }
+}
+
 static int s2ItemCount(int kind) {   // how many things a stage 2 room has to search
   switch (kind) {
     case LK_KITCHEN: return 8;
@@ -2078,6 +2296,7 @@ static int s2ItemCount(int kind) {   // how many things a stage 2 room has to se
     case LK_QLAB2: return (int)(sizeof(qlab2Items) / sizeof(qlab2Items[0]));
     case LK_ARMORY: return (int)(sizeof(armoryItems) / sizeof(armoryItems[0]));
     case LK_TEST: return (int)(sizeof(testItems) / sizeof(testItems[0]));
+    case LK_HAZARD: return (int)(sizeof(hazItems) / sizeof(hazItems[0]));
   }
   return 0;
 }
@@ -2103,6 +2322,7 @@ static void placeLabItems(int idx) {
   if (s2Kind[idx] == LK_QLAB2) for (const LabItem &it : qlab2Items) add(it);
   if (s2Kind[idx] == LK_ARMORY) for (const LabItem &it : armoryItems) add(it);
   if (s2Kind[idx] == LK_TEST) for (const LabItem &it : testItems) add(it);
+  if (s2Kind[idx] == LK_HAZARD) for (const LabItem &it : hazItems) add(it);
 }
 static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
   decorCount = 0;
@@ -4540,6 +4760,8 @@ static void paintLabRoom() {
     paintArmory();
   } else if (s2Kind[idx] == LK_TEST) {
     paintTestRoom();
+  } else if (s2Kind[idx] == LK_HAZARD) {
+    paintHazStorage();
   } else if (s2Kind[idx] == LK_KITCHEN) {
     paintKitchen();
   } else if (s2Kind[idx] == LK_STORE) {
@@ -4574,6 +4796,7 @@ static void paintLabRoom() {
     }
   }
   labFloor(0, SCREEN_W - 1, ROOM_FLOOR_Y, PLAY_Y1);
+  if (s2Kind[idx] == LK_HAZARD) paintHazPuddle();
   if (s2Kind[idx] == LK_QLAB2)                 // (the holes in its floor)
     for (int i = 0; i < pitCount; i++) paintBrokenPit(pits[i][0], pits[i][1]);
   paintLabSide(false, doorYL, true);
@@ -5138,7 +5361,7 @@ static void drawLabDoor(int side, int fy, int cy, int room) {
 
 // The lift area in stage 2: dark space, the shaft, and at each of this lift's levels its walkways
 // (white walls, duct, the stripe, glass rails), doors with card readers, first aid, bins
-static void drawFoyerGuardAt(int L, int fy);
+static void drawFoyerGuardAt(int sh, int L, int fy);
 static void drawLabShaft() {
   auto screenY = [](int f) { return (int)lroundf(CAR_FLOOR_Y + (f * LEVEL_GAP - carWorldY)); };
   int ts = topStop(curShaft), bs = bottomStop(curShaft);
@@ -5190,7 +5413,7 @@ static void drawLabShaft() {
     if (s2Foyer(curShaft, L, 0)) fillRect(SHAFT_X0 - 8, fy, SHAFT_X0 - 1, fy + 5, rgb565(200, 30, 30));
     fillRect(SHAFT_X1, fy, SHAFT_X1 + 7, fy + 5, rgb565(200, 30, 30));
     if (curShaft == 0 && L == wkFloor) drawWorker(fy);
-    if (curShaft == 2 && L < FG_LEVELS && L != fgLoaded) drawFoyerGuardAt(L, fy);
+    if ((curShaft == 2 || curShaft == 3) && L < fgLevels[curShaft - 2] && (curShaft - 2) * 8 + L != fgLoaded) drawFoyerGuardAt(curShaft - 2, L, fy);
   }
   // the head of the shaft and its bottom
   if (capY >= HUD_H) {
@@ -5404,6 +5627,10 @@ static void resetHazardsForEntry(bool fromLeft) {
   }
   drWakeT = 0;
   gasT = -1.5f;                        // (the clone lab's gas: a moment before the first step)
+  hzAcc = 0;                           // (hazardous storage)
+  hzPuddleCool = 0;
+  hzDripHit = -1;
+  hzLastX = fromLeft ? 0.0f : (float)SCREEN_W;
   gasHitStep = -1;
   drX = fromLeft ? SCREEN_W - 180.0f : 180.0f;
   drY = CEIL_Y + 90.0f;
@@ -7101,11 +7328,11 @@ static void roomKill(bool shot) {
 static void npcPersist(int i) {
   const Npc &n = npcs[i];
   if (n.foyer) {
-    if (n.lvl < 0 || n.lvl >= FG_LEVELS) return;
-    fgDead[n.lvl] = n.dead;
-    fgDX[n.lvl] = n.x;
-    fgDDir[n.lvl] = (int8_t)n.dir;
-    fgScale[n.lvl] = n.scale;
+    if (n.lvl < 0 || n.lvl >= FG_MAXL || n.fsh < 0 || n.fsh >= FG_LIFTS || n.fslot < 0 || n.fslot >= FG_MAXS) return;
+    fgDead[n.fsh][n.lvl][n.fslot] = n.dead;
+    fgDX[n.fsh][n.lvl][n.fslot] = n.x;
+    fgDDir[n.fsh][n.lvl][n.fslot] = (int8_t)n.dir;
+    fgScale[n.fsh][n.lvl][n.fslot] = n.scale;
     return;
   }
   if (mode != MODE_ROOM || curRoom >= S2_ROOMS) return;
@@ -7619,14 +7846,18 @@ static void drawNpcs() {
   }
 }
 
-static void drawFoyerGuardAt(int L, int fy) {   // (not the one in npcs[]: standing at his post, or where he fell)
-  if (fgDead[L]) {
-    AgentPose p = PERSON_LIE;
-    p.spin = -90;
-    fillRect((int)fgDX[L] - (int)(60 * fgScale[L]), fy - 3, (int)fgDX[L] + (int)(60 * fgScale[L]), fy - 1, rgb565(130, 10, 14));
-    drawPersonU(p, fgDX[L], (float)fy, fgDDir[L], AGENT_SCALE * fgScale[L], PK_GUARD);
-  } else {
-    drawPersonU(PERSON_IDLE, (float)FG_X, (float)fy, -1, AGENT_SCALE * fgScale[L], PK_GUARD);
+static void drawFoyerGuardAt(int sh, int L, int fy) {   // (not the ones in npcs[]: standing at their posts, or where they fell)
+  for (int k = 0; k < fgSlots[sh]; k++) {
+    float sc = fgScale[sh][L][k];
+    if (fgDead[sh][L][k]) {
+      AgentPose p = PERSON_LIE;
+      p.spin = -90;
+      float x = fgDX[sh][L][k];
+      fillRect((int)x - (int)(60 * sc), fy - 3, (int)x + (int)(60 * sc), fy - 1, rgb565(130, 10, 14));
+      drawPersonU(p, x, (float)fy, fgDDir[sh][L][k], AGENT_SCALE * sc, PK_GUARD);
+    } else {
+      drawPersonU(PERSON_IDLE, fgPostX[sh][k], (float)fy, -1, AGENT_SCALE * sc, PK_GUARD);
+    }
   }
 }
 
@@ -7871,25 +8102,31 @@ static void drawHoleGas() {
 // Lift C's foyer guard at the level the car's stopped at: into npcs[] (the knife, the guns, the drawing all
 // work on him there); everywhere else his record (fgDead...) is what's drawn
 static void syncFoyerGuard() {
-  bool act = stage == 2 && mode == MODE_SHAFT && curShaft == 2 && !carMoving && carFloor >= 0 && carFloor < FG_LEVELS;
-  if (act && fgLoaded != carFloor) {
+  int sh = curShaft - 2;
+  bool act = stage == 2 && mode == MODE_SHAFT && (sh == 0 || sh == 1) && !carMoving && carFloor >= 0 && carFloor < fgLevels[sh < 0 || sh > 1 ? 0 : sh];
+  int key = act ? sh * 8 + carFloor : -1;
+  if (act && fgLoaded != key) {
     int L = carFloor;
-    Npc &n = npcs[0];
-    memset(&n, 0, sizeof(n));
-    n.kind = PK_GUARD;
-    n.dead = fgDead[L];
-    n.x = n.dead ? fgDX[L] : (float)FG_X;
-    n.y = CAR_FLOOR_Y;
-    n.a = n.b = n.x;
-    n.dir = n.dead ? fgDDir[L] : -1;           // (facing the walkway's door, where he'd come in from lift B's rooms)
-    n.dieT = 9;
-    n.sight = 2000;
-    n.scale = fgScale[L];
-    n.foyer = true;
-    n.lvl = (int8_t)L;
-    n.fcool = FG_GRACE;
-    npcCount = 1;
-    fgLoaded = L;
+    for (int k = 0; k < fgSlots[sh]; k++) {
+      Npc &n = npcs[k];
+      memset(&n, 0, sizeof(n));
+      n.kind = PK_GUARD;
+      n.dead = fgDead[sh][L][k];
+      n.x = n.dead ? fgDX[sh][L][k] : fgPostX[sh][k];
+      n.y = CAR_FLOOR_Y;
+      n.a = n.b = n.x;
+      n.dir = n.dead ? fgDDir[sh][L][k] : -1;     // (facing the walkway's door, where he'd come in from the last lift's rooms)
+      n.dieT = 9;
+      n.sight = 2000;
+      n.scale = fgScale[sh][L][k];
+      n.foyer = true;
+      n.lvl = (int8_t)L;
+      n.fsh = (int8_t)sh;
+      n.fslot = (int8_t)k;
+      n.fcool = FG_GRACE + k * 0.45f;            // (the second one a little after the first)
+    }
+    npcCount = fgSlots[sh];
+    fgLoaded = key;
     for (int k = 0; k < MY_SHOTS; k++) myShots[k].on = false;
   } else if (!act && fgLoaded >= 0) {
     fgLoaded = -1;
@@ -7916,9 +8153,17 @@ static void updateGShots(float dt) {     // the foyer guard's bullets: across th
   }
 }
 // Beside the dead foyer guard: 1 the one with the card (not searched yet), 2 any other (nothing on him)
+static int bodyGuard = -1;                 // (which of npcs[] that is)
 static int atGuardBody() {
-  if (!onWalkway() || fgLoaded < 0 || npcCount < 1 || !npcs[0].dead || fabsf(agX - npcs[0].x) > 100) return 0;
-  return (fgLoaded == fgCard && !fgSearched[fgCard]) ? 1 : 2;
+  bodyGuard = -1;
+  if (!onWalkway() || fgLoaded < 0) return 0;
+  for (int k = 0; k < npcCount; k++) {
+    const Npc &n = npcs[k];
+    if (!n.foyer || !n.dead || fabsf(agX - n.x) > 100) continue;
+    bodyGuard = k;
+    return (n.fsh == 0 && n.lvl == fgCard && n.fslot == 0 && !fgSearched[fgCard]) ? 1 : 2;
+  }
+  return 0;
 }
 
 // Each frame of play in stage 2
@@ -7932,6 +8177,7 @@ static void updateStage2(float dt) {
     updateSuspicion(dt);
     updateNpcs(dt);
     if (s2Kind[curRoom] == LK_CLONE || s2Kind[curRoom] == LK_QLAB2) updateGas(dt);
+    if (s2Kind[curRoom] == LK_HAZARD) updateHazStorage(dt);
   }
   if (bodyT >= 0) {                          // he'll be found
     float was = bodyT;
@@ -7986,9 +8232,10 @@ static void updateAgent(float dt) {
         startJump();
       } else if ((pressed & BTN_USE) && atGuardBody() == 1) {
         startS2Act(6);                  // ...lift C's foyer guard: the level 3 card on him
-        agFacing = npcs[0].x < agX ? -1 : 1;
+        agFacing = npcs[bodyGuard].x < agX ? -1 : 1;
       } else if ((pressed & BTN_USE) && atGuardBody() == 2) {
-        showMsg(fgLoaded == fgCard ? "NOTHING MORE ON HIM" : "NOTHING ON HIM", 1.6f);
+        const Npc &g = npcs[bodyGuard];
+        showMsg(g.fsh == 0 && g.lvl == fgCard ? "NOTHING MORE ON HIM" : "NOTHING ON HIM", 1.6f);
       } else if ((pressed & BTN_USE) && atBody()) {
         startS2Act(wkState == WK_DOWN ? 2 : 3);   // ...search him, then into the bin with him
       } else if ((pressed & BTN_USE) && atFoyerAid()) {
@@ -8293,6 +8540,10 @@ static void updateAgent(float dt) {
               sfxPlay(SFX_FANFARE);
               addScore(docValue, px, py - 56);
               docShowT = DOC_SHOW;
+              break;
+            }
+            if (first && s2Kind[curRoom] == LK_HAZARD && i == s2HazCard) {      // hazardous storage: the level 4 card
+              foundCard(4);
               break;
             }
             if (first && s2Kind[curRoom] == LK_MEDICAL && i == s2CardItem) {    // a patient's level 2 card
@@ -11026,6 +11277,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mode == MODE_ROOM && agState == ST_SHOCK) drawShockSparks();
   if (mode == MODE_ROOM && camCount > 0) drawCameras();
   if (mode == MODE_ROOM && stage == 2 && curRoom < S2_ROOMS && (s2Kind[curRoom] == LK_CLONE || s2Kind[curRoom] == LK_QLAB2)) drawGas();
+  if (mode == MODE_ROOM && stage == 2 && curRoom < S2_ROOMS && s2Kind[curRoom] == LK_HAZARD) drawHazStorage();
   if (mode == MODE_ROOM && (curHazard == HZ_DRONE || curHazard == HZ_CAMDRONE)) drawDrone();
   if (mode == MODE_ROOM && powerPanelT > 0 && !mapOn) drawPowerPanel();
   if (termOn && mode == MODE_ROOM) drawTerminal();
