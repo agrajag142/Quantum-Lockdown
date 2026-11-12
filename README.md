@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 056: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 057: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -712,10 +712,10 @@ When the last missile is dealt with and at least one was destroyed:
 landed) or **YOU HAVE DONE THE BEST YOU COULD** (some did), and you carry on.
 (If none were destroyed and they all land, it's still MISSION FAILED.)
 
-**Lift F: THE PROFESSOR** - the end. His office (a world map screen,
+**Lift F: DR. VOSS** (the Professor) - the end. His office (DR. VOSS on the sign) (a world map screen,
 bookshelves, his desk, a globe) and him: a black coat, wild white hair,
 glasses, twice the size, walking back and forth, no weapon for now. Kill him
-(THE PROFESSOR IS DEAD) and the game ends: MISSION COMPLETE, with how many
+(DR. VOSS IS DEAD) and the game ends: MISSION COMPLETE, with how many
 missiles landed and the dead, and the end of game bonus.
 
 **The panel** in stage 2: LIFT A..F and the level; ROOMS (of 21), ACCESS

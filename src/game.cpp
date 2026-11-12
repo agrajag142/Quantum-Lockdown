@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "056"
+#define GAME_VERSION      "057"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -271,7 +271,7 @@ static std::atomic<int> rideHum{0};    // the journey's rumble
 // walkway, its right door (where the next lift comes down that far) on the next lift's left one;
 // each door has a card reader (access level 1..5: once in, always open). In rooms[0..20].
 enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE, LK_CLONE, LK_SOLDIER, LK_SERVER, LK_QLAB1, LK_QLAB2, LK_ARMORY, LK_TEST, LK_HAZARD, LK_ARMORY2, LK_ARENA, LK_SIMON, LK_DESTRUCT, LK_BOSS };
-static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM", "QUANTUM LAB 1", "QUANTUM LAB 2", "ARMORY", "TEST CHAMBER", "HAZ STORAGE", "ARMORY 2", "SECURITY ZONE", "CODE ROOM", "SELF DESTRUCT", "PROFESSOR" };
+static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM", "QUANTUM LAB 1", "QUANTUM LAB 2", "ARMORY", "TEST CHAMBER", "HAZ STORAGE", "ARMORY 2", "SECURITY ZONE", "CODE ROOM", "SELF DESTRUCT", "DR. VOSS" };
 static int8_t s2Room[S2_LIFTS][S2_LEVELS];   // the room on the right of each lift at each level (-1 none)
 static uint8_t s2Kind[S2_ROOMS], s2Lvl[S2_ROOMS];   // what it is, the access level its doors need
 static bool s2Aid[S2_LIFTS][S2_LEVELS];      // each left walkway's first aid cabinet: used
@@ -4946,7 +4946,7 @@ static void paintDestructRoom() {
 static void paintBossRoom() {
   fillRect(380, 128, 900, 180, rgb565(30, 24, 40));
   drawRectOutline(380, 128, 900, 180, rgb565(200, 170, 80), 3);
-  drawVectorText("THE PROFESSOR", 640, 154, 3.4f, rgb565(230, 200, 110), true);
+  drawVectorText("DR. VOSS", 640, 154, 3.4f, rgb565(230, 200, 110), true);
   fillRect(400, 214, 880, 470, rgb565(40, 44, 52));                           // the world map
   fillRect(408, 222, 872, 462, rgb565(8, 22, 40));
   static const int16_t land[][4] = { { 450, 260, 560, 330 }, { 500, 330, 560, 420 }, { 610, 250, 690, 300 }, { 620, 300, 680, 400 },
@@ -8041,7 +8041,7 @@ static void npcKilled(int i, bool shot) {
   suspT = 0;
   if (n.kind == PK_PROFESSOR && bossDeadT < 0) {   // THE PROFESSOR: the end of the game (once he's down)
     bossDeadT = 0;
-    showMsg("THE PROFESSOR IS DEAD", 3.0f);
+    showMsg("DR. VOSS IS DEAD", 3.0f);
     sfxPlay(SFX_FANFARE);
   }
   roomKill(shot);
@@ -11310,7 +11310,7 @@ static void drawCongrats() {
   drawVectorTextW("CONGRATULATIONS", SCREEN_W / 2, 270, 6.0f, rgb565(20, 90, 40), 7.0f);
   drawVectorTextW("CONGRATULATIONS", SCREEN_W / 2, 270, 6.0f, rgb565(100, 255, 140), 2.6f);
   drawVectorText(congratsAll ? "YOU HAVE STOPPED ALL THE NUCLEAR MISSILES" : "YOU HAVE DONE THE BEST YOU COULD", SCREEN_W / 2, 330, 3.0f, rgb565(240, 244, 250), true);
-  drawVectorText("NOW FIND THE PROFESSOR - LIFT F", SCREEN_W / 2, 372, 2.2f, rgb565(255, 220, 120), false);
+  drawVectorText("NOW FIND DR. VOSS - LIFT F", SCREEN_W / 2, 372, 2.2f, rgb565(255, 220, 120), false);
 }
 
 static void drawServerNode() {
@@ -11790,7 +11790,7 @@ static void drawGameOver() {
   } else if (gameOver == END_WIN && stage == 2) {   // THE PROFESSOR dead: how the missiles went
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
-    drawVectorText("THE PROFESSOR IS DEAD", SCREEN_W / 2, 172, 3.0f, rgb565(240, 240, 245), true);
+    drawVectorText("DR. VOSS IS DEAD", SCREEN_W / 2, 172, 3.0f, rgb565(240, 240, 245), true);
     {
       char num[24], line[96];
       commas(num, sizeof(num), finalDeaths);
