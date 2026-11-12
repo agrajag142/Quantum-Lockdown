@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "050"
+#define GAME_VERSION      "051"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -336,7 +336,11 @@ static GShot gShots[4];
 // The QX-9 (the EXPERIMENTAL ARMORY's prototype): a shot halves someone (1 in 10 doubles them); a quarter size and they're gone
 static bool hasXGun = false, xGunTaken = false;
 static bool hasFlamer = false, flamerTaken = false;   // the FX-5 (the second armory's flamethrower)
-static int arKilled[S2_ROOMS];               // (lift D's top-down rooms: how many each has lost; they don't come back)
+static int arKilled[S2_ROOMS];
+static bool arSearched[S2_ROOMS][16];        // (what's been searched in them; the level 5 card's in one)
+static int arCardRoom = -1, arCardObs = 0;
+enum ArHaz : uint8_t { AH_NONE, AH_DRONE, AH_TURRET };   // (one has a drone, one a wall turret)
+static uint8_t arHaz[S2_ROOMS];               // (lift D's top-down rooms: how many each has lost; they don't come back)
 static void paintArmory2();
 static void arenaEnter(bool fromLeft);
 static int s2HazCard = 0;                    // (hazardous storage: which of its 6 things has the level 4 card)
@@ -651,6 +655,16 @@ static void layOutStage2() {
   hasFlamer = flamerTaken = false;
   for (int f = 0; f < 3; f++) s2Kind[s2Room[3][f]] = LK_ARENA;   // lift D: SECURITY ZONES, seen from above
   memset(arKilled, 0, sizeof(arKilled));
+  memset(arSearched, 0, sizeof(arSearched));
+  memset(arHaz, 0, sizeof(arHaz));
+  {                                          // one room a drone, one a turret, one just soldiers; the level 5 card in one
+    int fl[3] = { 0, 1, 2 };
+    for (int i = 2; i > 0; i--) { int j = rnd(i + 1), t = fl[i]; fl[i] = fl[j]; fl[j] = t; }
+    arHaz[s2Room[3][fl[0]]] = AH_DRONE;
+    arHaz[s2Room[3][fl[1]]] = AH_TURRET;
+    arCardRoom = s2Room[3][rnd(3)];
+    arCardObs = rnd(11);                     // (lift D's 11 pieces of furniture)
+  }
   memset(roomAt, -1, sizeof(roomAt));
   wkFloor = rnd(S2_LEVELS);
   wkState = WK_WAIT;
@@ -8374,8 +8388,10 @@ static void drawHoleGas() {
 #define AR_DOOR_L1 684
 #define AR_DOOR_R0 86                        // the right door (top right): its gap in the right wall
 #define AR_DOOR_R1 182
-#define AR_SPAWN_X0 580                      // the soldiers' door, in the top wall
+#define AR_SPAWN_X0 580                      // the soldiers' doors: one in the top wall...
 #define AR_SPAWN_X1 700
+#define AR_SPAWN2_X0 940                     // ...one in the bottom wall (he can't go through either)
+#define AR_SPAWN2_X1 1060
 #define AR_R 21                              // (him, them: their radius)
 #define AR_SC 1.35f                          // (and how big they're drawn)
 #define AR_SPEED 260.0f
@@ -8393,7 +8409,7 @@ static const Obstacle arObs[] = {
   { 1080, 250, 1130, 300, OB_PILLAR }, { 140, 290, 200, 350, OB_CRATE } };
 #define AR_OBS ((int)(sizeof(arObs) / sizeof(arObs[0])))
 struct AGuard { bool on, dead, burn, walking; float x, y, tx, ty, face, aimT, cool, t, dieT, scale, strafeT; uint8_t fstate; };
-struct AShot { bool on, mine, ray; float x, y, vx, vy; };
+struct AShot { bool on, mine, ray; float x, y, vx, vy; int dmg; };
 static AGuard ag[AR_GMAX];
 static AShot ash[AR_SHOTS];
 static int arSpawned = 0;
@@ -8406,7 +8422,7 @@ static bool arBlocked(float x, float y, float r) {   // in a wall (not a door's 
     float cx = clampv(x, (float)o.x0, (float)o.x1), cy = clampv(y, (float)o.y0, (float)o.y1);
     if ((x - cx) * (x - cx) + (y - cy) * (y - cy) < r * r) return true;
   }
-  if (y - r < AR_Y0 && !(x > AR_SPAWN_X0 && x < AR_SPAWN_X1)) return true;
+  if (y - r < AR_Y0) return true;            // (the soldiers' doors too: shut to him)
   if (y + r > AR_Y1) return true;
   if (x - r < AR_X0 && !(y - r > AR_DOOR_L0 && y + r < AR_DOOR_L1)) return true;
   if (x + r > AR_X1 && !(y - r > AR_DOOR_R0 && y + r < AR_DOOR_R1 && !rooms[curRoom].noRightDoor)) return true;
@@ -8449,15 +8465,178 @@ static void arSpawnGuard(float x, float y, float tx, float ty, bool walking) {
       return;
     }
 }
-static void arWave() {                       // three in through the top door, in a V, to a spot with cover
-  static const float spots[3][2] = { { 640, 250 }, { 470, 300 }, { 820, 330 } };
-  const float *c = spots[fxRnd(0, 3)];
+static void arWave() {                       // three in through one of the two doors (at random), in a V, to a spot with cover
+  static const float spots[3][2] = { { 640, 250 }, { 470, 300 }, { 820, 330 } }, spots2[2][2] = { { 1060, 560 }, { 900, 350 } };
+  bool bottom = fxRnd(0, 2) == 1;
+  const float *c = bottom ? spots2[fxRnd(0, 2)] : spots[fxRnd(0, 3)];
   static const float form[3][2] = { { 0, 0 }, { -90, 40 }, { 90, 40 } };
   int n = (AR_TOTAL - arSpawned < 3 ? AR_TOTAL - arSpawned : 3);
-  for (int k = 0; k < n; k++)
-    arSpawnGuard(640 + form[k][0] * 0.5f, AR_Y0 - 30 - form[k][1], c[0] + form[k][0], c[1] + form[k][1], true);
+  for (int k = 0; k < n; k++) {
+    if (bottom) arSpawnGuard((AR_SPAWN2_X0 + AR_SPAWN2_X1) / 2 + form[k][0] * 0.5f, AR_Y1 + 30 + form[k][1], c[0] + form[k][0], c[1] + form[k][1], true);
+    else arSpawnGuard((AR_SPAWN_X0 + AR_SPAWN_X1) / 2 + form[k][0] * 0.5f, AR_Y0 - 30 - form[k][1], c[0] + form[k][0], c[1] + form[k][1], true);
+  }
   sfxPlay(SFX_ALARM);
-  showMsg("MORE SOLDIERS!", 1.6f);
+  showMsg(bottom ? "MORE SOLDIERS - THE BOTTOM DOOR!" : "MORE SOLDIERS - THE TOP DOOR!", 1.8f);
+}
+
+// ---- searching what's in the room (Square, held, beside it); one of the 3 rooms has the ACCESS CARD LEVEL 5
+static float arProg[16];
+static int arSearchAt = -1;
+static int arObsAt() {                       // the thing he's beside (or -1)
+  for (int i = 0; i < AR_OBS; i++) {
+    const Obstacle &o = arObs[i];
+    float cx = clampv(apX, (float)o.x0, (float)o.x1), cy = clampv(apY, (float)o.y0, (float)o.y1);
+    if (hypotf(apX - cx, apY - cy) < AR_R + 16) return i;
+  }
+  return -1;
+}
+
+// ---- the extra hazards: one room has a drone, one a wall turret's homing missiles (the third, just soldiers)
+#define TD_SCAN_LEN 470.0f                   // the drone: its beam's reach...
+#define TD_SCAN_HALF 0.45f                   // ...and half its width (radians)
+#define TD_SPEED 170.0f
+#define TD_KEEP 170.0f                       // (how close it comes)
+#define TD_FIRE_EVERY 0.8f
+static float tdX, tdY, tdAng, tdFireT, tdLostT, tdGrace, tdPatrolT;
+static bool tdChase = false;
+#define TU_X 800                             // the turret: on the top wall, right of middle
+#define TU_Y (AR_Y0 - 2)
+#define TU_EVERY 10.0f                       // a missile every 10 seconds...
+#define TU_WARN 1.0f                         // ...its light flashing for the last one
+#define MS_SPEED 235.0f                      // (he's quicker: 260)
+#define MS_TURN 2.4f                         // (radians a second)
+#define MS_LIFE 4.0f                         // (then it's spent)
+#define MS_HURT 15
+static float tuT, tuAng, msX, msY, msAng, msLife, exT = -1, exX, exY;
+static bool msOn = false;
+static float msTrail[12][2];
+static int msTrailN = 0;
+static bool arTall(float x, float y) {        // (what's tall enough to stop a missile or hide him from the drone: walls, pillars, cabinets)
+  if (x < AR_X0 || x > AR_X1 || y < AR_Y0 || y > AR_Y1) return true;
+  for (int i = 0; i < AR_OBS; i++) {
+    const Obstacle &o = arObs[i];
+    if ((o.kind == OB_PILLAR || o.kind == OB_CABINET) && x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1) return true;
+  }
+  return false;
+}
+static bool tdSight(float x0, float y0, float x1, float y1) {
+  int n = (int)(hypotf(x1 - x0, y1 - y0) / 12) + 1;
+  for (int k = 1; k < n; k++) if (arTall(x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n)) return false;
+  return true;
+}
+static void arKill(int i, int how);
+static void arEllipse(float cx, float cy, float rx, float ry, float ang, uint16_t c);
+static void msExplode(bool hurtHim) {
+  msOn = false;
+  exT = 0; exX = msX; exY = msY;
+  sfxPlay(SFX_BOOM);
+  if (hurtHim) { hurt(MS_HURT); showMsg("HIT BY THE MISSILE!", 1.4f); }
+  for (int i = 0; i < AR_GMAX; i++) {        // (it doesn't care whose it hits)
+    AGuard &g = ag[i];
+    if (g.on && !g.dead && hypotf(g.x - msX, g.y - msY) < 60) arKill(i, 1);
+  }
+}
+static void updateArHazards(float dt) {
+  uint8_t hz = arHaz[curRoom];
+  if (hz == AH_DRONE) {
+    if (tdGrace > 0) { tdGrace -= dt; return; }
+    float d = hypotf(apX - tdX, apY - tdY);
+    if (!tdChase) {                          // patrolling, the beam sweeping round
+      tdPatrolT += dt;
+      float px = 640 + 450 * cosf(tdPatrolT * 0.3f), py = 385 + 240 * sinf(tdPatrolT * 0.3f);
+      tdX += (px - tdX) * fminf(1.0f, dt * 1.2f);
+      tdY += (py - tdY) * fminf(1.0f, dt * 1.2f);
+      tdAng += 1.1f * dt;
+      float a = atan2f(apY - tdY, apX - tdX), da = fabsf(remainderf(a - tdAng, 6.2832f));
+      if (d < TD_SCAN_LEN && da < TD_SCAN_HALF && tdSight(tdX, tdY, apX, apY)) {
+        tdChase = true;
+        tdLostT = 0;
+        tdFireT = 0.5f;
+        sfxPlay(SFX_ALARM);
+        showMsg("THE DRONE HAS SEEN YOU", 1.6f);
+      }
+    } else {                                 // after him: closing in, firing
+      tdAng = atan2f(apY - tdY, apX - tdX);
+      if (d > TD_KEEP) { tdX += cosf(tdAng) * TD_SPEED * dt; tdY += sinf(tdAng) * TD_SPEED * dt; }
+      bool see = tdSight(tdX, tdY, apX, apY);
+      tdFireT -= dt;
+      if (see && d < 520 && tdFireT <= 0) {
+        tdFireT = TD_FIRE_EVERY;
+        for (int k = 0; k < AR_SHOTS; k++)
+          if (!ash[k].on) { ash[k] = { true, false, false, tdX + cosf(tdAng) * 22, tdY + sinf(tdAng) * 22, cosf(tdAng) * 560, sinf(tdAng) * 560, BULLET_HURT }; break; }
+        sfxPlay(SFX_SHOT);
+      }
+      tdLostT = (see && d < 650) ? 0 : tdLostT + dt;
+      if (tdLostT > 2.5f) tdChase = false;   // (lost him: back to its round)
+    }
+  } else if (hz == AH_TURRET) {
+    tuAng = atan2f(apY - TU_Y, apX - TU_X);
+    tuT += dt;
+    if (tuT >= TU_EVERY - TU_WARN && tuT - dt < TU_EVERY - TU_WARN) sfxPlay(SFX_WARN);
+    if (tuT >= TU_EVERY) {
+      tuT = 0;
+      msOn = true;
+      msX = TU_X + cosf(tuAng) * 40; msY = TU_Y + sinf(tuAng) * 40;
+      msAng = tuAng;
+      msLife = MS_LIFE;
+      msTrailN = 0;
+      sfxPlay(SFX_IGNITE);
+      showMsg("MISSILE - RUN!", 1.2f);
+    }
+  }
+  if (msOn) {                                // the missile: turning after him, till it's spent
+    float want = atan2f(apY - msY, apX - msX), da = remainderf(want - msAng, 6.2832f), turn = MS_TURN * dt;
+    msAng += clampv(da, -turn, turn);
+    msX += cosf(msAng) * MS_SPEED * dt;
+    msY += sinf(msAng) * MS_SPEED * dt;
+    if (msTrailN < 12) msTrailN++;
+    for (int k = msTrailN - 1; k > 0; k--) { msTrail[k][0] = msTrail[k - 1][0]; msTrail[k][1] = msTrail[k - 1][1]; }
+    msTrail[0][0] = msX; msTrail[0][1] = msY;
+    msLife -= dt;
+    if (hypotf(apX - msX, apY - msY) < AR_R + 12) msExplode(true);
+    else if (arTall(msX, msY)) msExplode(hypotf(apX - msX, apY - msY) < 70);
+    else if (msLife <= 0) { msOn = false; exT = 0; exX = msX; exY = msY; sfxPlay(SFX_HIT); showMsg("IT RAN OUT", 1.0f); }
+  }
+  if (exT >= 0) { exT += dt; if (exT > 0.8f) exT = -1; }
+}
+static void drawArHazards() {
+  uint8_t hz = arHaz[curRoom];
+  if (hz == AH_DRONE) {
+    float half = TD_SCAN_HALF, len = tdChase ? 240.0f : TD_SCAN_LEN;
+    float xs[3] = { tdX, tdX + cosf(tdAng - half) * len, tdX + cosf(tdAng + half) * len }, ys[3] = { tdY, tdY + sinf(tdAng - half) * len, tdY + sinf(tdAng + half) * len };
+    if (tdGrace <= 0) blendPolygonF(xs, ys, 3, tdChase ? 255 : 255, tdChase ? 60 : 230, tdChase ? 40 : 90, tdChase ? 0.14f : 0.12f);
+    arEllipse(tdX + 10, tdY + 14, 30, 22, 0, rgb565(22, 24, 28));       // its shadow, on the floor below
+    for (int k = 0; k < 4; k++) {                                      // the rotors, blurred
+      float a = 0.785f + k * 1.5708f, rx = tdX + cosf(a) * 24, ry = tdY + sinf(a) * 24;
+      drawLineF(tdX, tdY, rx, ry, rgb565(60, 64, 72), 4);
+      glowDisc(rx, ry, 14, 200, 210, 220, 0.25f);
+      drawCircle((int)rx, (int)ry, 11, rgb565(150, 156, 166));
+    }
+    fillCircle((int)tdX, (int)tdY, 15, rgb565(60, 64, 74));
+    fillCircle((int)tdX, (int)tdY, 11, rgb565(90, 96, 108));
+    fillCircle((int)(tdX + cosf(tdAng) * 9), (int)(tdY + sinf(tdAng) * 9), 4, tdChase ? rgb565(255, 50, 40) : rgb565(80, 255, 120));
+  } else if (hz == AH_TURRET) {
+    fillRect(TU_X - 34, HUD_H + 4, TU_X + 34, AR_Y0 + 14, rgb565(60, 64, 74));   // its mount on the wall
+    drawRectOutline(TU_X - 34, HUD_H + 4, TU_X + 34, AR_Y0 + 14, rgb565(110, 116, 128), 2);
+    drawLineF((float)TU_X, (float)TU_Y, TU_X + cosf(tuAng) * 40, TU_Y + sinf(tuAng) * 40, rgb565(40, 44, 52), 10);   // its launcher, following him
+    fillCircle(TU_X, TU_Y, 16, rgb565(90, 96, 108));
+    bool warn = tuT >= TU_EVERY - TU_WARN;
+    fillCircle(TU_X, TU_Y, 6, warn && ((int)(clockT * 10) & 1) ? rgb565(255, 50, 40) : rgb565(110, 30, 30));
+  }
+  if (msOn) {
+    for (int k = msTrailN - 1; k >= 1; k--)                            // its smoke
+      glowDisc(msTrail[k][0], msTrail[k][1], 8 + k * 1.5f, 180, 180, 176, 0.35f * (1 - k / 12.0f));
+    float ca = cosf(msAng), sa = sinf(msAng);
+    glowDisc(msX - ca * 22, msY - sa * 22, 22, 255, 170, 60, 0.8f);
+    drawLineF(msX - ca * 20, msY - sa * 20, msX + ca * 14, msY + sa * 14, rgb565(220, 224, 230), 10);
+    drawLineF(msX - ca * 20 - sa * 8, msY - sa * 20 + ca * 8, msX - ca * 20 + sa * 8, msY - sa * 20 - ca * 8, rgb565(170, 40, 30), 4);   // (its fins)
+    fillCircle((int)(msX + ca * 14), (int)(msY + sa * 14), 5, rgb565(220, 40, 30));
+  }
+  if (exT >= 0) {
+    float k = exT / 0.8f;
+    glowDisc(exX, exY, 30 + 90 * k, 255, 190, 80, 0.9f * (1 - k));
+    glowDisc(exX, exY, 20 + 40 * k, 255, 250, 210, 0.8f * (1 - k));
+  }
 }
 
 static void arenaEnter(bool fromLeft) {
@@ -8468,6 +8647,10 @@ static void arenaEnter(bool fromLeft) {
   apY = fromLeft ? 636.0f : 134.0f;
   apFace = fromLeft ? 0.0f : 3.14159f;
   apWalkT = apFireT = arWaveT = arFlashT = 0;
+  memset(arProg, 0, sizeof(arProg));
+  tdX = fromLeft ? 1100.0f : 200.0f; tdY = fromLeft ? 200.0f : 600.0f;   // (the drone: the far side, a grace before it starts)
+  tdAng = 0; tdChase = false; tdGrace = 3.0f; tdPatrolT = fromLeft ? 5.5f : 2.4f; tdFireT = 0;
+  tuT = 3.0f; tuAng = 1.57f; msOn = false; exT = -1;                     // (the turret: its first missile 7 seconds in)
   arSpawned = arKilled[curRoom];
   static const float posts[3][2] = { { 640, 250 }, { 960, 380 }, { 1100, 560 } };
   int n = (AR_TOTAL - arSpawned < 3 ? AR_TOTAL - arSpawned : 3);
@@ -8510,7 +8693,7 @@ static void updateArena(float dt) {
   float fx = cosf(apFace), fy = sinf(apFace), mx = apX + fx * 46, my = apY + fy * 46;
   if (apFireT > 0) apFireT -= dt;
   if (arFlashT > 0) arFlashT -= dt;
-  bool trig = (held & (BTN_FIRE | BTN_USE)) != 0;
+  bool trig = (held & BTN_FIRE) != 0;        // (Square, in here, is for searching)
   if (trig && hasFlamer) {
     flameEmit(mx, my, fx, fy, dt);
   } else if (trig && (hasGun || hasXGun) && apFireT <= 0) {
@@ -8518,13 +8701,30 @@ static void updateArena(float dt) {
     for (int k = 0; k < AR_SHOTS; k++)
       if (!ash[k].on) {
         float sp = hasXGun ? 700.0f : 900.0f;
-        ash[k] = { true, true, hasXGun, mx, my, fx * sp, fy * sp };
+        ash[k] = { true, true, hasXGun, mx, my, fx * sp, fy * sp, 0 };
         break;
       }
     sfxPlay(hasXGun ? SFX_RAY : SFX_SHOT);
     arFlashT = 0.07f;
-  } else if ((pressed & (BTN_FIRE | BTN_USE)) && !hasGun && !hasXGun && !hasFlamer) {
+  } else if ((pressed & BTN_FIRE) && !hasGun && !hasXGun && !hasFlamer) {
     showMsg(hasKnife ? "NO GUN - X TO USE THE KNIFE UP CLOSE" : "NO WEAPON - KEEP MOVING", 1.6f);
+  }
+  // searching: Square held beside something
+  arSearchAt = arObsAt();
+  if (arSearchAt >= 0 && !arSearched[curRoom][arSearchAt] && (held & BTN_USE)) {
+    float was = arProg[arSearchAt];
+    arProg[arSearchAt] += dt;
+    if ((int)(was / SEARCH_BEEP_SECONDS) != (int)(arProg[arSearchAt] / SEARCH_BEEP_SECONDS)) sfxPlay(SFX_BEEP);
+    if (arProg[arSearchAt] >= SEARCH_SECONDS) {
+      arSearched[curRoom][arSearchAt] = true;
+      if (curRoom == arCardRoom && arSearchAt == arCardObs) foundCard(5);
+      else {
+        snprintf(floatText, sizeof(floatText), "NOTHING");
+        floatColour = rgb565(150, 156, 170);
+        nothingShowT = NOTHING_SHOW; nothingX = apX - 40; nothingY = apY - 50;
+        sfxPlay(SFX_BEEP);
+      }
+    }
   }
   if ((pressed & BTN_JUMP) && hasKnife)        // the knife: up close
     for (int i = 0; i < AR_GMAX; i++) {
@@ -8565,11 +8765,12 @@ static void updateArena(float dt) {
       }
     } else if (hypotf(apX - s.x, apY - s.y) < AR_R + 3) {
       s.on = false;
-      if (hasVest) { hurt(SHOT_HURT / 2); showMsg("HIT - THE VEST HELD", 1.2f); }
-      else { hurt(SHOT_HURT); showMsg("SHOT!", 1.0f); }
+      if (hasVest) { hurt(s.dmg / 2 > 0 ? s.dmg / 2 : 1); showMsg("HIT - THE VEST HELD", 1.2f); }
+      else { hurt(s.dmg); showMsg("SHOT!", 1.0f); }
       sfxPlay(SFX_HIT);
     }
   }
+  updateArHazards(dt);
   // the soldiers
   int alive = 0;
   for (int i = 0; i < AR_GMAX; i++) {
@@ -8606,7 +8807,7 @@ static void updateArena(float dt) {
       if (g.aimT >= FG_AIM) {
         float a = g.face, sp = 520;
         for (int k = 0; k < AR_SHOTS; k++)
-          if (!ash[k].on) { ash[k] = { true, false, false, g.x + cosf(a) * 30 * g.scale, g.y + sinf(a) * 30 * g.scale, cosf(a) * sp, sinf(a) * sp }; break; }
+          if (!ash[k].on) { ash[k] = { true, false, false, g.x + cosf(a) * 30 * g.scale, g.y + sinf(a) * 30 * g.scale, cosf(a) * sp, sinf(a) * sp, SHOT_HURT }; break; }
         sfxPlay(SFX_SHOT);
         g.fstate = 2;
         g.t = 0;
@@ -8743,8 +8944,23 @@ static void drawArena() {
   fillRect(AR_SPAWN_X0 - 8, HUD_H, AR_SPAWN_X0 - 1, AR_Y0, rgb565(240, 196, 40));
   fillRect(AR_SPAWN_X1 + 1, HUD_H, AR_SPAWN_X1 + 8, AR_Y0, rgb565(240, 196, 40));
   fillCircle(AR_SPAWN_X1 + 24, HUD_H + 14, 6, (int)(clockT * 3) & 1 ? rgb565(255, 50, 40) : rgb565(110, 20, 20));
+  fillRect(AR_SPAWN2_X0, AR_Y1 - 2, AR_SPAWN2_X1, SCREEN_H - 1, rgb565(30, 30, 34));   // the bottom one
+  fillRect(AR_SPAWN2_X0 - 8, AR_Y1, AR_SPAWN2_X0 - 1, SCREEN_H - 1, rgb565(240, 196, 40));
+  fillRect(AR_SPAWN2_X1 + 1, AR_Y1, AR_SPAWN2_X1 + 8, SCREEN_H - 1, rgb565(240, 196, 40));
+  fillCircle(AR_SPAWN2_X1 + 24, SCREEN_H - 12, 6, (int)(clockT * 3 + 1) & 1 ? rgb565(255, 50, 40) : rgb565(110, 20, 20));
   // things in the room
-  for (int i = 0; i < AR_OBS; i++) drawObstacle(arObs[i]);
+  for (int i = 0; i < AR_OBS; i++) {
+    drawObstacle(arObs[i]);
+    const Obstacle &o = arObs[i];
+    int cx = (o.x0 + o.x1) / 2;
+    if (arSearched[curRoom][i]) {                                    // searched: a tick
+      drawLineF(cx - 8.0f, o.y0 - 10.0f, cx - 2.0f, o.y0 - 4.0f, rgb565(90, 230, 110), 3);
+      drawLineF(cx - 2.0f, o.y0 - 4.0f, cx + 10.0f, o.y0 - 18.0f, rgb565(90, 230, 110), 3);
+    } else if (arProg[i] > 0) {                                     // part searched: its bar
+      fillRect(cx - 30, o.y0 - 16, cx + 30, o.y0 - 10, rgb565(30, 30, 34));
+      fillRect(cx - 30, o.y0 - 16, cx - 30 + (int)(60 * arProg[i] / SEARCH_SECONDS), o.y0 - 10, rgb565(90, 230, 110));
+    }
+  }
   // the dead (shot: where they fell; burnt: burning, charred, ash, gone)
   for (int i = 0; i < AR_GMAX; i++) {
     const AGuard &g = ag[i];
@@ -8796,6 +9012,11 @@ static void drawArena() {
     else drawLineF(s.x - ux * 16, s.y - uy * 16, s.x, s.y, s.mine ? rgb565(255, 240, 160) : rgb565(255, 150, 90), 3);
   }
   drawFlames();
+  drawArHazards();
+  if (arSearchAt >= 0 && !arSearched[curRoom][arSearchAt] && arProg[arSearchAt] <= 0)   // (beside something: what Square does)
+    drawVectorText("SQUARE: SEARCH", apX, apY - 46, 1.8f, rgb565(255, 230, 140), true);
+  if (nothingShowT > 0)
+    drawVectorText(floatText, nothingX, nothingY - (NOTHING_SHOW - nothingShowT) * 20, 2.5f, floatColour, false);
   // how many are left
   int left = AR_TOTAL - arKilled[curRoom];
   char b[40];
