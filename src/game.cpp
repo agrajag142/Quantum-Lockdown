@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "052"
+#define GAME_VERSION      "053"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -270,8 +270,8 @@ static std::atomic<int> rideHum{0};    // the journey's rumble
 // levels (from the top level down: A 6, B 5 ... F 1). A room's left door is on its lift's right
 // walkway, its right door (where the next lift comes down that far) on the next lift's left one;
 // each door has a card reader (access level 1..5: once in, always open). In rooms[0..20].
-enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE, LK_CLONE, LK_SOLDIER, LK_SERVER, LK_QLAB1, LK_QLAB2, LK_ARMORY, LK_TEST, LK_HAZARD, LK_ARMORY2, LK_ARENA };
-static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM", "QUANTUM LAB 1", "QUANTUM LAB 2", "ARMORY", "TEST CHAMBER", "HAZ STORAGE", "ARMORY 2", "SECURITY ZONE" };
+enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE, LK_CLONE, LK_SOLDIER, LK_SERVER, LK_QLAB1, LK_QLAB2, LK_ARMORY, LK_TEST, LK_HAZARD, LK_ARMORY2, LK_ARENA, LK_SIMON, LK_DESTRUCT, LK_BOSS };
+static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM", "QUANTUM LAB 1", "QUANTUM LAB 2", "ARMORY", "TEST CHAMBER", "HAZ STORAGE", "ARMORY 2", "SECURITY ZONE", "CODE ROOM", "SELF DESTRUCT", "PROFESSOR" };
 static int8_t s2Room[S2_LIFTS][S2_LEVELS];   // the room on the right of each lift at each level (-1 none)
 static uint8_t s2Kind[S2_ROOMS], s2Lvl[S2_ROOMS];   // what it is, the access level its doors need
 static bool s2Aid[S2_LIFTS][S2_LEVELS];      // each left walkway's first aid cabinet: used
@@ -303,6 +303,7 @@ struct Npc {                                 // the lab's people (the chef, the 
   float scale, fxT;                          // his size (the QX-9: halved, or doubled); the QX-9's flash on him
   bool burn;                                 // (killed by the FX-5: burning to ash)
   bool foyer;                                // one of lift C's foyer guards (NUCLEAR MISSION's soldier: sees him, aims, fires)
+  bool rsold;                                // (the same soldier, but in a room: lifts E's two rooms)
   int8_t lvl, fsh, fslot;                    // (which level's, which lift's (0 C, 1 D), which of its guards)
   uint8_t fstate;                            // (0 waiting, 1 aiming, 2 just fired)
   float fcool;
@@ -331,7 +332,7 @@ static float fgDX[FG_LIFTS][FG_MAXL][FG_MAXS], fgScale[FG_LIFTS][FG_MAXL][FG_MAX
 static int8_t fgDDir[FG_LIFTS][FG_MAXL][FG_MAXS];
 static bool fgAsh[FG_LIFTS][FG_MAXL][FG_MAXS];
 static int fgCard = 0, fgLoaded = -1;        // (lift C's level whose guard has the card; the walkway in npcs[] now: lift*8 + level)
-struct GShot { bool on; float x, y; int dir; };
+struct GShot { bool on; float x, y; int dir; float ty; };   // (ty: in a room, the height it levels out at)
 static GShot gShots[4];
 // The QX-9 (the EXPERIMENTAL ARMORY's prototype): a shot halves someone (1 in 10 doubles them); a quarter size and they're gone
 static bool hasXGun = false, xGunTaken = false;
@@ -341,6 +342,19 @@ static bool arSearched[S2_ROOMS][16];        // (what's been searched in them; t
 static int arCardRoom = -1, arCardObs = 0;
 enum ArHaz : uint8_t { AH_NONE, AH_DRONE, AH_TURRET };   // (one has a drone, one a wall turret)
 static uint8_t arHaz[S2_ROOMS];               // (lift D's top-down rooms: how many each has lost; they don't come back)
+// ---- lifts E and F: the CODE ROOM (a sequence game, for a NUKE SELF DESTRUCT CODE), the SELF DESTRUCT room below it
+// (the code destroys one missile in flight), and THE PROFESSOR's office (killing him ends the game)
+static bool s2NukeCode = false;              // holding a NUKE SELF DESTRUCT CODE (one at a time)
+static char nukeCodeText[16] = "";
+static bool nukeDestroyed[NUKE_SITES];       // (a launched one, destroyed in flight)
+static int s2DestructCard = 1;               // (the self destruct room's thing with the ACCESS CARD LEVEL 5)
+static float bossDeadT = -1, congratsT = 0;
+static bool congratsDone = false, congratsAll = false;
+enum SimState : uint8_t { SIM_SHOW, SIM_INPUT, SIM_GOOD, SIM_BAD, SIM_WON };
+static bool simOn = false;                   // at the CODE ROOM's terminal, playing
+static int simState = 0, simRound = 0, simPos = 0, simLit = -1, simCurX = 3, simCurY = 2;
+static int simSeq[8];
+static float simT = 0, simLitT = 0;
 static void paintArmory2();
 static void arenaEnter(bool fromLeft);
 static int s2HazCard = 0;                    // (hazardous storage: which of its 6 things has the level 4 card)
@@ -515,6 +529,7 @@ static void layOut(uint32_t seed) {
   sitesHacked = sitesLaunched = 0;
   hackT = launchT = 0;
   memset(prevented, 0, sizeof(prevented));
+  memset(nukeDestroyed, 0, sizeof(nukeDestroyed));
   for (int i = 0; i < NUKE_SITES; i++) hackSecs[i] = i == 0 ? 7 * 60.0f + rnd(3 * 60 + 1) : 2 * 60.0f + rnd(2 * 60 + 1);
   for (int i = 0; i < FLYERS; i++) flyers[i].on = false;
   launchOn = false;
@@ -665,6 +680,18 @@ static void layOutStage2() {
     arCardRoom = s2Room[3][rnd(3)];
     arCardObs = rnd(11);                     // (lift D's 11 pieces of furniture)
   }
+  s2Kind[s2Room[4][0]] = LK_SIMON;          // lift E: the CODE ROOM, the SELF DESTRUCT room below it; lift F: THE PROFESSOR
+  s2Kind[s2Room[4][1]] = LK_DESTRUCT;
+  s2Kind[s2Room[5][0]] = LK_BOSS;
+  for (int k = 0; k < 2; k++) { s2NpcScale[s2Room[4][0]][k] = 2; s2NpcScale[s2Room[4][1]][k] = 2; }   // (their soldiers, twice the size)
+  s2NpcScale[s2Room[5][0]][0] = 2;
+  s2DestructCard = 1 + rnd(4);
+  s2NukeCode = false;
+  bossDeadT = -1;
+  congratsT = 0;
+  congratsDone = congratsAll = false;
+  simOn = false;
+  simState = 0;
   memset(roomAt, -1, sizeof(roomAt));
   wkFloor = rnd(S2_LEVELS);
   wkState = WK_WAIT;
@@ -963,6 +990,7 @@ enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX
                      SFX_RAY,                // (the QX-9)
                      SFX_HEART, SFX_HPALERT,   // (low health: a heartbeat, the warning)
                      SFX_FLAME };              // (the FX-5: a roaring whoosh)
+#define SFX_TONE 64                          // (64..95: the CODE ROOM's notes)
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -1020,6 +1048,12 @@ static void startVoice(Wave wave, float f0, float f1, int delayMs, int lengthMs,
 static float screamPos = -1;           // (the sound thread's) where the scream is playing, in its samples; < 0 not playing
 
 static void startEffect(uint8_t sfx) {
+  if (sfx >= SFX_TONE && sfx < SFX_TONE + 32) {   // the CODE ROOM's squares: a note each (32 semitones up from middle C)
+    float f = 262.0f * powf(2.0f, (sfx - SFX_TONE) / 12.0f);
+    startVoice(WAVE_SQUARE, f, f, 0, 430, 0.07f);
+    startVoice(WAVE_TRIANGLE, f * 0.5f, f * 0.5f, 0, 430, 0.12f);
+    return;
+  }
   switch (sfx) {
     case SFX_ALARM:                            // caught on camera: NUCLEAR MISSION's alarm, twice over
       for (int k = 0; k < 3; k++) {
@@ -2319,6 +2353,26 @@ static void drawHazStorage() {   // (in front: the drops, the puddle bubbling, t
   }
 }
 
+// ---- lift E's rooms: what's in them to use and search
+#define SIM_COLS 8                           // the CODE ROOM's board: 8 x 4 squares, three quarters of the room
+#define SIM_ROWS 4
+#define SIM_X0 40
+#define SIM_Y0 128
+#define SIM_CW 110
+#define SIM_CH 98
+#define SIM_TERM_X 480                       // (its terminal: under the board's middle)
+#define SIM_ROUNDS 3                         // (3 squares, then 4, then 5)
+#define SIM_ON 0.55f
+#define SIM_GAP 0.22f
+#define MD_X0 944                            // the missiles' display, right of the board
+#define MD_X1 1228
+#define MD_Y0 120
+#define MD_Y1 640
+#define DS_CONSOLE_X 640
+static const LabItem simonItems[] = { { SIM_TERM_X, ROOM_FLOOR_Y, 130, 140 } };   // (the terminal: not searched - played)
+static const LabItem destructItems[] = {
+  { DS_CONSOLE_X, ROOM_FLOOR_Y, 200, 150 },                                      // the self destruct console (used, not searched)
+  { 170, ROOM_FLOOR_Y, 70, 130 }, { 330, ROOM_FLOOR_Y, 96, 196 }, { 930, ROOM_FLOOR_Y, 150, 120 }, { 1110, ROOM_FLOOR_Y, 70, 130 } };
 static int s2ItemCount(int kind) {   // how many things a stage 2 room has to search
   switch (kind) {
     case LK_KITCHEN: return 8;
@@ -2336,6 +2390,8 @@ static int s2ItemCount(int kind) {   // how many things a stage 2 room has to se
     case LK_TEST: return (int)(sizeof(testItems) / sizeof(testItems[0]));
     case LK_HAZARD: return (int)(sizeof(hazItems) / sizeof(hazItems[0]));
     case LK_ARMORY2: return (int)(sizeof(armoryItems) / sizeof(armoryItems[0]));
+    case LK_SIMON: return 1;
+    case LK_DESTRUCT: return (int)(sizeof(destructItems) / sizeof(destructItems[0]));
   }
   return 0;
 }
@@ -2362,6 +2418,8 @@ static void placeLabItems(int idx) {
   if (s2Kind[idx] == LK_ARMORY || s2Kind[idx] == LK_ARMORY2) for (const LabItem &it : armoryItems) add(it);
   if (s2Kind[idx] == LK_TEST) for (const LabItem &it : testItems) add(it);
   if (s2Kind[idx] == LK_HAZARD) for (const LabItem &it : hazItems) add(it);
+  if (s2Kind[idx] == LK_SIMON) for (const LabItem &it : simonItems) add(it);
+  if (s2Kind[idx] == LK_DESTRUCT) for (const LabItem &it : destructItems) add(it);
 }
 static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
   decorCount = 0;
@@ -4774,6 +4832,112 @@ static void paintQuantumLab2() {
   }
 }
 
+// ---- lift E: the CODE ROOM. The board's frame (its squares light up: drawn each frame), its terminal below the
+// middle, and the missiles' display on the right (the hologram globe, the flights, the dead)
+static void paintSimonRoom() {
+  fillRect(SIM_X0 - 10, SIM_Y0 - 10, SIM_X0 + SIM_COLS * SIM_CW + 10, SIM_Y0 + SIM_ROWS * SIM_CH + 10, rgb565(40, 44, 54));
+  drawRectOutline(SIM_X0 - 10, SIM_Y0 - 10, SIM_X0 + SIM_COLS * SIM_CW + 10, SIM_Y0 + SIM_ROWS * SIM_CH + 10, rgb565(120, 128, 146), 2);
+  fillRect(SIM_X0, SIM_Y0, SIM_X0 + SIM_COLS * SIM_CW, SIM_Y0 + SIM_ROWS * SIM_CH, rgb565(14, 16, 24));
+  // the terminal: a pedestal, a sloping keypad, a screen
+  int cx = SIM_TERM_X, fy = ROOM_FLOOR_Y;
+  fillRect(cx - 34, fy - 90, cx + 34, fy - 1, rgb565(70, 76, 88));
+  fillRect(cx - 34, fy - 90, cx + 34, fy - 86, rgb565(130, 136, 150));
+  fillRect(cx - 50, fy - 12, cx + 50, fy - 1, rgb565(50, 54, 64));
+  int kx[4] = { cx - 60, cx + 60, cx + 52, cx - 52 }, ky[4] = { fy - 90, fy - 90, fy - 110, fy - 110 };
+  fillPolygon(kx, ky, 4, rgb565(110, 116, 128));
+  for (int r = 0; r < 2; r++)
+    for (int c = 0; c < 8; c++) {
+      static const uint8_t hue[8][3] = { { 230, 60, 60 }, { 240, 150, 40 }, { 230, 220, 60 }, { 90, 220, 90 }, { 60, 200, 220 }, { 70, 110, 240 }, { 170, 90, 230 }, { 230, 90, 180 } };
+      fillRect(cx - 46 + c * 12, fy - 106 + r * 8, cx - 38 + c * 12, fy - 101 + r * 8, rgb565(hue[c][0], hue[c][1], hue[c][2]));
+    }
+  fillRect(cx - 8, fy - 126, cx + 8, fy - 110, rgb565(60, 64, 72));
+  fillRect(cx - 54, fy - 140 - 60, cx + 54, fy - 124, rgb565(40, 44, 52));
+  fillRect(cx - 50, fy - 196, cx + 50, fy - 128, rgb565(6, 16, 30));
+  // the missiles' display: a dark housing, the globe's projector
+  fillRect(MD_X0, MD_Y0, MD_X1, MD_Y1, rgb565(36, 40, 50));
+  fillRect(MD_X0 + 6, MD_Y0 + 6, MD_X1 - 6, MD_Y1 - 6, rgb565(6, 10, 18));
+  drawRectOutline(MD_X0, MD_Y0, MD_X1, MD_Y1, rgb565(120, 128, 146), 2);
+  int px = (MD_X0 + MD_X1) / 2, py = MD_Y0 + 200;
+  fillRect(px - 50, py, px + 50, py + 10, rgb565(70, 76, 88));
+  fillRect(px - 30, py - 6, px + 30, py, rgb565(110, 116, 128));
+  fillRect(MD_X0 + 18, MD_Y0 + 222, MD_X1 - 18, MD_Y0 + 223, rgb565(50, 120, 150));
+  fillRect(MD_X0 + 30, MD_Y1, MD_X0 + 40, ROOM_FLOOR_Y - 1, rgb565(70, 76, 88));   // (its legs)
+  fillRect(MD_X1 - 40, MD_Y1, MD_X1 - 30, ROOM_FLOOR_Y - 1, rgb565(70, 76, 88));
+}
+
+// ---- lift E: the SELF DESTRUCT room. The console (and the wall screen over it), filing cabinets, a cupboard, a desk
+static void paintDestructRoom() {
+  fillRect(330, 128, 950, 184, rgb565(200, 30, 30));                          // the sign
+  drawRectOutline(330, 128, 950, 184, rgb565(255, 220, 60), 3);
+  drawVectorText("NUCLEAR SELF DESTRUCT CONTROL", 640, 156, 3.0f, rgb565(255, 240, 220), true);
+  for (int x = 20; x < SCREEN_W - 20; x += 40) {                               // hazard stripes along the wall's foot
+    int sx[4] = { x, x + 20, x + 32, x + 12 }, sy[4] = { ROOM_FLOOR_Y - 26, ROOM_FLOOR_Y - 26, ROOM_FLOOR_Y - 14, ROOM_FLOOR_Y - 14 };
+    fillPolygon(sx, sy, 4, rgb565(240, 196, 40));
+  }
+  fillRect(470, 214, 810, 430, rgb565(40, 44, 52));                           // the wall screen
+  fillRect(478, 222, 802, 422, rgb565(6, 14, 22));
+  for (int x = 478; x < 802; x += 27) fillRect(x, 222, x, 421, rgb565(20, 50, 66));
+  for (int y = 222; y < 422; y += 25) fillRect(478, y, 801, y, rgb565(20, 50, 66));
+  drawVectorText("MISSILE TRACKING", 640, 238, 1.6f, rgb565(100, 230, 255), false);
+  // the console
+  int cx = DS_CONSOLE_X, fy = ROOM_FLOOR_Y;
+  fillRect(cx - 100, fy - 96, cx + 100, fy - 1, rgb565(60, 66, 78));
+  fillRect(cx - 100, fy - 96, cx + 100, fy - 92, rgb565(130, 136, 150));
+  int kx[4] = { cx - 110, cx + 110, cx + 96, cx - 96 }, ky[4] = { fy - 96, fy - 96, fy - 124, fy - 124 };
+  fillPolygon(kx, ky, 4, rgb565(96, 102, 116));
+  for (int r = 0; r < 2; r++)
+    for (int c = 0; c < 14; c++) fillRect(cx - 86 + c * 12, fy - 118 + r * 9, cx - 78 + c * 12, fy - 112 + r * 9, rgb565(40, 44, 52));
+  fillRect(cx + 50, fy - 80, cx + 90, fy - 40, rgb565(240, 196, 40));        // the big red button, under its cover
+  fillCircle(cx + 70, fy - 60, 14, rgb565(210, 30, 30));
+  fillRect(cx - 90, fy - 80, cx - 10, fy - 30, rgb565(30, 34, 40));
+  fillRect(cx - 50, fy - 196, cx + 50, fy - 128, rgb565(40, 44, 52));        // its screen
+  fillRect(cx - 46, fy - 192, cx + 46, fy - 132, rgb565(30, 6, 6));
+  drawVectorText("SELF", cx, fy - 172, 1.4f, rgb565(255, 90, 70), false);
+  drawVectorText("DESTRUCT", cx, fy - 152, 1.4f, rgb565(255, 90, 70), false);
+  paintFilingCabinet(170, ROOM_FLOOR_Y);
+  paintMetalCupboard(330, ROOM_FLOOR_Y);
+  paintOfficeDesk(860, 1000, ROOM_FLOOR_Y);
+  paintFilingCabinet(1110, ROOM_FLOOR_Y);
+}
+
+// ---- lift F: THE PROFESSOR's office. A world map screen, bookshelves, his desk, a globe
+static void paintBossRoom() {
+  fillRect(380, 128, 900, 180, rgb565(30, 24, 40));
+  drawRectOutline(380, 128, 900, 180, rgb565(200, 170, 80), 3);
+  drawVectorText("THE PROFESSOR", 640, 154, 3.4f, rgb565(230, 200, 110), true);
+  fillRect(400, 214, 880, 470, rgb565(40, 44, 52));                           // the world map
+  fillRect(408, 222, 872, 462, rgb565(8, 22, 40));
+  static const int16_t land[][4] = { { 450, 260, 560, 330 }, { 500, 330, 560, 420 }, { 610, 250, 690, 300 }, { 620, 300, 680, 400 },
+                                     { 690, 240, 830, 330 }, { 760, 330, 800, 370 }, { 780, 390, 840, 430 } };
+  for (const auto &l : land) fillRect(l[0], l[1], l[2], l[3], rgb565(40, 110, 70));
+  for (int x = 408; x < 872; x += 29) fillRect(x, 222, x, 461, rgb565(24, 50, 80));
+  for (int k = 0; k < 6; k++) fillCircle(470 + k * 70, 280 + (k * 37) % 120, 5, rgb565(255, 60, 40));
+  for (int b = 0; b < 2; b++) {                                                // bookshelves
+    int x0 = 70 + b * 150, x1 = x0 + 120, top = ROOM_FLOOR_Y - 300;
+    fillRect(x0, top, x1, ROOM_FLOOR_Y - 1, rgb565(110, 70, 40));
+    for (int sh = 0; sh < 5; sh++) {
+      int y = top + 10 + sh * 58;
+      fillRect(x0 + 6, y, x1 - 6, y + 48, rgb565(60, 36, 20));
+      for (int k = 0; k < 9; k++) {
+        static const uint16_t bc[5] = { rgb565(160, 40, 40), rgb565(40, 80, 150), rgb565(200, 170, 80), rgb565(40, 110, 60), rgb565(120, 120, 130) };
+        int bx = x0 + 8 + k * 12, h = 30 + (k * 7 + sh * 5) % 16;
+        fillRect(bx, y + 48 - h, bx + 9, y + 47, bc[(k + sh * 2) % 5]);
+      }
+    }
+  }
+  fillRect(760, ROOM_FLOOR_Y - 80, 1040, ROOM_FLOOR_Y - 68, rgb565(90, 56, 30));   // his desk
+  fillRect(770, ROOM_FLOOR_Y - 68, 1030, ROOM_FLOOR_Y - 1, rgb565(110, 70, 40));
+  fillRect(880, ROOM_FLOOR_Y - 60, 920, ROOM_FLOOR_Y - 10, rgb565(90, 56, 30));
+  fillRect(800, ROOM_FLOOR_Y - 140, 880, ROOM_FLOOR_Y - 80, rgb565(40, 44, 52));
+  fillRect(806, ROOM_FLOOR_Y - 134, 874, ROOM_FLOOR_Y - 86, rgb565(120, 20, 20));
+  fillRect(960, ROOM_FLOOR_Y - 96, 990, ROOM_FLOOR_Y - 80, rgb565(240, 240, 236));
+  fillRect(1150, ROOM_FLOOR_Y - 120, 1156, ROOM_FLOOR_Y - 1, rgb565(150, 120, 60));   // the globe on its stand
+  fillRect(1124, ROOM_FLOOR_Y - 6, 1182, ROOM_FLOOR_Y - 1, rgb565(150, 120, 60));
+  fillCircle(1153, ROOM_FLOOR_Y - 150, 40, rgb565(50, 110, 180));
+  fillCircle(1140, ROOM_FLOOR_Y - 162, 14, rgb565(70, 150, 80));
+  fillCircle(1166, ROOM_FLOOR_Y - 136, 10, rgb565(70, 150, 80));
+}
+
 // A stage 2 room: white walls, the duct and stripe along the top; then what is in it (the kitchen; the rest empty for now)
 static void paintLabRoom() {
   int idx = curRoom;
@@ -4803,6 +4967,12 @@ static void paintLabRoom() {
     paintTestRoom();
   } else if (s2Kind[idx] == LK_HAZARD) {
     paintHazStorage();
+  } else if (s2Kind[idx] == LK_SIMON) {
+    paintSimonRoom();
+  } else if (s2Kind[idx] == LK_DESTRUCT) {
+    paintDestructRoom();
+  } else if (s2Kind[idx] == LK_BOSS) {
+    paintBossRoom();
   } else if (s2Kind[idx] == LK_KITCHEN) {
     paintKitchen();
   } else if (s2Kind[idx] == LK_STORE) {
@@ -5200,8 +5370,166 @@ static void drawLiftBRoomAnim(int k) {
   }
 }
 
+// ---- lift E: the CODE ROOM's board, live; the missiles' display (a hologram globe turning, each flight's progress, the dead)
+static const float cityLatLon[8][2] = { { -33.9f, 151.2f }, { 23.8f, 90.4f }, { 35.7f, 139.7f }, { 40.7f, -74.0f },
+                                        { 31.2f, 121.5f }, { 30.0f, 31.2f }, { 14.6f, 121.0f }, { 37.6f, 127.0f } };   // (cities[]'s order)
+static void commas(char *out, int n, uint32_t v);
+static int cityOfSite(int i);
+static uint32_t deathsSoFar();
+static bool inFlight(int i);
+static uint16_t simHue(int c, float k) {     // (each square its own colour, k: how bright)
+  static const uint8_t hue[8][3] = { { 255, 70, 70 }, { 255, 160, 40 }, { 250, 236, 70 }, { 90, 240, 100 }, { 60, 220, 240 }, { 80, 130, 255 }, { 190, 100, 255 }, { 255, 100, 200 } };
+  const uint8_t *h = hue[(c % SIM_COLS + (c / SIM_COLS) * 3) % 8];
+  return rgb565((int)(h[0] * k), (int)(h[1] * k), (int)(h[2] * k));
+}
+static void drawSimonBoard() {
+  bool won = simState == SIM_WON && simT < 2.4f, bad = simOn && simState == SIM_BAD, good = simOn && simState == SIM_GOOD;
+  for (int r = 0; r < SIM_ROWS; r++)
+    for (int c = 0; c < SIM_COLS; c++) {
+      int i = r * SIM_COLS + c, x0 = SIM_X0 + c * SIM_CW, y0 = SIM_Y0 + r * SIM_CH;
+      uint16_t col = ((r + c) & 1) ? rgb565(34, 40, 62) : rgb565(52, 62, 94);
+      bool lit = i == simLit;
+      if (won) lit = ((int)(simT * 8) + c + r) % 4 == 0;
+      if (bad) col = ((int)(simT * 6) & 1) ? rgb565(120, 20, 20) : col;
+      if (good && ((int)(simT * 8) + c) % 3 == 0) col = rgb565(40, 140, 70);
+      fillRect(x0 + 3, y0 + 3, x0 + SIM_CW - 3, y0 + SIM_CH - 3, lit ? simHue(i, 1.0f) : col);
+      if (lit) glowDisc(x0 + SIM_CW / 2.0f, y0 + SIM_CH / 2.0f, 90, 255, 255, 255, 0.25f);
+      else fillRect(x0 + 3, y0 + 3, x0 + SIM_CW - 3, y0 + 6, ((r + c) & 1) ? rgb565(50, 58, 86) : rgb565(70, 82, 120));
+    }
+  if (simOn && simState == SIM_INPUT) {      // the cursor
+    int x0 = SIM_X0 + simCurX * SIM_CW, y0 = SIM_Y0 + simCurY * SIM_CH;
+    uint16_t cc = ((int)(clockT * 4) & 1) ? rgb565(255, 240, 120) : rgb565(255, 190, 60);
+    drawRectOutline(x0 + 1, y0 + 1, x0 + SIM_CW - 1, y0 + SIM_CH - 1, cc, 5);
+  }
+  // what's going on, on a plaque over the board
+  char b[64];
+  uint16_t tc = rgb565(240, 244, 250);
+  if (simOn) {
+    if (simState == SIM_SHOW) snprintf(b, sizeof(b), "ROUND %d OF %d - WATCH THE SEQUENCE", simRound + 1, SIM_ROUNDS);
+    else if (simState == SIM_INPUT) snprintf(b, sizeof(b), "ROUND %d OF %d - YOUR TURN  %d / %d", simRound + 1, SIM_ROUNDS, simPos, 3 + simRound);
+    else if (simState == SIM_GOOD) { snprintf(b, sizeof(b), simRound + 1 < SIM_ROUNDS ? "CORRECT!" : "SEQUENCE COMPLETE"); tc = rgb565(100, 255, 140); }
+    else { snprintf(b, sizeof(b), "WRONG - WATCH AGAIN"); tc = rgb565(255, 90, 70); }
+  } else if (s2NukeCode) {
+    snprintf(b, sizeof(b), "SELF DESTRUCT CODE HELD - TAKE IT TO THE ROOM BELOW");
+    tc = rgb565(255, 220, 120);
+  } else {
+    snprintf(b, sizeof(b), "NUKE SELF DESTRUCT CODE - REPEAT 3 SEQUENCES");
+  }
+  float w = vectorTextWidth(b, 2.0f), cx = SIM_X0 + SIM_COLS * SIM_CW / 2.0f;
+  blendRect((int)(cx - w / 2 - 12), SIM_Y0 - 34, (int)(cx + w / 2 + 12), SIM_Y0 - 12, 0, 0, 0, 0.75f);
+  drawVectorText(b, cx, SIM_Y0 - 23.0f, 2.0f, tc, true);
+  // the terminal's screen
+  int sx = SIM_TERM_X, sy = ROOM_FLOOR_Y - 162;
+  if (simOn) {
+    for (int k = 0; k < 3 + simRound; k++)
+      fillCircle(sx - (3 + simRound - 1) * 9 + k * 18, sy, 6, k < simPos || simState == SIM_GOOD ? rgb565(100, 255, 140) : rgb565(40, 70, 90));
+    drawVectorText("D-PAD: MOVE   X: PICK   SQUARE: QUIT", 480, ROOM_FLOOR_Y + 20.0f, 1.8f, rgb565(255, 230, 140), true);
+  } else {
+    drawVectorText(s2NukeCode ? "CODE" : "READY", (float)sx, (float)sy, 1.6f, ((int)(clockT * 2) & 1) ? rgb565(100, 230, 255) : rgb565(50, 120, 150), false);
+    if (decorAt() == 0 && agState == ST_IDLE && !termOn) {
+      const char *t = s2NukeCode ? "CODE HELD - USE IT IN THE ROOM BELOW" : "HOLD SQUARE: PLAY";
+      float tw = vectorTextWidth(t, 2.2f);
+      blendRect((int)(SIM_TERM_X - tw / 2 - 10), ROOM_FLOOR_Y - 236, (int)(SIM_TERM_X + tw / 2 + 10), ROOM_FLOOR_Y - 210, 0, 0, 0, 0.6f);
+      drawVectorText(t, SIM_TERM_X, ROOM_FLOOR_Y - 223.0f, 2.2f, rgb565(255, 220, 120), true);
+    }
+  }
+}
+static void drawMissileDisplay() {
+  float cx = (MD_X0 + MD_X1) / 2.0f, cy = MD_Y0 + 100.0f, r = 72, rot = clockT * 0.45f, tilt = 0.4f;
+  float ct = cosf(tilt), st = sinf(tilt);
+  auto proj = [&](float lat, float lon, float &x, float &y, float &z) {
+    float cl = cosf(lat), px = cl * sinf(lon + rot), py = sinf(lat), pz = cl * cosf(lon + rot);
+    x = cx + px * r;
+    y = cy - (py * ct - pz * st) * r;
+    z = py * st + pz * ct;
+  };
+  // the projector's beam, the glow
+  float bx[4] = { cx - 26, cx + 26, cx + r, cx - r }, by[4] = { MD_Y0 + 196.0f, MD_Y0 + 196.0f, cy, cy };
+  blendPolygonF(bx, by, 4, 80, 200, 255, 0.07f);
+  glowDisc(cx, cy, r * 1.5f, 60, 190, 255, 0.16f + 0.04f * sinf(clockT * 3));
+  const float D2R = 0.0174533f;
+  auto seg = [&](float la0, float lo0, float la1, float lo1) {
+    float x0, y0, z0, x1, y1, z1;
+    proj(la0, lo0, x0, y0, z0);
+    proj(la1, lo1, x1, y1, z1);
+    bool front = z0 + z1 > 0;
+    drawLineF(x0, y0, x1, y1, front ? rgb565(110, 230, 255) : rgb565(30, 80, 110), front ? 2.0f : 1.0f);
+  };
+  for (int la = -60; la <= 60; la += 30)       // the latitudes
+    for (int k = 0; k < 24; k++) seg(la * D2R, k * 15 * D2R, la * D2R, (k + 1) * 15 * D2R);
+  for (int m = 0; m < 8; m++)                  // the meridians, turning
+    for (int k = 0; k < 12; k++) seg((-90 + k * 15) * D2R, m * 45 * D2R, (-90 + (k + 1) * 15) * D2R, m * 45 * D2R);
+  for (int i = 0; i < sitesLaunched; i++) {    // the cities hit: red, pulsing
+    if (prevented[i] || nukeDestroyed[i] || landLeft[i] > 0) continue;
+    float x, y, z;
+    proj(cityLatLon[cityOfSite(i) % 8][0] * D2R, cityLatLon[cityOfSite(i) % 8][1] * D2R, x, y, z);
+    if (z < 0) continue;
+    glowDisc(x, y, 16 + 4 * sinf(clockT * 6), 255, 60, 40, 0.6f);
+    fillCircle((int)x, (int)y, 4, rgb565(255, 80, 60));
+  }
+  float sy = MD_Y0 + 6 + fmodf(clockT * 50, 200.0f);   // (a scan line)
+  blendRect(MD_X0 + 8, (int)sy, MD_X1 - 8, (int)sy + 2, 120, 220, 255, 0.25f);
+  // the missiles
+  drawVectorText("NUCLEAR MISSILES", cx, MD_Y0 + 240.0f, 1.8f, rgb565(255, 220, 80), true);
+  int landedN = 0;
+  for (int i = 0; i < NUKE_SITES; i++) {
+    int y = MD_Y0 + 266 + i * 42, x0 = MD_X0 + 14, x1 = MD_X1 - 14;
+    drawTextLeft(siteName[i], (float)x0, (float)y, 1.25f, rgb565(200, 210, 230), false);
+    int b0 = y + 14, b1 = y + 30;
+    fillRect(x0, b0, x1, b1, rgb565(30, 34, 46));
+    const char *tag = NULL;
+    uint16_t tagC = rgb565(240, 244, 250);
+    bool launched = i < sitesLaunched && !prevented[i];
+    if (prevented[i]) { fillRect(x0, b0, x1, b1, rgb565(40, 120, 70)); tag = "STOPPED"; }
+    else if (nukeDestroyed[i]) { fillRect(x0, b0, x1, b1, rgb565(50, 170, 90)); tag = "DESTROYED"; }
+    else if (launched && landLeft[i] <= 0) { fillRect(x0, b0, x1, b1, rgb565(200, 30, 24)); tag = "LANDED"; landedN++; }
+    else if (launched) {                       // in the air: how far it's got
+      float k = landTotal[i] > 0 ? clampv(1.0f - landLeft[i] / landTotal[i], 0.0f, 1.0f) : 0;
+      int w = (int)((x1 - x0) * k);
+      fillRect(x0, b0, x0 + w, b1, k > 0.8f && ((int)(clockT * 4) & 1) ? rgb565(255, 60, 40) : rgb565(250, 140, 30));
+      tag = "IN FLIGHT";
+    } else {
+      tag = "NOT LAUNCHED";
+      tagC = rgb565(110, 120, 140);
+    }
+    drawRectOutline(x0, b0, x1, b1, rgb565(110, 118, 140), 1);
+    if (tag) drawVectorText(tag, (x0 + x1) / 2.0f, (b0 + b1) / 2.0f, 1.0f, tagC, false);
+  }
+  char b[48], num[24];
+  snprintf(b, sizeof(b), "LANDED: %d", landedN);
+  drawVectorText(b, cx, MD_Y1 - 50.0f, 1.7f, landedN ? rgb565(255, 90, 70) : rgb565(200, 210, 230), true);
+  commas(num, sizeof(num), deathsSoFar());
+  snprintf(b, sizeof(b), "DEAD: %s", num);
+  drawVectorText(b, cx, MD_Y1 - 22.0f, 1.7f, deathsSoFar() ? rgb565(255, 90, 70) : rgb565(200, 210, 230), true);
+}
+static void drawEndRoomsBack(int k) {
+  if (k == LK_SIMON) {
+    drawSimonBoard();
+    drawMissileDisplay();
+  } else if (k == LK_DESTRUCT) {               // the console's screen; what Square does there
+    if ((int)(clockT * 2) & 1) fillCircle(DS_CONSOLE_X + 70, ROOM_FLOOR_Y - 60, 14, rgb565(255, 70, 60));
+    for (int i = 0; i < NUKE_SITES; i++) {     // the wall screen: a blip for each one in the air
+      if (!inFlight(i)) continue;
+      float k2 = landTotal[i] > 0 ? 1.0f - landLeft[i] / landTotal[i] : 0;
+      float x = 500 + 280 * k2, y = 400 - 140 * sinf(k2 * 3.14159f) - i * 8;
+      glowDisc(x, y, 14, 255, 120, 40, 0.6f);
+      fillCircle((int)x, (int)y, 4, rgb565(255, 160, 60));
+    }
+    if (decorAt() == 0 && agState == ST_IDLE && !termOn) {
+      const char *t = s2NukeCode ? "HOLD SQUARE: ENTER THE SELF DESTRUCT CODE" : "SELF DESTRUCT - A NUKE CODE IS NEEDED";
+      float tw = vectorTextWidth(t, 2.2f);
+      blendRect((int)(DS_CONSOLE_X - tw / 2 - 10), ROOM_FLOOR_Y - 236, (int)(DS_CONSOLE_X + tw / 2 + 10), ROOM_FLOOR_Y - 210, 0, 0, 0, 0.6f);
+      drawVectorText(t, DS_CONSOLE_X, ROOM_FLOOR_Y - 223.0f, 2.2f, s2NukeCode ? rgb565(255, 220, 120) : rgb565(255, 90, 70), true);
+    }
+  }
+}
+
 static void drawLabRoomBack() {
   int k = s2Kind[curRoom];
+  if (k == LK_SIMON || k == LK_DESTRUCT) {
+    drawEndRoomsBack(k);
+    return;
+  }
   if (k == LK_CLONE || k == LK_SOLDIER || k == LK_SERVER || k == LK_QLAB1 || k == LK_QLAB2 || k == LK_ARMORY || k == LK_ARMORY2) {
     drawLiftBRoomAnim(k);
     return;
@@ -5740,6 +6068,8 @@ static void enterRoom(int idx, bool fromLeft) {
   susp = 0;
   suspT = 0;
   s2Recog = false;
+  for (int k = 0; k < 4; k++) gShots[k].on = false;
+  simOn = false;
   auto addNpc = [&](uint8_t kind, float y, float a, float b, float start) {
     Npc &n = npcs[npcCount++];
     n.kind = kind;
@@ -5755,6 +6085,7 @@ static void enterRoom(int idx, bool fromLeft) {
     n.turns = a == b;
     n.knifeOnly = n.seated = false;
     n.foyer = false;
+    n.rsold = false;
     n.lvl = -1;
     n.fstate = 0;
     n.fcool = 0;
@@ -5817,6 +6148,22 @@ static void enterRoom(int idx, bool fromLeft) {
     addNpc(PK_SCIENTIST, ROOM_FLOOR_Y, 200, 1180, 380);
     addNpc(PK_SCIENTIST, 440, 800, 1220, 120);
   }
+  if (stage == 2 && idx < S2_ROOMS && (s2Kind[idx] == LK_SIMON || s2Kind[idx] == LK_DESTRUCT)) {   // lift E: two soldiers, twice the size
+    const float posts[2][2] = { { 240, 760 }, { 450, 830 } };
+    int w = s2Kind[idx] == LK_DESTRUCT;
+    for (int k = 0; k < 2; k++) {
+      float px = fromLeft ? posts[w][k] : SCREEN_W - posts[w][k];
+      addNpc(PK_GUARD, ROOM_FLOOR_Y, px, px, 0);
+      Npc &g = npcs[npcCount - 1];
+      if (!g.dead) { g.x = px; g.dir = fromLeft ? -1 : 1; }   // (facing the door he comes in by)
+      g.turns = false;
+      g.rsold = true;
+      g.sight = 2000;
+      g.fcool = FG_GRACE + 0.3f + k * 0.45f;
+    }
+  }
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_BOSS)        // THE PROFESSOR, twice the size (no weapon, for now)
+    addNpc(PK_PROFESSOR, ROOM_FLOOR_Y, 300, 1060, 380);
   if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_ADMIN) {     // one at a desk, one walking
     addNpc(PK_OFFICE, ROOM_FLOOR_Y, ADMIN_DESK_X, ADMIN_DESK_X, 0);
     Npc &d = npcs[npcCount - 1];
@@ -6941,6 +7288,28 @@ static void composeLaunchFrame() {
                  fmodf(clockT, 0.6f) < 0.35f ? rgb565(255, 60, 40) : rgb565(140, 30, 20), true);
 }
 
+// The last one dealt with, and at least one destroyed in flight: CONGRATULATIONS (all of them stopped, or the best he could)
+static void checkAllStopped() {
+  if (congratsDone || gameOver != END_NONE) return;
+  bool launching = sitesHacked == NUKE_SITES || lockdown;
+  if (!launching || sitesLaunched < sitesHacked) return;
+  int destroyedN = 0, landedN = 0;
+  for (int i = 0; i < sitesLaunched; i++) {
+    if (prevented[i]) continue;
+    if (nukeDestroyed[i]) destroyedN++;
+    else if (landLeft[i] > 0) return;        // (one still in the air)
+    else landedN++;
+  }
+  if (destroyedN == 0 || launchOn) return;
+  congratsDone = true;
+  congratsAll = landedN == 0;
+  congratsT = 8.0f;
+  sfxPlay(SFX_FANFARE);
+}
+static bool inFlight(int i) { return i < sitesLaunched && !prevented[i] && !nukeDestroyed[i] && landLeft[i] > 0; }
+static int cityOfSite(int i) { return landCity[i]; }
+static uint32_t deathsSoFar() { return deathTotal; }
+
 // The launch sites: hacking, launching, landing (in play time)
 static void updateNukes(float dt) {
   char b[64];
@@ -6971,7 +7340,7 @@ static void updateNukes(float dt) {
   }
   int landed = 0, flown = 0;
   for (int i = 0; i < sitesLaunched; i++) {
-    if (prevented[i]) continue;
+    if (prevented[i] || nukeDestroyed[i]) continue;
     flown++;
     if (landLeft[i] > 0) {
       landLeft[i] -= dt;
@@ -6984,7 +7353,10 @@ static void updateNukes(float dt) {
     }
     landed += landLeft[i] <= 0;
   }
-  if (launching && flown > 0 && sitesLaunched == sitesHacked && landed == flown && !launchOn && gameOver == END_NONE) endGame(END_NUKES);   // (once the last strike's scene is over)
+  bool anyDestroyed = false;
+  for (int i = 0; i < NUKE_SITES; i++) anyDestroyed |= nukeDestroyed[i];
+  if (launching && flown > 0 && sitesLaunched == sitesHacked && landed == flown && !launchOn && gameOver == END_NONE && !anyDestroyed) endGame(END_NUKES);   // (once the last strike's scene is over)
+  checkAllStopped();
 }
 
 // The left of the panel: the five sites, a box each for HACKED, LAUNCHED, LANDED (yellow, orange,
@@ -7014,6 +7386,10 @@ static void drawNukePanel(int x0, int y0, int x1, int y1) {
       fillRect(bx, y - 9, bx + bw, y + 9, safe ? rgb565(36, 60, 48) : rgb565(44, 48, 62));
       int w = (int)lroundf(bw * fill[c]);
       if (w > 0) fillRect(bx, y - 9, bx + w, y + 9, done[c]);
+      if (nukeDestroyed[i] && c == 2) {        // destroyed in flight: DESTROYED in green
+        fillRect(bx, y - 9, bx + bw, y + 9, rgb565(50, 170, 90));
+        drawVectorText("DESTROYED", bx + bw / 2.0f, (float)y, 0.9f, rgb565(230, 255, 235), true);
+      }
       if (stopped && c == 1) {                 // its launch stopped: STOPPED in green
         fillRect(bx, y - 9, bx + bw, y + 9, rgb565(50, 170, 90));
         drawVectorText("STOPPED", bx + bw / 2.0f, (float)y, 1.0f, rgb565(230, 255, 235), true);
@@ -7251,6 +7627,156 @@ static void updateServerNode(float dt) {
   }
 }
 
+// ---- the CODE ROOM's terminal: Impossible Mission's sequence. Squares light up (a note each) - 3, then 4, then 5;
+// he repeats each exactly (the D-pad moves the cursor, X picks a square). A mistake: a new sequence, the same length.
+// All three: a NUKE SELF DESTRUCT CODE (he can hold only one; using it in the room below, he can come back for another).
+static void simNewSeq() {
+  int n = 3 + simRound;
+  for (int k = 0; k < n; k++) {
+    int c;
+    do c = fxRnd(0, SIM_COLS * SIM_ROWS); while (k && c == simSeq[k - 1]);
+    simSeq[k] = c;
+  }
+  simState = SIM_SHOW;
+  simT = -0.7f;
+  simPos = 0;
+  simLit = -1;
+}
+static void startSimon() {
+  setState(ST_IDLE, 0.1f);
+  if (s2NukeCode) {
+    showMsg("YOU ALREADY HOLD A SELF DESTRUCT CODE - USE IT IN THE ROOM BELOW", 3.0f);
+    sfxPlay(SFX_DENIED);
+    return;
+  }
+  simOn = true;
+  simRound = 0;
+  simCurX = 3;
+  simCurY = 2;
+  simNewSeq();
+  sfxPlay(SFX_POWERUP);
+}
+static void foundCard(int level);
+static void updateSimon(float dt) {
+  simT += dt;
+  if (simLitT > 0 && (simLitT -= dt) <= 0) simLit = -1;
+  if (pressed & BTN_USE) {                   // (Square: walk away from it)
+    simOn = false;
+    simLit = -1;
+    showMsg("SEQUENCE ABANDONED", 1.5f);
+    sfxPlay(SFX_KEY);
+    return;
+  }
+  int n = 3 + simRound;
+  switch (simState) {
+    case SIM_SHOW: {
+      if (simT < 0) break;
+      int k = (int)(simT / (SIM_ON + SIM_GAP));
+      if (k >= n) { simState = SIM_INPUT; simT = 0; simLit = -1; simPos = 0; break; }
+      if (simT - k * (SIM_ON + SIM_GAP) < SIM_ON) {
+        if (simLit != simSeq[k]) { simLit = simSeq[k]; sfxPlay((uint8_t)(SFX_TONE + simLit)); }
+      } else {
+        simLit = -1;
+      }
+      break;
+    }
+    case SIM_INPUT:
+      if (pressed & BTN_LEFT) simCurX = (simCurX + SIM_COLS - 1) % SIM_COLS;
+      if (pressed & BTN_RIGHT) simCurX = (simCurX + 1) % SIM_COLS;
+      if (pressed & BTN_UP) simCurY = (simCurY + SIM_ROWS - 1) % SIM_ROWS;
+      if (pressed & BTN_DOWN) simCurY = (simCurY + 1) % SIM_ROWS;
+      if (pressed & BTN_JUMP) {
+        int c = simCurY * SIM_COLS + simCurX;
+        simLit = c;
+        simLitT = 0.32f;
+        sfxPlay((uint8_t)(SFX_TONE + c));
+        if (c != simSeq[simPos]) { simState = SIM_BAD; simT = 0; sfxPlay(SFX_DENIED); }
+        else if (++simPos >= n) { simState = SIM_GOOD; simT = 0; }
+      }
+      break;
+    case SIM_GOOD:
+      if (simT - dt < 0.4f && simT >= 0.4f) sfxPlay(SFX_FOUND);
+      if (simT > 1.3f) {
+        if (++simRound < SIM_ROUNDS) { simNewSeq(); break; }
+        simOn = false;                       // all three: the code
+        simState = SIM_WON;
+        simT = 0;
+        s2NukeCode = true;
+        snprintf(nukeCodeText, sizeof(nukeCodeText), "%c%d-%03d-%c%c", 'A' + fxRnd(0, 26), fxRnd(1, 10), fxRnd(0, 1000), 'A' + fxRnd(0, 26), 'A' + fxRnd(0, 26));
+        addScore(1000, SIM_TERM_X, ROOM_FLOOR_Y - 220);
+        foundCard(-6);
+      }
+      break;
+    case SIM_BAD:
+      if (simT > 1.6f) simNewSeq();          // (the same round again, a new sequence)
+      break;
+    default:
+      break;
+  }
+}
+
+// ---- the SELF DESTRUCT console: with a NUKE SELF DESTRUCT CODE, destroy one missile in flight (the code's used up)
+enum DsPage : uint8_t { DS_NOCODE, DS_MENU, DS_SENDING, DS_DONE, DS_NONE, DS_LATE };
+#define DS_SEND_SECONDS 3.0f
+static int dsSite = 0;
+static int flightList(int *out) {
+  int n = 0;
+  for (int i = 0; i < NUKE_SITES; i++) if (inFlight(i)) out[n++] = i;
+  return n;
+}
+static void useDestructTerm() {
+  int l[NUKE_SITES];
+  termOn = true;
+  termKind = 3;
+  termT = 0;
+  termSel = 0;
+  termPage = !s2NukeCode ? DS_NOCODE : flightList(l) > 0 ? DS_MENU : DS_NONE;
+  sfxPlay(termPage == DS_MENU ? SFX_FOUND : SFX_DENIED);
+}
+static void updateDestructTerm(float dt) {
+  float was = termT;
+  termT += dt;
+  bool go = (pressed & (BTN_USE | BTN_JUMP)) != 0;
+  int list[NUKE_SITES], n = flightList(list);
+  switch (termPage) {
+    case DS_MENU:
+      if (termSel > n) termSel = n;
+      if (pressed & BTN_UP) { termSel = (termSel + n) % (n + 1); sfxPlay(SFX_KEY); }
+      if (pressed & BTN_DOWN) { termSel = (termSel + 1) % (n + 1); sfxPlay(SFX_KEY); }
+      if (go && termT > 0.2f) {
+        if (termSel >= n) { termOn = false; sfxPlay(SFX_KEY); break; }   // LOG OFF (the code kept)
+        dsSite = list[termSel];
+        termPage = DS_SENDING;
+        termT = 0;
+        sfxPlay(SFX_POWERUP);
+      }
+      break;
+    case DS_SENDING:
+      if ((int)(was * 5) != (int)(termT * 5)) sfxPlay(SFX_BEEP);
+      if (termT >= DS_SEND_SECONDS) {
+        termT = 0;
+        if (!inFlight(dsSite)) { termPage = DS_LATE; sfxPlay(SFX_DENIED); break; }   // (it landed while the code went)
+        nukeDestroyed[dsSite] = true;
+        s2NukeCode = false;
+        termPage = DS_DONE;
+        addScore(PREVENT_SCORE, agX, agY - 200);
+        sfxPlay(SFX_BOOM);
+        sfxPlay(SFX_FANFARE);
+        char b[48];
+        snprintf(b, sizeof(b), "%s MISSILE DESTROYED", siteName[dsSite]);
+        flyerAdd(b, true);
+        checkAllStopped();
+      }
+      break;
+    case DS_LATE:
+      if (go && termT > 0.4f) { termPage = n > 0 ? DS_MENU : DS_NONE; termT = 0; termSel = 0; sfxPlay(SFX_KEY); }
+      break;
+    default:                                 // done, no code, nothing in the air: off
+      if (go && termT > 0.4f) { termOn = false; sfxPlay(SFX_KEY); }
+      break;
+  }
+}
+
 // UNLOCK SUB BASEMENT LIFT ACCESS: a shaft (A to I) whose bottom stop is the
 // complex's bottom floor, so its car can go one level further down (if no
 // shaft reaches that far, one of those that go deepest)
@@ -7372,7 +7898,7 @@ static int atNpcToKill() {
   if (!hasKnife || stage != 2 || (mode != MODE_ROOM && fgLoaded < 0)) return -1;
   for (int i = 0; i < npcCount; i++) {
     const Npc &n = npcs[i];
-    if (!n.dead && (n.aimT <= 0 || n.foyer) && fabsf(agY - n.y) < 0.5f && fabsf(agX - n.x) < KNIFE_RANGE) return i;
+    if (!n.dead && (n.aimT <= 0 || n.foyer || n.rsold) && fabsf(agY - n.y) < 0.5f && fabsf(agX - n.x) < KNIFE_RANGE * fmaxf(1.0f, n.scale * 0.75f)) return i;
   }
   return -1;
 }
@@ -7398,7 +7924,7 @@ static void roomKill(bool shot) {
   if (stage != 2 || mode != MODE_ROOM || curRoom >= S2_ROOMS) return;
   if (shot) s2RoomShot[curRoom] = true;
   RoomInfo &ri = rooms[curRoom];
-  if (ri.hazard != HZ_NONE || s2Kind[curRoom] == LK_CLONE || !s2RoomShot[curRoom]) return;
+  if (ri.hazard != HZ_NONE || s2Kind[curRoom] == LK_CLONE || s2Kind[curRoom] >= LK_SIMON || !s2RoomShot[curRoom]) return;
   for (int i = 0; i < npcCount; i++) if (!npcs[i].dead) return;
   ri.hazard = HZ_DRONE;
   curHazard = HZ_DRONE;
@@ -7452,6 +7978,11 @@ static void npcKilled(int i, bool shot) {
   showMsg("+5:00 ON THE CLOCK", 2.0f);
   susp = 0;
   suspT = 0;
+  if (n.kind == PK_PROFESSOR && bossDeadT < 0) {   // THE PROFESSOR: the end of the game (once he's down)
+    bossDeadT = 0;
+    showMsg("THE PROFESSOR IS DEAD", 3.0f);
+    sfxPlay(SFX_FANFARE);
+  }
   roomKill(shot);
 }
 static void xGunHit(int i) {               // the QX-9: half the size (1 in 10: double); a quarter size and he's gone
@@ -7925,8 +8456,8 @@ static void updateNpcs(float dt) {
       n.dieT += dt;
       continue;
     }
-    if (n.foyer) {                           // lift C's foyer guard: NUCLEAR MISSION's soldier
-      bool see = onWalkway() && agState != ST_KO && agState != ST_CAUGHT && gameOver == END_NONE;
+    if (n.foyer || n.rsold) {                // lift C's foyer guard: NUCLEAR MISSION's soldier (lift E's rooms too)
+      bool see = (n.rsold ? (mode == MODE_ROOM && fabsf(agY - n.y) < 60) : onWalkway()) && agState != ST_KO && agState != ST_CAUGHT && gameOver == END_NONE;
       if (see) n.dir = agX < n.x ? -1 : 1;
       if (n.fstate == 0) {
         n.fcool -= dt;
@@ -7938,7 +8469,7 @@ static void updateNpcs(float dt) {
           static const AgentPose AIM = { 0, -2, 88, 2, 80, 14, 6, -4, -8, -3, 0, 0, 0, 1, 0 };
           agentHand(AIM, n.x, n.y, n.dir, AGENT_SCALE * n.scale, hx, hy, mx, my);
           for (int k = 0; k < 4; k++)
-            if (!gShots[k].on) { gShots[k] = { true, (float)mx, (float)my, n.dir }; break; }
+            if (!gShots[k].on) { gShots[k] = { true, (float)mx, (float)my, n.dir, n.rsold ? agY - 78 : (float)my }; break; }
           sfxPlay(SFX_SHOT);
           shotFlashT = 0.1f;
           n.fstate = 2;
@@ -7998,8 +8529,9 @@ static bool npcSees(const Npc &n) {
 // Suspicion: someone who can see him while he looks at them, or while he searches, gets
 // suspicious - a point every SUSP_STEP (twice as fast if he's searching). Looking away and not
 // searching clears it. SUSP_MAX: recognised.
+static bool s2NoSusp() { return mode == MODE_ROOM && curRoom < S2_ROOMS && (s2Kind[curRoom] == LK_SIMON || s2Kind[curRoom] == LK_DESTRUCT || s2Kind[curRoom] == LK_BOSS); }
 static void updateSuspicion(float dt) {
-  if (npcCount == 0 || s2Recog || agState == ST_CAUGHT || agState == ST_KO || s2Act || secAlertT >= 0) return;
+  if (npcCount == 0 || s2Recog || agState == ST_CAUGHT || agState == ST_KO || s2Act || secAlertT >= 0 || s2NoSusp()) return;
   for (int i = 0; i < npcCount; i++)
     if (npcs[i].aimT > 0) return;            // (a guard is about to shoot)
   bool searching = agState == ST_USE, any = false;
@@ -8141,13 +8673,14 @@ static void drawSuspicionMeter() {
 }
 
 // ACCESS CARD LEVEL n FOUND: the card, big, for a moment
-static bool panelGun = false, panelVest = false, panelXGun = false, panelFlamer = false;
+static bool panelGun = false, panelVest = false, panelXGun = false, panelFlamer = false, panelCode = false;
 static void foundCard(int level) {          // (-1: the knife, -2: the pistol, -3: the vest, -4: the QX-9, -5: the FX-5)
   panelXGun = level == -4;
   panelFlamer = level == -5;
   panelKnife = level == -1;
   panelGun = level == -2;
   panelVest = level == -3;
+  panelCode = level == -6;
   if (level > s2Card) s2Card = level;
   cardShown = level;
   cardShowT = CARD_SHOW;
@@ -8161,6 +8694,15 @@ static void drawCardPanel() {
   blendRect(x0, y0, x1, y1, 0, 0, 0, 0.78f * k);
   drawRectOutline(x0, y0, x1, y1, rgb565(90, 200, 255), 3);
   char b[40];
+  if (panelCode) {                           // the NUKE SELF DESTRUCT CODE
+    drawVectorText("NUKE SELF DESTRUCT CODE", SCREEN_W / 2, y0 + 40, 3.2f, rgb565(255, 220, 80), true);
+    fillRect(SCREEN_W / 2 - 200, y0 + 80, SCREEN_W / 2 + 200, y0 + 160, rgb565(30, 6, 6));
+    drawRectOutline(SCREEN_W / 2 - 200, y0 + 80, SCREEN_W / 2 + 200, y0 + 160, rgb565(255, 80, 60), 2);
+    drawVectorTextW(nukeCodeText, SCREEN_W / 2, y0 + 120, 5.0f, rgb565(255, 90, 70), 2.6f);
+    drawVectorText("IT DESTROYS ONE MISSILE IN FLIGHT", SCREEN_W / 2, y1 - 56, 2.0f, rgb565(240, 244, 250), false);
+    drawVectorText("USE IT IN THE ROOM BELOW (LIFT E)", SCREEN_W / 2, y1 - 26, 2.0f, rgb565(255, 220, 120), false);
+    return;
+  }
   if (panelFlamer) {                         // the FX-5
     drawVectorText("EXPERIMENTAL FLAMETHROWER FOUND", SCREEN_W / 2, y0 + 40, 3.0f, rgb565(255, 170, 90), true);
     glowDisc(SCREEN_W / 2, y0 + 130, 140, 255, 120, 50, 0.3f);
@@ -9061,7 +9603,7 @@ static void syncFoyerGuard() {
     if (mode == MODE_SHAFT) npcCount = 0;
   }
   if (stage == 2 && mode == MODE_SHAFT && fgLoaded < 0) npcCount = 0;   // (no room's people out here)
-  if (!act)
+  if (!act && mode == MODE_SHAFT)
     for (int k = 0; k < 4; k++) gShots[k].on = false;
 }
 static void updateGShots(float dt) {     // the foyer guard's bullets: across the walkway (jump them)
@@ -9071,7 +9613,9 @@ static void updateGShots(float dt) {     // the foyer guard's bullets: across th
     float x0 = g.x;
     g.x += g.dir * FG_SHOT_SPEED * dt;
     if (g.x < -30 || g.x > SCREEN_W + 30) { g.on = false; continue; }
-    if (fminf(x0, g.x) - 12 <= agX && agX <= fmaxf(x0, g.x) + 12 && onWalkway() && agState != ST_KO && gameOver == END_NONE) {
+    g.y += (g.ty - g.y) * fminf(1.0f, dt * 6);   // (a big soldier's, in a room: down to his chest)
+    bool inRoom = mode == MODE_ROOM && agState != ST_JUMP && fabsf(g.y - (agY - 78)) < 50;   // (jump them)
+    if (fminf(x0, g.x) - 12 <= agX && agX <= fmaxf(x0, g.x) + 12 && (onWalkway() || inRoom) && agState != ST_KO && gameOver == END_NONE) {
       g.on = false;
       if (hasVest) { hurt(SHOT_HURT / 2); showMsg("HIT - THE VEST HELD", 1.2f); }
       else { hurt(SHOT_HURT); showMsg("SHOT BY A GUARD!", 1.4f); }
@@ -9097,6 +9641,9 @@ static int atGuardBody() {
 // Each frame of play in stage 2
 static void updateStage2(float dt) {
   if (s2BumpT > 0) s2BumpT -= dt;
+  if (congratsT > 0 && !termOn) congratsT -= dt;
+  if (bossDeadT >= 0 && gameOver == END_NONE && (bossDeadT += dt) > 2.5f) endGame(END_WIN);   // THE PROFESSOR down: the end
+  if (simState == SIM_WON) simT += dt;
   updateWorker(dt);
   syncFoyerGuard();
   if (fgLoaded >= 0) updateNpcs(dt);
@@ -9400,6 +9947,16 @@ static void updateAgent(float dt) {
             nothingY = py;
             break;
           }
+          if (decor[i].kind == DEC_LAB && s2Kind[curRoom] == LK_SIMON && i == 0) {   // the CODE ROOM's terminal: play
+            searchT = 0;
+            startSimon();
+            break;
+          }
+          if (decor[i].kind == DEC_LAB && s2Kind[curRoom] == LK_DESTRUCT && i == 0) {   // the self destruct console
+            searchT = 0;
+            useDestructTerm();
+            break;
+          }
           if (decor[i].kind == DEC_LAB && s2Kind[curRoom] == LK_SERVER && i >= 2 && i <= 5) {   // a server room terminal: log in
             searchT = 0;
             if (curHazard == HZ_CAMDRONE && drLight == 2) {   // (not with the drone firing at him)
@@ -9484,6 +10041,10 @@ static void updateAgent(float dt) {
               sfxPlay(SFX_FANFARE);
               addScore(docValue, px, py - 56);
               docShowT = DOC_SHOW;
+              break;
+            }
+            if (first && s2Kind[curRoom] == LK_DESTRUCT && i == s2DestructCard) {   // the self destruct room: the level 5 card
+              foundCard(5);
               break;
             }
             if (first && s2Kind[curRoom] == LK_HAZARD && i == s2HazCard) {      // hazardous storage: the level 4 card
@@ -10275,6 +10836,7 @@ static void drawTermCase(const char *label) {
 
 static void drawFacilityTerminal();
 static void drawServerNode();
+static void drawDestructTerm();
 static void drawTerminal() {
   if (termKind == 1) {
     drawFacilityTerminal();
@@ -10282,6 +10844,10 @@ static void drawTerminal() {
   }
   if (termKind == 2) {
     drawServerNode();
+    return;
+  }
+  if (termKind == 3) {
+    drawDestructTerm();
     return;
   }
   drawTermCase("QC-9 QUANTUM CONTROL");
@@ -10589,6 +11155,102 @@ static void bevelBox(int x0, int y0, int x1, int y1, uint16_t face) {
   fillRect(x1 - 2, y0, x1, y1, rgb565(30, 34, 48));
 }
 
+
+static void drawDestructTerm() {
+  drawTermCase("NUCLEAR SELF DESTRUCT");
+  uint16_t g = rgb565(100, 255, 140), gd = rgb565(40, 140, 70), dark = rgb565(4, 18, 9), y = rgb565(255, 220, 80), red = rgb565(255, 90, 70);
+  bool cur = ((int)(termT * 2.5f) & 1);
+  float lx = TX0 + 30, mid = (TX0 + TX1) / 2.0f;
+  char b[80];
+  drawTextLeft("MISSILE SELF DESTRUCT LINK", lx, TY0 + 26, 2.2f, gd, false);
+  if (s2NukeCode) {
+    snprintf(b, sizeof(b), "CODE: %s", nukeCodeText);
+    drawTextLeft(b, TX1 - 30 - vectorTextWidth(b, 2.0f), TY0 + 26, 2.0f, y, true);
+  }
+  fillRect(TX0 + 18, TY0 + 46, TX1 - 18, TY0 + 47, gd);
+  int list[NUKE_SITES], n = flightList(list);
+  switch (termPage) {
+    case DS_MENU:
+      drawTextLeft("DESTROY A MISSILE IN FLIGHT:", lx, TY0 + 84, 2.4f, g, false);
+      for (int i = 0; i <= n; i++) {
+        int yy = TY0 + 132 + i * 44;
+        if (i < n) snprintf(b, sizeof(b), "%d  DESTROY: %s", i + 1, siteName[list[i]]);
+        else snprintf(b, sizeof(b), "%d  LOG OFF", i + 1);
+        if (i == termSel) {
+          fillRect(TX0 + 20, yy - 18, TX1 - 20, yy + 18, rgb565(70, 220, 120));
+          drawTextLeft(b, lx + 12, yy, 2.8f, dark, true);
+        } else {
+          drawTextLeft(b, lx + 12, yy, 2.8f, i < n ? y : g, true);
+        }
+        if (i < n) {                           // how near it is to landing
+          int s2 = list[i];
+          float k = landTotal[s2] > 0 ? clampv(1.0f - landLeft[s2] / landTotal[s2], 0.0f, 1.0f) : 0;
+          int bx0 = TX1 - 250, bx1 = TX1 - 40;
+          fillRect(bx0, yy - 8, bx1, yy + 8, rgb565(20, 40, 26));
+          fillRect(bx0, yy - 8, bx0 + (int)((bx1 - bx0) * k), yy + 8, k > 0.8f ? red : rgb565(250, 140, 30));
+          drawRectOutline(bx0, yy - 8, bx1, yy + 8, gd, 1);
+        }
+      }
+      drawTextLeft("THE CODE WORKS ONCE", lx, TY1 - 52, 1.8f, red, false);
+      drawTextLeft("UP / DOWN TO CHOOSE    X TO SELECT", lx, TY1 - 22, 1.8f, gd, false);
+      break;
+    case DS_SENDING: {
+      float k = fminf(1.0f, termT / DS_SEND_SECONDS);
+      snprintf(b, sizeof(b), "SENDING SELF DESTRUCT TO %s MISSILE...", siteName[dsSite]);
+      drawTextLeft(b, lx, TY0 + 100, 2.4f, g, true);
+      static const char *const steps[4] = { "SATELLITE UPLINK", "MISSILE HANDSHAKE", "CODE ACCEPTED", "WARHEAD DESTRUCT" };
+      for (int f = 0; f < 4; f++)
+        if (k > f * 0.25f) {
+          snprintf(b, sizeof(b), "%-24s %s", steps[f], k >= (f + 1) * 0.25f ? "OK" : "...");
+          drawTextLeft(b, lx + 20, TY0 + 150 + f * 34, 2.4f, g, false);
+        }
+      drawRectOutline((int)lx, TY0 + 320, (int)lx + 604, TY0 + 344, g, 1);
+      fillRect((int)lx + 2, TY0 + 322, (int)lx + 2 + (int)(600 * k), TY0 + 342, g);
+      break;
+    }
+    case DS_DONE:
+      drawVectorText("MISSILE DESTROYED", mid, TY0 + 100, 4.4f, g, true);
+      drawVectorText(siteName[dsSite], mid, TY0 + 156, 3.2f, y, true);
+      if (congratsDone) {
+        drawVectorText("CONGRATULATIONS", mid, TY0 + 220, 3.4f, y, true);
+        drawVectorText(congratsAll ? "YOU HAVE STOPPED ALL THE NUCLEAR MISSILES" : "YOU HAVE DONE THE BEST YOU COULD", mid, TY0 + 262, 2.3f, g, true);
+      } else {
+        drawVectorText("YOUR CODE HAS BEEN USED", mid, TY0 + 226, 2.6f, gd, false);
+        drawVectorText(n > 0 ? "GET ANOTHER CODE FROM THE ROOM ABOVE" : "NO MORE MISSILES IN THE AIR", mid, TY0 + 266, 2.2f, g, false);
+      }
+      if (cur) drawTextLeft("PRESS X TO LOG OFF", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+    case DS_LATE:
+      drawVectorText("TOO LATE", mid, TY0 + 120, 4.4f, red, true);
+      snprintf(b, sizeof(b), "THE %s MISSILE HAS LANDED", siteName[dsSite]);
+      drawVectorText(b, mid, TY0 + 190, 2.6f, red, true);
+      drawVectorText("YOUR CODE WAS NOT USED", mid, TY0 + 250, 2.4f, g, false);
+      if (cur) drawTextLeft("PRESS X TO RETURN", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+    case DS_NOCODE:
+      drawVectorText("ACCESS DENIED", mid, TY0 + 120, 4.4f, red, true);
+      drawVectorText("A NUKE SELF DESTRUCT CODE IS NEEDED", mid, TY0 + 190, 2.6f, y, true);
+      drawVectorText("GET ONE FROM THE CODE ROOM ABOVE", mid, TY0 + 240, 2.4f, g, false);
+      if (cur) drawTextLeft("PRESS X TO LOG OFF", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+    default:   // DS_NONE
+      drawVectorText("NO MISSILES IN FLIGHT", mid, TY0 + 120, 4.0f, y, true);
+      drawVectorText("NOTHING TO DESTROY - YOUR CODE WAS NOT USED", mid, TY0 + 190, 2.2f, g, false);
+      if (cur) drawTextLeft("PRESS X TO LOG OFF", lx, TY1 - 30, 2.2f, gd, false);
+      break;
+  }
+}
+
+// CONGRATULATIONS: the last missile stopped (all of them, or the best he could)
+static void drawCongrats() {
+  float k = fminf(1.0f, (8.0f - congratsT) / 0.4f) * fminf(1.0f, congratsT / 0.5f);
+  blendRect(0, 220, SCREEN_W - 1, 400, 0, 0, 0, 0.75f * k);
+  if (k < 0.5f) return;
+  drawVectorTextW("CONGRATULATIONS", SCREEN_W / 2, 270, 6.0f, rgb565(20, 90, 40), 7.0f);
+  drawVectorTextW("CONGRATULATIONS", SCREEN_W / 2, 270, 6.0f, rgb565(100, 255, 140), 2.6f);
+  drawVectorText(congratsAll ? "YOU HAVE STOPPED ALL THE NUCLEAR MISSILES" : "YOU HAVE DONE THE BEST YOU COULD", SCREEN_W / 2, 330, 3.0f, rgb565(240, 244, 250), true);
+  drawVectorText("NOW FIND THE PROFESSOR - LIFT F", SCREEN_W / 2, 372, 2.2f, rgb565(255, 220, 120), false);
+}
 
 static void drawServerNode() {
   char b[64];
@@ -11064,6 +11726,17 @@ static void drawGameOver() {
     drawVectorTextW("STAGE 1 COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
     drawVectorTextW("STAGE 1 COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
     drawVectorText("YOU REACHED THE QUANTUMLOOP", SCREEN_W / 2, 186, 3.2f, rgb565(240, 240, 245), true);
+  } else if (gameOver == END_WIN && stage == 2) {   // THE PROFESSOR dead: how the missiles went
+    drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
+    drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
+    drawVectorText("THE PROFESSOR IS DEAD", SCREEN_W / 2, 172, 3.0f, rgb565(240, 240, 245), true);
+    int hit = 0;
+    for (int i = 0; i < sitesLaunched; i++) hit += !prevented[i] && !nukeDestroyed[i] && landLeft[i] <= 0;
+    char num[24], line[96];
+    commas(num, sizeof(num), deathTotal);
+    if (hit) snprintf(line, sizeof(line), "%d NUCLEAR MISSILE%s LANDED   -   %s DEAD", hit, hit == 1 ? "" : "S", num);
+    else snprintf(line, sizeof(line), "NO NUCLEAR MISSILES LANDED");
+    drawVectorText(line, SCREEN_W / 2, 204, 2.4f, hit ? rgb565(255, 90, 70) : rgb565(100, 255, 140), true);
   } else if (gameOver == END_WIN) {
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
@@ -12132,12 +12805,14 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
       if (gameOver == END_NONE) {
         if (termKind == 1) updateFacilityTerminal(dt);
         else if (termKind == 2) updateServerNode(dt);
+        else if (termKind == 3) updateDestructTerm(dt);
         else updateTerminal(dt);
       }
     } else {
       if (introT < 0) {
         if (arOn()) updateArena(dt);      // (lift D's rooms: from above)
         else if (s2Act) updateS2Act(dt); // (stage 2: knocking out, searching, binning the maintenance man)
+        else if (simOn) updateSimon(dt);  // (the CODE ROOM's sequence: the controller works the board)
         else updateAgent(dt);
       }
       if (introT < 0) updateHazards(dt);
@@ -12255,9 +12930,14 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (itemShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawItemPanel();
   if (docShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawDocPanel();
   if (passShowT > 0 && mode == MODE_ROOM && !mapOn && gameOver == END_NONE) drawPassPanel();
-  if (stage == 2 && mode == MODE_ROOM && npcCount > 0 && !mapOn && gameOver == END_NONE) drawSuspicionMeter();
+  if (stage == 2 && mode == MODE_ROOM && npcCount > 0 && !mapOn && gameOver == END_NONE && !s2NoSusp()) drawSuspicionMeter();
   if (!mapOn && !termOn) drawHealthEdges();
   if (!mapOn) drawFlyers();
+  if (congratsT > 0 && !termOn && !mapOn && gameOver == END_NONE) drawCongrats();
+  if (stage == 2 && s2NukeCode && !termOn && !mapOn && gameOver == END_NONE && scene == SC_NONE) {   // (holding the code: a reminder)
+    blendRect(SCREEN_W - 230, HUD_H + 6, SCREEN_W - 12, HUD_H + 32, 60, 6, 6, 0.8f);
+    drawVectorText("NUKE CODE HELD", SCREEN_W - 121, HUD_H + 19.0f, 1.8f, rgb565(255, 200, 80), true);
+  }
   if (cardShowT > 0 && !mapOn && gameOver == END_NONE) drawCardPanel();
   if (mapOn) drawMap();
   else if (itemShowT <= 0 && !briefingOn && !settingsOn && scene != SC_STAGE_CLEAR && scene != SC_STAGE2_BRIEF && scene != SC_RIDE) drawMessage();

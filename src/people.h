@@ -24,7 +24,7 @@
 
 #include "agent_rig.h"
 
-enum PersonKind : uint8_t { PK_NONE, PK_GUARD, PK_OFFICER, PK_COMMANDER, PK_SCIENTIST, PK_STRIPPED, PK_DISGUISE, PK_SECURITY, PK_SCI_DIM, PK_SENIOR, PK_ADVANCED, PK_FIGHTER, PK_RADSUIT, PK_CHEF, PK_MAINT, PK_MAINT_UNDIES, PK_CLEANER, PK_NURSE, PK_PATIENT, PK_OFFICE, PK_SUBJECT, PK_CHAR };   // (QUANTUM LOCKDOWN: the kitchen's chef, the maintenance man, him in his vest and shorts)   // PK_FIGHTER: the guard, bare-headed, no rifle (SL1R4)
+enum PersonKind : uint8_t { PK_NONE, PK_GUARD, PK_OFFICER, PK_COMMANDER, PK_SCIENTIST, PK_STRIPPED, PK_DISGUISE, PK_SECURITY, PK_SCI_DIM, PK_SENIOR, PK_ADVANCED, PK_FIGHTER, PK_RADSUIT, PK_CHEF, PK_MAINT, PK_MAINT_UNDIES, PK_CLEANER, PK_NURSE, PK_PATIENT, PK_OFFICE, PK_SUBJECT, PK_CHAR, PK_PROFESSOR };   // (QUANTUM LOCKDOWN: the kitchen's chef, the maintenance man, him in his vest and shorts)   // PK_FIGHTER: the guard, bare-headed, no rifle (SL1R4)
 
 struct PersonLook {
   uint16_t suit, suitFar, shade, trouser, trouserFar, boot, bootFar, skin, skinFar, hair;
@@ -101,6 +101,10 @@ static const PersonLook PL_OFFICE = {    // an office worker: a white shirt, dar
   agentRgb(232, 236, 242), agentRgb(180, 186, 196), agentRgb(210, 214, 222), agentRgb(50, 56, 74), agentRgb(32, 36, 50),
   agentRgb(30, 24, 20), agentRgb(18, 14, 12), agentRgb(222, 180, 148), agentRgb(168, 132, 106), agentRgb(110, 70, 40) };
 
+static const PersonLook PL_PROFESSOR = {   // THE PROFESSOR: a black coat, wild white hair, glasses, a red tie
+  agentRgb(44, 42, 52), agentRgb(26, 24, 32), agentRgb(34, 32, 42), agentRgb(30, 30, 36), agentRgb(18, 18, 22),
+  agentRgb(70, 20, 20), agentRgb(44, 12, 12), agentRgb(214, 176, 150), agentRgb(164, 132, 110), agentRgb(244, 244, 248) };
+
 static inline bool personIsLab(uint8_t kind) {
   return kind == PK_SCIENTIST || kind == PK_STRIPPED || kind == PK_DISGUISE || kind == PK_SCI_DIM || kind == PK_SENIOR || kind == PK_ADVANCED;
 }
@@ -153,8 +157,8 @@ static void personDraw(const AgentPose &p, float x, float floorY, int facing, fl
                         (kind == PK_SCIENTIST) ? PL_SCIENTIST : (kind == PK_STRIPPED) ? PL_STRIPPED :
                         (kind == PK_DISGUISE) ? PL_DISGUISE : (kind == PK_RADSUIT) ? PL_RADSUIT : (kind == PK_SECURITY) ? PL_SECURITY :
                         (kind == PK_SCI_DIM) ? PL_SCI_DIM : (kind == PK_SENIOR) ? PL_SENIOR : (kind == PK_ADVANCED) ? PL_ADVANCED :
-                        (kind == PK_CHEF) ? PL_CHEF : (kind == PK_MAINT) ? PL_MAINT : (kind == PK_MAINT_UNDIES) ? PL_MAINT_UNDIES : (kind == PK_CLEANER) ? PL_CLEANER : (kind == PK_NURSE) ? PL_NURSE : (kind == PK_PATIENT) ? PL_PATIENT : (kind == PK_OFFICE) ? PL_OFFICE : (kind == PK_SUBJECT) ? PL_SUBJECT : (kind == PK_CHAR) ? PL_CHAR : PL_COMMANDER;
-  bool coat = (kind == PK_SCIENTIST || kind == PK_DISGUISE || kind == PK_SCI_DIM || kind == PK_SENIOR || kind == PK_ADVANCED);
+                        (kind == PK_CHEF) ? PL_CHEF : (kind == PK_MAINT) ? PL_MAINT : (kind == PK_MAINT_UNDIES) ? PL_MAINT_UNDIES : (kind == PK_CLEANER) ? PL_CLEANER : (kind == PK_NURSE) ? PL_NURSE : (kind == PK_PATIENT) ? PL_PATIENT : (kind == PK_OFFICE) ? PL_OFFICE : (kind == PK_SUBJECT) ? PL_SUBJECT : (kind == PK_CHAR) ? PL_CHAR : (kind == PK_PROFESSOR) ? PL_PROFESSOR : PL_COMMANDER;
+  bool coat = (kind == PK_SCIENTIST || kind == PK_DISGUISE || kind == PK_SCI_DIM || kind == PK_SENIOR || kind == PK_ADVANCED || kind == PK_PROFESSOR);
   AgentJoints j;
   agentSolve(p, j);
   AgentXf xf;
@@ -211,7 +215,7 @@ static void personDraw(const AgentPose &p, float x, float floorY, int facing, fl
     agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, BADGE, 4, agentRgb(250, 250, 250));
     static const float BADGE_TOP[][2] = { { 16.6f, 3.0f }, { 18.6f, 3.0f }, { 18.6f, 7.8f }, { 16.6f, 7.8f } };
     agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, BADGE_TOP, 4, (kind == PK_SENIOR || kind == PK_ADVANCED) ? agentRgb(210, 40, 40) : agentRgb(40, 110, 200));
-    if (kind == PK_SENIOR) {   // a tie
+    if (kind == PK_SENIOR || kind == PK_PROFESSOR) {   // a tie
       static const float TIE[][2] = { { 20.0f, 6.0f }, { 31.0f, 5.4f }, { 31.0f, 6.8f }, { 20.0f, 7.2f } };
       agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, TIE, 4, agentRgb(160, 30, 40));
     }
@@ -327,7 +331,14 @@ static void personDraw(const AgentPose &p, float x, float floorY, int facing, fl
     };
     agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, HAIR, 6, L.hair);
     static const float EYE[][2] = { { 2.6f, 5.0f }, { 2.6f, 6.6f }, { 1.0f, 6.6f }, { 1.0f, 5.0f } };
-    if (kind == PK_SCIENTIST || kind == PK_SCI_DIM || kind == PK_SENIOR || kind == PK_ADVANCED) {   // glasses
+    if (kind == PK_PROFESSOR) {   // wild white hair, sticking out all round
+      static const float WILD[][2] = {   // (u: up the head, v: across, + the face side)
+        { -4.0f, -9.0f }, { -10.0f, -13.0f }, { -1.0f, -12.5f }, { 1.0f, -18.0f }, { 6.0f, -12.5f }, { 11.0f, -15.0f }, { 11.0f, -8.0f },
+        { 18.0f, -6.0f }, { 12.0f, -2.0f }, { 16.0f, 4.0f }, { 10.0f, 4.0f }, { 8.0f, -2.0f }, { 2.0f, -6.0f },
+      };
+      agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, WILD, 13, L.hair);
+    }
+    if (kind == PK_SCIENTIST || kind == PK_SCI_DIM || kind == PK_SENIOR || kind == PK_ADVANCED || kind == PK_PROFESSOR) {   // glasses
       static const float FRAME[][2] = { { 0.2f, 3.4f }, { 4.0f, 3.4f }, { 4.0f, 8.2f }, { 0.2f, 8.2f } };
       agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, FRAME, 4, agentRgb(36, 36, 40));
       static const float LENS[][2] = { { 0.8f, 4.0f }, { 3.4f, 4.0f }, { 3.4f, 7.6f }, { 0.8f, 7.6f } };

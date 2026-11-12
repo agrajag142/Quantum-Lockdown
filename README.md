@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 052: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 053: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -683,6 +683,38 @@ searching, and it goes back to nothing and they carry on. Five points and
 you're **RECOGNISED**: hands up, 30 seconds off the clock, and you're put
 out in the lift area by the door you came in by. (The disguise doesn't
 change this, for now.)
+
+**Lift E's top room: the CODE ROOM.** Two soldiers, **twice the size**,
+stand guard (NUCLEAR MISSION's soldier, as in the foyers: they see you, aim,
+fire - 10 a hit, 5 with the vest; jump the shots). Three quarters of the wall
+is an **8 x 4 board of squares**, with a terminal under its middle. Hold Square
+at the terminal to play Impossible Mission's sequence: squares light up one
+after another, **each with its own note** - 3 in the first round, then 4,
+then 5 - and you repeat each exactly (the D-pad moves the cursor, X picks a
+square, Square walks away). Get one wrong and you're shown a new sequence of
+the same length. All three rounds: a **NUKE SELF DESTRUCT CODE** (+1000). You
+can hold only one at a time (NUKE CODE HELD shows top right). On the right of
+the room, the **missiles' display**: a turning hologram of the earth (the
+cities hit glowing red), each site's missile - NOT LAUNCHED, IN FLIGHT (a bar
+filling as it nears landing, flashing red near the end), LANDED, STOPPED,
+DESTROYED - and how many have landed and the dead.
+
+**Lift E's lower room: SELF DESTRUCT.** Two more double-sized soldiers. The
+**self destruct console**: with a code, hold Square at it and pick one of the
+missiles in the air (each with how near it is to landing); the code destroys
+it (+2000, its news flies out in green) and is used up - go back up for
+another. Without a code: ACCESS DENIED. The console, filing cabinets, a
+cupboard and a desk: **the ACCESS CARD LEVEL 5** is in one of the four.
+When the last missile is dealt with and at least one was destroyed:
+**CONGRATULATIONS - YOU HAVE STOPPED ALL THE NUCLEAR MISSILES** (none
+landed) or **YOU HAVE DONE THE BEST YOU COULD** (some did), and you carry on.
+(If none were destroyed and they all land, it's still MISSION FAILED.)
+
+**Lift F: THE PROFESSOR** - the end. His office (a world map screen,
+bookshelves, his desk, a globe) and him: a black coat, wild white hair,
+glasses, twice the size, walking back and forth, no weapon for now. Kill him
+(THE PROFESSOR IS DEAD) and the game ends: MISSION COMPLETE, with how many
+missiles landed and the dead, and the end of game bonus.
 
 **The panel** in stage 2: LIFT A..F and the level; ROOMS (of 21), ACCESS
 CARD, DISGUISE, FIRST AID LEFT, SCORE. The mini map and the Options map show
