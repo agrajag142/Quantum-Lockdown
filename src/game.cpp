@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "054"
+#define GAME_VERSION      "055"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -6970,13 +6970,14 @@ static void drawLandScene() {
   gfxClipAll();
 }
 
-// The site's sign: yellow and black edged, its name stencilled
+// The site's sign: yellow and black edged, its name stencilled (on the title: blank)
+static bool lsNoNames = false;               // (the title's cut scenes: no site names, no MISSILE LAUNCHED)
 static void lsSign(int cx, int cy, int w, float size) {
   lsRect(cx - w / 2 - 6, cy - 34, cx + w / 2 + 6, cy + 34, rgb565(20, 20, 22));
   lsHazard(cx - w / 2 - 6, cx + w / 2 + 6, cy - 34, cy - 26);
   lsHazard(cx - w / 2 - 6, cx + w / 2 + 6, cy + 26, cy + 34);
   lsRect(cx - w / 2, cy - 24, cx + w / 2, cy + 24, rgb565(36, 36, 40));
-  lsText(siteName[launchSite], cx, cy, size, rgb565(240, 200, 60), true);
+  if (!lsNoNames) lsText(siteName[launchSite], cx, cy, size, rgb565(240, 200, 60), true);
 }
 
 static void startLaunchScene(int site) {     // (site: a launch; 8 + site: a landing)
@@ -7310,7 +7311,7 @@ static void drawLaunchScene() {
       lsMissileAt(lsX, lsY, lsAng, lsScale, true);
       gfxClip((int)(LS_Y / UNIT_K), (int)((LS_Y + LS_SIZE - 1) / UNIT_K));
     }
-    if (lsTyped > 0) {                                              // MISSILE LAUNCHED, the site
+    if (lsTyped > 0 && !lsNoNames) {                                // MISSILE LAUNCHED, the site
       char head[20] = "MISSILE LAUNCHED";
       int n1 = lsTyped < 16 ? lsTyped : 16;
       head[n1] = 0;
@@ -12652,7 +12653,9 @@ static void updateTitleScene(float dt) {
 static void drawTitleScene() {
   pxRect(0, 0, FB_W - 1, FB_H - 1, 0);
   if (!launchOn) return;
+  lsNoNames = true;
   drawLaunchScene();
+  lsNoNames = false;
   gfxClipAll();
   for (int y = 0; y < LS_SIZE; y++) memcpy(frameSave + y * LS_SIZE, g_frame + (LS_Y + y) * FB_W + LS_X, LS_SIZE * 4);
   const int SH = LS_SIZE * FB_H / FB_W;      // (405 rows of it, scaled up to the whole screen: bilinear, two channels at a time)

@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 054: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 055: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -828,8 +828,8 @@ run it after adding or changing a layout.
 
 The title sits at the top (title.mod playing), and now and then the name
 glitches red and cyan. Behind it all, filling the screen (darkened, silent
-under the tune), NUCLEAR MISSION's **missile launch** plays over and over (a
-random site each time); after every 5 launches, the **nuclear landing** cut
+under the tune), NUCLEAR MISSION's **missile launch** plays over and over (no site
+names shown); after every 5 launches, the **nuclear landing** cut
 scene (a random city), then the launches again. Under the name, on a dark
 band, these take turns every 15 seconds:
 
