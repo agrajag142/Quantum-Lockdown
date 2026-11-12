@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "055"
+#define GAME_VERSION      "056"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -12545,7 +12545,7 @@ static void drawTitleObjectives(float t) {
   const int x0 = 196, y0 = TPANEL_Y0;
   bool blinkHead = fmodf(t, 1.2f) < 0.8f;
   drawVectorText("MISSION OBJECTIVES", SCREEN_W / 2, y0 + 16, 3.0f, blinkHead ? rgb565(255, 110, 80) : rgb565(170, 60, 44), true);
-  static const char *const obj[3] = { "POWER ON THE GENERATORS", "FIND ALL QUANTUM DRIVES", "UNLOCK SUB BASEMENT ACCESS" };
+  static const char *const obj[3] = { "AVERT GLOBAL NUCLEAR ANNIHILATION", "NEUTRALISE THE QUANTUM COMPUTER", "BRING DR. VOSS TO JUSTICE" };
   for (int i = 0; i < 3; i++) {
     float k = clampv((t - 0.3f - i * 0.5f) / 0.4f, 0.0f, 1.0f);
     if (k <= 0) continue;
@@ -12556,23 +12556,32 @@ static void drawTitleObjectives(float t) {
     drawVectorText(b, x0 + 70 - slide, y, 4.0f, dimmed(255, 190, 70, k), true);
     // its picture
     int ix = (int)(x0 + 160 - slide), iy = (int)y;
-    if (i == 0) {                        // a generator, its lamp green
-      fillRect(ix - 30, iy - 18, ix + 22, iy + 16, rgb565(214, 168, 40));
-      fillRect(ix - 30, iy - 18, ix + 22, iy - 15, rgb565(246, 206, 90));
-      fillRect(ix - 24, iy - 12, ix - 4, iy + 10, rgb565(34, 36, 40));
-      fillRect(ix + 24, iy - 22, ix + 36, iy + 16, rgb565(70, 76, 88));
-      fillCircle(ix + 30, iy - 16, 4, rgb565(80, 255, 120));
-      fillRect(ix - 34, iy + 16, ix + 38, iy + 22, rgb565(34, 36, 40));
+    if (i == 0) {                        // the radiation sign: yellow, three black blades round a hub
+      fillCircle(ix, iy, 26, rgb565(250, 210, 40));
+      for (int b = 0; b < 3; b++) {
+        float a0 = -1.5708f + b * 2.0944f - 0.5236f, a1 = a0 + 1.0472f;
+        int px[6], py[6];
+        for (int q = 0; q < 3; q++) {
+          float a = a0 + (a1 - a0) * q / 2;
+          px[q] = ix + (int)(cosf(a) * 22); py[q] = iy + (int)(sinf(a) * 22);
+          px[5 - q] = ix + (int)(cosf(a) * 7); py[5 - q] = iy + (int)(sinf(a) * 7);
+        }
+        fillPolygon(px, py, 6, rgb565(20, 20, 22));
+      }
+      fillCircle(ix, iy, 4, rgb565(20, 20, 22));
     } else if (i == 1) {                 // a quantum drive
       drawQuantumDrive((float)ix, (float)iy, 0.5f, fmodf(t, 0.8f) < 0.55f);
-    } else {                             // the lift going down
-      fillRect(ix - 26, iy - 26, ix + 26, iy + 26, rgb565(60, 66, 80));
-      drawRectOutline(ix - 26, iy - 26, ix + 26, iy + 26, rgb565(150, 156, 168), 2);
-      int ax[7] = { ix, ix + 16, ix + 7, ix + 7, ix - 7, ix - 7, ix - 16 };
-      int ay[7] = { iy + 18, iy + 2, iy + 2, iy - 16, iy - 16, iy + 2, iy + 2 };
-      fillPolygon(ax, ay, 7, rgb565(255, 220, 80));
+    } else {                             // a target's cross hairs, on him
+      uint16_t rc = fmodf(t, 1.0f) < 0.6f ? rgb565(255, 70, 50) : rgb565(170, 40, 30);
+      drawCircle(ix, iy, 22, rc);
+      drawCircle(ix, iy, 21, rc);
+      drawCircle(ix, iy, 9, rc);
+      fillRect(ix - 30, iy - 1, ix - 12, iy + 1, rc);
+      fillRect(ix + 12, iy - 1, ix + 30, iy + 1, rc);
+      fillRect(ix - 1, iy - 30, ix + 1, iy - 12, rc);
+      fillRect(ix - 1, iy + 12, ix + 1, iy + 30, rc);
     }
-    drawVectorText(obj[i], x0 + 230 - slide + vectorTextWidth(obj[i], 3.4f) / 2, y, 3.4f, dimmed(236, 236, 242, k), true);
+    drawVectorText(obj[i], x0 + 230 - slide + vectorTextWidth(obj[i], 3.1f) / 2, y, 3.1f, dimmed(236, 236, 242, k), true);
   }
 }
 

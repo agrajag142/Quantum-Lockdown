@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 055: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 056: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -833,8 +833,9 @@ names shown); after every 5 launches, the **nuclear landing** cut
 scene (a random city), then the launches again. Under the name, on a dark
 band, these take turns every 15 seconds:
 
-- **MISSION OBJECTIVES:** 1. POWER ON THE GENERATORS 2. FIND ALL QUANTUM
-  DRIVES 3. UNLOCK SUB BASEMENT ACCESS
+- **MISSION OBJECTIVES:** 1. AVERT GLOBAL NUCLEAR ANNIHILATION (a radiation
+  sign) 2. NEUTRALISE THE QUANTUM COMPUTER (a quantum drive) 3. BRING DR. VOSS
+  TO JUSTICE (cross hairs)
 - **TOP 5 AGENTS:** the high scores (with the deaths)
 
 After X and the opening (out of the duct), the **STAGE 1** briefing: ABANDONED
