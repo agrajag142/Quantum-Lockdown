@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "051"
+#define GAME_VERSION      "052"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -8494,7 +8494,7 @@ static int arObsAt() {                       // the thing he's beside (or -1)
 // ---- the extra hazards: one room has a drone, one a wall turret's homing missiles (the third, just soldiers)
 #define TD_SCAN_LEN 470.0f                   // the drone: its beam's reach...
 #define TD_SCAN_HALF 0.45f                   // ...and half its width (radians)
-#define TD_SPEED 170.0f
+#define TD_SPEED 119.0f                      // (170, less 30%)
 #define TD_KEEP 170.0f                       // (how close it comes)
 #define TD_FIRE_EVERY 0.8f
 static float tdX, tdY, tdAng, tdFireT, tdLostT, tdGrace, tdPatrolT;
@@ -8543,9 +8543,9 @@ static void updateArHazards(float dt) {
     float d = hypotf(apX - tdX, apY - tdY);
     if (!tdChase) {                          // patrolling, the beam sweeping round
       tdPatrolT += dt;
-      float px = 640 + 450 * cosf(tdPatrolT * 0.3f), py = 385 + 240 * sinf(tdPatrolT * 0.3f);
-      tdX += (px - tdX) * fminf(1.0f, dt * 1.2f);
-      tdY += (py - tdY) * fminf(1.0f, dt * 1.2f);
+      float px = 640 + 450 * cosf(tdPatrolT * 0.21f), py = 385 + 240 * sinf(tdPatrolT * 0.21f);
+      tdX += (px - tdX) * fminf(1.0f, dt * 0.84f);
+      tdY += (py - tdY) * fminf(1.0f, dt * 0.84f);
       tdAng += 1.1f * dt;
       float a = atan2f(apY - tdY, apX - tdX), da = fabsf(remainderf(a - tdAng, 6.2832f));
       if (d < TD_SCAN_LEN && da < TD_SCAN_HALF && tdSight(tdX, tdY, apX, apY)) {
@@ -8693,7 +8693,7 @@ static void updateArena(float dt) {
   float fx = cosf(apFace), fy = sinf(apFace), mx = apX + fx * 46, my = apY + fy * 46;
   if (apFireT > 0) apFireT -= dt;
   if (arFlashT > 0) arFlashT -= dt;
-  bool trig = (held & BTN_FIRE) != 0;        // (Square, in here, is for searching)
+  bool trig = (held & (BTN_FIRE | BTN_USE)) != 0;   // (R1 / R2 or Square; X, in here, is for searching)
   if (trig && hasFlamer) {
     flameEmit(mx, my, fx, fy, dt);
   } else if (trig && (hasGun || hasXGun) && apFireT <= 0) {
@@ -8706,12 +8706,18 @@ static void updateArena(float dt) {
       }
     sfxPlay(hasXGun ? SFX_RAY : SFX_SHOT);
     arFlashT = 0.07f;
-  } else if ((pressed & BTN_FIRE) && !hasGun && !hasXGun && !hasFlamer) {
+  } else if ((pressed & (BTN_FIRE | BTN_USE)) && !hasGun && !hasXGun && !hasFlamer) {
     showMsg(hasKnife ? "NO GUN - X TO USE THE KNIFE UP CLOSE" : "NO WEAPON - KEEP MOVING", 1.6f);
   }
-  // searching: Square held beside something
+  // the knife (X, a soldier up close) - otherwise X held beside something searches it
+  bool knifed = false;
+  if ((pressed & BTN_JUMP) && hasKnife)
+    for (int i = 0; i < AR_GMAX; i++) {
+      AGuard &g = ag[i];
+      if (g.on && !g.dead && hypotf(g.x - apX, g.y - apY) < 52) { arKill(i, 0); knifed = true; break; }
+    }
   arSearchAt = arObsAt();
-  if (arSearchAt >= 0 && !arSearched[curRoom][arSearchAt] && (held & BTN_USE)) {
+  if (!knifed && arSearchAt >= 0 && !arSearched[curRoom][arSearchAt] && (held & BTN_JUMP)) {
     float was = arProg[arSearchAt];
     arProg[arSearchAt] += dt;
     if ((int)(was / SEARCH_BEEP_SECONDS) != (int)(arProg[arSearchAt] / SEARCH_BEEP_SECONDS)) sfxPlay(SFX_BEEP);
@@ -8726,11 +8732,6 @@ static void updateArena(float dt) {
       }
     }
   }
-  if ((pressed & BTN_JUMP) && hasKnife)        // the knife: up close
-    for (int i = 0; i < AR_GMAX; i++) {
-      AGuard &g = ag[i];
-      if (g.on && !g.dead && hypotf(g.x - apX, g.y - apY) < 52) { arKill(i, 0); break; }
-    }
   // the flames: past walls and through things they stop; they burn whoever they reach
   for (int k = 0; k < FLAMES; k++) {
     Flame &f = flames[k];
@@ -9014,7 +9015,7 @@ static void drawArena() {
   drawFlames();
   drawArHazards();
   if (arSearchAt >= 0 && !arSearched[curRoom][arSearchAt] && arProg[arSearchAt] <= 0)   // (beside something: what Square does)
-    drawVectorText("SQUARE: SEARCH", apX, apY - 46, 1.8f, rgb565(255, 230, 140), true);
+    drawVectorText("X: SEARCH", apX, apY - 46, 1.8f, rgb565(255, 230, 140), true);
   if (nothingShowT > 0)
     drawVectorText(floatText, nothingX, nothingY - (NOTHING_SHOW - nothingShowT) * 20, 2.5f, floatColour, false);
   // how many are left

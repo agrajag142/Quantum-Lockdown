@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 051: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 052: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -579,20 +579,20 @@ BOTTOM DOOR!) - and take up a spot; you can't go through either door yourself - 
 counts down; ALL 15 DOWN - THE ROOM IS CLEAR). Each one that can see you aims
 (a red sight line, 0.55 seconds, NUCLEAR MISSION's), fires, and again every 1 to
 1.8 seconds, stepping aside now and then; a hit is 10 health (5 with the vest).
-You fire the way you face with R1 / R2: the pistol, the QX-9 (it
+You fire the way you face with R1 / R2 or Square: the pistol, the QX-9 (it
 halves them, 1 in 10 doubles them), or the FX-5's flames (they burn to ash and
-disappear); X with the knife up close. Each is 250 points (no extra time here).
+disappear); X with the knife up close (a soldier beside you comes first). Each is 250 points (no extra time here).
 Leave and come back and the ones you've killed stay dead; the rest are back at
 their posts. The bottom room's top right door is SEALED (no lift beyond it).
 
 All 11 pieces of furniture in each room can be searched: stand beside one
-(SQUARE: SEARCH) and hold Square (a progress bar; a green tick when it's done).
+(X: SEARCH) and hold X - in these rooms X searches, not Square (a progress bar; a green tick when it's done).
 **One of the three rooms has the ACCESS CARD LEVEL 5** in one of them.
 
 Each game, the three rooms are dealt one extra hazard each:
 - **A drone** (one room): it flies a loop of the room, its scanning beam
   sweeping round. When the beam finds you (THE DRONE HAS SEEN YOU) it turns red,
-  heads for you, keeps close and fires every 0.8 seconds (5 health a hit). It
+  heads for you (a little slower than you), keeps close and fires every 0.8 seconds (5 health a hit). It
   can't be hurt. Desks, crates and the sofa are below it; only a pillar or a
   cabinet hides you. Lose it for 2.5 seconds and it goes back to its round.
 - **A wall turret** (one room): on the top wall, its launcher following you.
