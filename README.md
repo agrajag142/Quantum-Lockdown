@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 053: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 054: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -436,9 +436,10 @@ cupboard, stacks of boxes. Nobody in it: 16 things to search.
 clone lab, the super soldier lab, the server room, QUANTUM LAB 1 and QUANTUM
 LAB 2. Everything in them can be searched.
 
-**16 QUANTUM PASSWORDS** (500 points each) are hidden in lift A's and lift B's
-rooms (never in the knife's, the pistol's or the level 2 card's place, nor in
-the server room's terminals). Each one shows the QUANTUM PASSWORD FOUND panel
+**16 QUANTUM PASSWORDS** (500 points each) are hidden in lift A's, lift B's
+and lift C's rooms (never in the knife's, the pistol's or the level 2 card's
+place, the armories' gun cases, the level 4 card's place, nor in the server
+room's terminals). Each one shows the QUANTUM PASSWORD FOUND panel
 with its access code (e.g. QX7-R41K) and n OF 16 FOUND; the panel's PASSWORDS
 line counts them. **A server room terminal takes 4 of them to log in.**
 
@@ -563,8 +564,9 @@ quarter size and gone (a kill: +5:00, as any) - but **1 shot in 10 doubles them
 instead** (up to 4 times the size). It works on the door guard's vest too.
 
 **The TEST CHAMBER**: a basic room to try the QX-9 out in - a TEST CHAMBER sign,
-an observation window, two height charts on the wall, a bench, a water cooler,
-a locker (3 things to search) and **three test subjects** in orange jumpsuits
+an observation window, two height charts on the wall, a bench, a laundry bin
+of jumpsuits, the scales, a gurney, a trolley of syringes and sample jars, a
+water cooler and a locker (7 things to search) and **three test subjects** in orange jumpsuits
 walking about.
 
 **Lift D's rooms: SECURITY ZONES, seen from above** (all three, the same
@@ -742,9 +744,22 @@ The amounts are at the top of `src/game.cpp` (`BONUS_PER_MINUTE`, `BONUS_CLEAN`)
 When the game ends (time, health, or MISSION COMPLETE), a score good enough
 for the top 5 asks for initials (as NUCLEAR MISSION's): UP / DOWN to change
 the letter, X (or Square, or RIGHT) for the next, LEFT to go back. The table
-has the initials, the score and the time played. The title screen's panel
+has the initials, the score, the time played and the **DEATHS**: the nuclear
+toll of that game (see below; the initials screen shows it too). The title screen's panel
 takes turns, 15 seconds each: MISSION OBJECTIVES, then TOP 5 AGENTS. On the PS5 the table is kept in
-`/download0/quantum-lockdown/hiscores.bin` (the title's own storage).
+`/download0/quantum-lockdown/hiscores.bin` (the title's own storage; a table
+from before version 054 is kept, its deaths 0). The settings' RESET HIGH
+SCORES puts the table back to its five made-up agents.
+
+**The death toll.** At the start of each game, each of the 5 nuclear sites is
+given its city and its toll (from the cities' ranges). However the game ends
+- time, health, the body found, the missiles, or the Professor dead - every
+missile that wasn't stopped (a server room terminal) or destroyed in flight
+(the self destruct code) counts as landed: the ones that landed, the ones in
+the air, the ones still to launch and, unless QUANTUM LOCKDOWN was set, the
+sites not yet hacked. So running out of time in stage 1 is all 5. The end
+screen shows "N NUCLEAR MISSILES LANDED - X DEAD" (or NO NUCLEAR MISSILES
+LANDED) under the reason, and X goes in the table.
 
 ## On the walls
 
@@ -811,15 +826,16 @@ run it after adding or changing a layout.
 
 ## The title screen, the briefing
 
-The title sits at the top (title.mod playing), with the quantum core turning behind it (three
-orbits, a particle on each), motes drifting up, a camera's beam sweeping the
-dark, sparks along the floor, and now and then the name glitches red and
-cyan. Under it, open on the background (no box), these take turns every 15
-seconds:
+The title sits at the top (title.mod playing), and now and then the name
+glitches red and cyan. Behind it all, filling the screen (darkened, silent
+under the tune), NUCLEAR MISSION's **missile launch** plays over and over (a
+random site each time); after every 5 launches, the **nuclear landing** cut
+scene (a random city), then the launches again. Under the name, on a dark
+band, these take turns every 15 seconds:
 
 - **MISSION OBJECTIVES:** 1. POWER ON THE GENERATORS 2. FIND ALL QUANTUM
   DRIVES 3. UNLOCK SUB BASEMENT ACCESS
-- **TOP 5 AGENTS:** the high scores
+- **TOP 5 AGENTS:** the high scores (with the deaths)
 
 After X and the opening (out of the duct), the **STAGE 1** briefing: ABANDONED
 FACILITY, COUNTDOWN TO POWER FAILURE 15:00, RESTORE 3 GENERATORS, with
@@ -839,6 +855,7 @@ pauses the game and the clock:
   all 5 nuclear sites hacked (so the launch countdowns start straight away)
 - **ALL ACCESS (TEST)** ON / OFF (for testing stage 2): every card reader
   opens (the panel's ACCESS CARD says ALL)
+- **RESET HIGH SCORES** (X twice): the table back to its defaults (saved)
 - **QUIT TO TITLE** (X twice): drops the game there and then, no score
 - **RESUME** (or Triangle again)
 

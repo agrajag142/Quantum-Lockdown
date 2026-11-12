@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "053"
+#define GAME_VERSION      "054"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -375,7 +375,7 @@ static float shotFlashT = 0;
 #define VEST_SCORE 500                       // ...and a BULLET-PROOF VEST: a guard's shot only hurts (half), no knock down
 #define KILL_TIME_BONUS 300                  // each person he kills: 5 minutes more on the clock
 enum S2Hold : uint8_t { S2H_NONE, S2H_VEST, S2H_DOC, S2H_PASS };
-#define S2_PASSWORDS 16                      // QUANTUM PASSWORDS: in lift A's and lift B's rooms; a server room terminal takes 4 to log in
+#define S2_PASSWORDS 16                      // QUANTUM PASSWORDS: in lift A's, B's and C's rooms; a server room terminal takes 4 to log in
 #define PASS_PER_LOGIN 4
 #define PASS_SCORE 500
 static int s2PassFound = 0;
@@ -717,7 +717,7 @@ static void layOutStage2() {
   s2DocsFound = 0;
   static const int beds[5] = { 2, 4, 5, 6, 7 };
   s2CardItem = beds[rnd(5)];                 // (one of the medical bay's 5 patients)
-  // ...the vest in lift A's rooms; 15 TOP SECRET DOCUMENTS and 16 QUANTUM PASSWORDS anywhere in lift A's and B's
+  // ...the vest in lift A's rooms; 15 TOP SECRET DOCUMENTS anywhere in lift A's and B's; 16 QUANTUM PASSWORDS in lift A's, B's and C's
   s2PassFound = 0;
   passShowT = 0;
   passUsed = 0;
@@ -726,13 +726,15 @@ static void layOutStage2() {
   for (int k = 0; k < 1 + S2_DOCS + S2_PASSWORDS; k++)
     for (int tries = 0; tries < 2000; tries++) {
       bool pass = k > S2_DOCS;
-      int s = k == 0 ? 0 : rnd(2), f = rnd(S2_LEVELS - s), idx = s2Room[s][f], kind = s2Kind[idx];
+      int s = k == 0 ? 0 : pass ? rnd(3) : rnd(2), f = rnd(S2_LEVELS - s), idx = s2Room[s][f], kind = s2Kind[idx];
       int n = s2ItemCount(kind);
       if (n <= 0) continue;
       int i = rnd(n);
       if (s2Hold[idx][i]) continue;
       if ((kind == LK_KITCHEN && i == s2KnifeItem) || (kind == LK_SECURITY && i == s2GunItem) || (kind == LK_MEDICAL && i == s2CardItem)) continue;
       if (kind == LK_SERVER && i >= 2 && i <= 5) continue;     // (the server room's terminals: not searched)
+      if ((kind == LK_ARMORY || kind == LK_ARMORY2) && i == 0) continue;   // (the armories' cases: the guns)
+      if (kind == LK_HAZARD && i == s2HazCard) continue;        // (hazardous storage: the level 4 card)
       s2Hold[idx][i] = k == 0 ? S2H_VEST : pass ? S2H_PASS : S2H_DOC;
       break;
     }
@@ -907,9 +909,11 @@ static int nShocks = 0, nDroneHits = 0, nPitFalls = 0, nCaught = 0, nKitsUsed = 
 static long bonusPts[BONUS_LINES];
 static long bonusTotal = 0;
 // The high scores
-struct HiEntry { char name[4]; int32_t score; int32_t secs; };
-static HiEntry hiTable[HI_COUNT] = { { "ACE", 25000, 850 }, { "VOS", 20000, 785 }, { "MAX", 15000, 700 },
-                                     { "ZED", 10000, 560 }, { "KAT", 5000, 405 } };
+struct HiEntry { char name[4]; int32_t score; int32_t secs; uint32_t deaths; };   // (deaths: the nuclear toll that game)
+static const HiEntry hiDefault[HI_COUNT] = { { "ACE", 25000, 850, 0 }, { "VOS", 20000, 785, 2400000 }, { "MAX", 15000, 700, 5100000 },
+                                             { "ZED", 10000, 560, 9800000 }, { "KAT", 5000, 405, 14300000 } };
+static HiEntry hiTable[HI_COUNT] = { { "ACE", 25000, 850, 0 }, { "VOS", 20000, 785, 2400000 }, { "MAX", 15000, 700, 5100000 },
+                                     { "ZED", 10000, 560, 9800000 }, { "KAT", 5000, 405, 14300000 } };
 static bool entryOn = false;           // entering initials for the table
 static int entryPos = 0, entrySlot = -1;
 static char entryName[4] = "AAA";
@@ -944,6 +948,8 @@ static bool mapOn = false;
 static bool settingsOn = false;        // the settings menu (Triangle): the game paused
 static int settingsSel = 0;
 static bool quitConfirm = false;       // QUIT TO TITLE pressed once: X again to quit
+static bool hiResetConfirm = false;    // RESET HIGH SCORES pressed once: X again
+static float hiResetDoneT = 0;
 static bool briefingOn = false;        // STAGE 1's briefing, after the opening: X to start
 static float briefingT = 0;
 static std::atomic<bool> musicOn[2] = { true, true };   // 0 ELEVATOR MUSIC, 1 STAGE MUSIC (the settings)
@@ -1020,7 +1026,9 @@ static short tuneBuf[2048 * 2];
 static uint8_t sfxRing[64];
 static std::atomic<int> sfxHead{0}, sfxTail{0};
 
+static bool sfxMute = false;                 // (the title's cut scenes: silent, under its tune)
 static void sfxPlay(uint8_t sfx) {           // (the game's side of the queue)
+  if (sfxMute) return;
   int h = sfxHead.load(std::memory_order_relaxed), nx = (h + 1) & 63;
   if (nx == sfxTail.load(std::memory_order_acquire)) return;
   sfxRing[h] = sfx;
@@ -1950,7 +1958,8 @@ static const LabItem armoryItems[] = {
   { 190, ROOM_FLOOR_Y, 110, 220 }, { 340, ROOM_FLOOR_Y, 140, 110 }, { 470, ROOM_FLOOR_Y, 80, 160 },   // the rack, the workbench, the cell charger
   { 830, ROOM_FLOOR_Y, 100, 110 }, { 945, ROOM_FLOOR_Y, 90, 110 }, { 1080, ROOM_FLOOR_Y, 140, 100 } }; // the gel table, ammo crates, the firing booth
 static const LabItem testItems[] = {
-  { 230, ROOM_FLOOR_Y, 140, 70 }, { 1000, ROOM_FLOOR_Y, 50, 130 }, { 1100, ROOM_FLOOR_Y, 80, 190 } };  // a bench, the water cooler, a locker
+  { 230, ROOM_FLOOR_Y, 140, 70 }, { 1000, ROOM_FLOOR_Y, 50, 130 }, { 1100, ROOM_FLOOR_Y, 80, 190 },   // a bench, the water cooler, a locker
+  { 342, ROOM_FLOOR_Y, 50, 80 }, { 480, ROOM_FLOOR_Y, 60, 160 }, { 655, ROOM_FLOOR_Y, 170, 90 }, { 820, ROOM_FLOOR_Y, 70, 110 } };   // a laundry bin, the scales, a gurney, a trolley
 #define ARMORY_CASE_X0 548
 #define ARMORY_CASE_X1 732
 #define ARMORY_CASE_Y0 420
@@ -2144,6 +2153,39 @@ static void paintTestRoom() {
   fillRect(1060, ROOM_FLOOR_Y - 190, 1140, ROOM_FLOOR_Y - 1, rgb565(150, 160, 176));
   fillRect(1099, ROOM_FLOOR_Y - 186, 1101, ROOM_FLOOR_Y - 4, rgb565(90, 96, 108));
   for (int y = ROOM_FLOOR_Y - 176; y < ROOM_FLOOR_Y - 150; y += 6) { fillRect(1066, y, 1094, y + 2, rgb565(90, 96, 108)); fillRect(1106, y, 1134, y + 2, rgb565(90, 96, 108)); }
+  // a laundry bin of orange jumpsuits
+  fillRect(318, ROOM_FLOOR_Y - 70, 366, ROOM_FLOOR_Y - 6, rgb565(110, 120, 136));
+  fillRect(318, ROOM_FLOOR_Y - 70, 366, ROOM_FLOOR_Y - 64, rgb565(150, 160, 176));
+  fillRect(322, ROOM_FLOOR_Y - 80, 346, ROOM_FLOOR_Y - 68, rgb565(240, 130, 40));
+  fillRect(340, ROOM_FLOOR_Y - 84, 362, ROOM_FLOOR_Y - 70, rgb565(220, 110, 30));
+  fillCircle(324, ROOM_FLOOR_Y - 4, 4, rgb565(40, 40, 46));
+  fillCircle(360, ROOM_FLOOR_Y - 4, 4, rgb565(40, 40, 46));
+  drawVectorText("SUBJECTS", 342, ROOM_FLOOR_Y - 40, 0.9f, rgb565(230, 234, 240), false);
+  // the scales: a platform, a column, the sliding weights
+  fillRect(452, ROOM_FLOOR_Y - 14, 508, ROOM_FLOOR_Y - 1, rgb565(80, 86, 96));
+  fillRect(496, ROOM_FLOOR_Y - 150, 504, ROOM_FLOOR_Y - 14, rgb565(170, 176, 186));
+  fillRect(462, ROOM_FLOOR_Y - 152, 512, ROOM_FLOOR_Y - 144, rgb565(200, 204, 212));
+  fillRect(470, ROOM_FLOOR_Y - 156, 478, ROOM_FLOOR_Y - 140, rgb565(60, 64, 72));
+  fillRect(492, ROOM_FLOOR_Y - 120, 520, ROOM_FLOOR_Y - 104, rgb565(230, 234, 240));
+  fillRect(496, ROOM_FLOOR_Y - 116, 516, ROOM_FLOOR_Y - 108, rgb565(30, 40, 30));
+  // a gurney: a padded top, a pillow, the frame on wheels, a strap
+  fillRect(574, ROOM_FLOOR_Y - 70, 736, ROOM_FLOOR_Y - 58, rgb565(120, 170, 190));
+  fillRect(574, ROOM_FLOOR_Y - 76, 612, ROOM_FLOOR_Y - 70, rgb565(240, 242, 246));
+  fillRect(660, ROOM_FLOOR_Y - 72, 672, ROOM_FLOOR_Y - 56, rgb565(60, 50, 40));
+  fillRect(586, ROOM_FLOOR_Y - 58, 592, ROOM_FLOOR_Y - 10, rgb565(150, 156, 166));
+  fillRect(718, ROOM_FLOOR_Y - 58, 724, ROOM_FLOOR_Y - 10, rgb565(150, 156, 166));
+  fillRect(580, ROOM_FLOOR_Y - 34, 730, ROOM_FLOOR_Y - 30, rgb565(150, 156, 166));
+  fillCircle(589, ROOM_FLOOR_Y - 6, 6, rgb565(40, 40, 46));
+  fillCircle(721, ROOM_FLOOR_Y - 6, 6, rgb565(40, 40, 46));
+  // a trolley: two trays of syringes and sample jars
+  fillRect(788, ROOM_FLOOR_Y - 104, 852, ROOM_FLOOR_Y - 98, rgb565(190, 196, 206));
+  fillRect(788, ROOM_FLOOR_Y - 54, 852, ROOM_FLOOR_Y - 48, rgb565(190, 196, 206));
+  fillRect(790, ROOM_FLOOR_Y - 104, 794, ROOM_FLOOR_Y - 10, rgb565(150, 156, 166));
+  fillRect(846, ROOM_FLOOR_Y - 104, 850, ROOM_FLOOR_Y - 10, rgb565(150, 156, 166));
+  for (int k = 0; k < 4; k++) fillRect(798 + k * 12, ROOM_FLOOR_Y - 120, 804 + k * 12, ROOM_FLOOR_Y - 104, k & 1 ? rgb565(240, 130, 40) : rgb565(120, 200, 140));
+  fillRect(800, ROOM_FLOOR_Y - 62, 840, ROOM_FLOOR_Y - 56, rgb565(230, 234, 240));
+  fillCircle(794, ROOM_FLOOR_Y - 5, 5, rgb565(40, 40, 46));
+  fillCircle(846, ROOM_FLOOR_Y - 5, 5, rgb565(40, 40, 46));
 }
 
 
@@ -6353,6 +6395,7 @@ static void startJump() {
   setState(ST_JUMP, 0.08f);
 }
 
+static void computeFinalToll();
 static void endGame(int why) {
   if (gameOver == END_NONE) {
     gameOver = (EndReason)why;
@@ -6363,6 +6406,7 @@ static void endGame(int why) {
       powerPanelT = 0;
     }
     computeBonuses();
+    computeFinalToll();
   }
 }
 
@@ -6691,9 +6735,11 @@ static int lsKind = 0;                 // the cut scene playing: 0 a launch, 1 a
 static int ldSite = 0, ldBuildings = 0;
 static int16_t ldBX[32], ldBW[32], ldBH[32];
 
-static void resetStrikes() {
+static void pickCity(int site);
+static void resetStrikes() {               // (each site's city and its toll, chosen at the start of the game)
   deathTotal = 0;
   memset(cityUsed, 0, sizeof(cityUsed));
+  for (int i = 0; i < NUKE_SITES; i++) pickCity(i);
 }
 
 static void pickCity(int site) {       // (one not hit yet)
@@ -6706,7 +6752,21 @@ static void pickCity(int site) {       // (one not hit yet)
   landCity[site] = c;
   const City &ct = cities[c];
   landDeaths[site] = ct.lo + rnd32() % (ct.hi - ct.lo + 1);
-  deathTotal += landDeaths[site];
+}
+
+// The game over (or won): the toll. Every missile not stopped or destroyed lands - the ones in the air, the ones
+// still to launch, and (unless QUANTUM LOCKDOWN was set) the sites not yet hacked
+static uint32_t finalDeaths = 0;
+static int finalHits = 0;
+static void computeFinalToll() {
+  finalDeaths = 0;
+  finalHits = 0;
+  for (int i = 0; i < NUKE_SITES; i++) {
+    if (prevented[i] || nukeDestroyed[i]) continue;
+    if (lockdown && i >= sitesHacked) continue;   // (never hacked: never launched)
+    finalHits++;
+    finalDeaths += landDeaths[i];
+  }
 }
 
 static void commas(char *out, int n, uint32_t v) {   // 2,512,904
@@ -7345,7 +7405,7 @@ static void updateNukes(float dt) {
     if (landLeft[i] > 0) {
       landLeft[i] -= dt;
       if (landLeft[i] <= 0) {                  // landed: a city hit (its cut scene beside the game)
-        pickCity(i);
+        deathTotal += landDeaths[i];         // (its city chosen at the start)
         snprintf(b, sizeof(b), "NUCLEAR STRIKE ON %s", cities[landCity[i]].name);
         flyerAdd(b);
         startLaunchScene(8 + i);
@@ -11730,13 +11790,13 @@ static void drawGameOver() {
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
     drawVectorText("THE PROFESSOR IS DEAD", SCREEN_W / 2, 172, 3.0f, rgb565(240, 240, 245), true);
-    int hit = 0;
-    for (int i = 0; i < sitesLaunched; i++) hit += !prevented[i] && !nukeDestroyed[i] && landLeft[i] <= 0;
-    char num[24], line[96];
-    commas(num, sizeof(num), deathTotal);
-    if (hit) snprintf(line, sizeof(line), "%d NUCLEAR MISSILE%s LANDED   -   %s DEAD", hit, hit == 1 ? "" : "S", num);
-    else snprintf(line, sizeof(line), "NO NUCLEAR MISSILES LANDED");
-    drawVectorText(line, SCREEN_W / 2, 204, 2.4f, hit ? rgb565(255, 90, 70) : rgb565(100, 255, 140), true);
+    {
+      char num[24], line[96];
+      commas(num, sizeof(num), finalDeaths);
+      if (finalHits) snprintf(line, sizeof(line), "%d NUCLEAR MISSILE%s LANDED   -   %s DEAD", finalHits, finalHits == 1 ? "" : "S", num);
+      else snprintf(line, sizeof(line), "NO NUCLEAR MISSILES LANDED");
+      drawVectorText(line, SCREEN_W / 2, 204, 2.4f, finalHits ? rgb565(255, 90, 70) : rgb565(100, 255, 140), true);
+    }
   } else if (gameOver == END_WIN) {
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
     drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
@@ -11744,25 +11804,47 @@ static void drawGameOver() {
   } else if (gameOver == END_TIME) {
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(120, 20, 14), 8.0f);
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(255, 70, 50), 3.0f);
-    drawVectorText("POWER FAILURE - THE GENERATORS HAVE SHUT DOWN", SCREEN_W / 2, 186, 3.0f, rgb565(240, 240, 245), true);
+    drawVectorText("POWER FAILURE - THE GENERATORS HAVE SHUT DOWN", SCREEN_W / 2, 172, 3.0f, rgb565(240, 240, 245), true);
+    {
+      char num[24], line[96];
+      commas(num, sizeof(num), finalDeaths);
+      if (finalHits) snprintf(line, sizeof(line), "%d NUCLEAR MISSILE%s LANDED   -   %s DEAD", finalHits, finalHits == 1 ? "" : "S", num);
+      else snprintf(line, sizeof(line), "NO NUCLEAR MISSILES LANDED");
+      drawVectorText(line, SCREEN_W / 2, 204, 2.4f, finalHits ? rgb565(255, 90, 70) : rgb565(100, 255, 140), true);
+    }
   } else if (gameOver == END_NUKES) {
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(120, 20, 14), 8.0f);
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(255, 70, 50), 3.0f);
-    drawVectorText("THE NUCLEAR MISSILES HAVE LANDED", SCREEN_W / 2, 170, 3.0f, rgb565(240, 240, 245), true);
-    int hit = 0;
-    for (int i = 0; i < sitesLaunched; i++) hit += !prevented[i] && landLeft[i] <= 0;
-    char num[24], line[96];
-    commas(num, sizeof(num), deathTotal);
-    snprintf(line, sizeof(line), "%d NUCLEAR MISSILE%s LANDED   -   %s DEAD", hit, hit == 1 ? "" : "S", num);
-    drawVectorText(line, SCREEN_W / 2, 202, 2.4f, rgb565(255, 90, 70), true);
+    drawVectorText("THE NUCLEAR MISSILES HAVE LANDED", SCREEN_W / 2, 172, 3.0f, rgb565(240, 240, 245), true);
+    {
+      char num[24], line[96];
+      commas(num, sizeof(num), finalDeaths);
+      if (finalHits) snprintf(line, sizeof(line), "%d NUCLEAR MISSILE%s LANDED   -   %s DEAD", finalHits, finalHits == 1 ? "" : "S", num);
+      else snprintf(line, sizeof(line), "NO NUCLEAR MISSILES LANDED");
+      drawVectorText(line, SCREEN_W / 2, 204, 2.4f, finalHits ? rgb565(255, 90, 70) : rgb565(100, 255, 140), true);
+    }
   } else if (gameOver == END_BODY) {
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(120, 20, 14), 8.0f);
     drawVectorTextW("MISSION FAILED", SCREEN_W / 2, 120, 7.0f, rgb565(255, 70, 50), 3.0f);
-    drawVectorText("THE MAINTENANCE MAN'S BODY WAS FOUND", SCREEN_W / 2, 186, 3.0f, rgb565(240, 240, 245), true);
+    drawVectorText("THE MAINTENANCE MAN'S BODY WAS FOUND", SCREEN_W / 2, 172, 3.0f, rgb565(240, 240, 245), true);
+    {
+      char num[24], line[96];
+      commas(num, sizeof(num), finalDeaths);
+      if (finalHits) snprintf(line, sizeof(line), "%d NUCLEAR MISSILE%s LANDED   -   %s DEAD", finalHits, finalHits == 1 ? "" : "S", num);
+      else snprintf(line, sizeof(line), "NO NUCLEAR MISSILES LANDED");
+      drawVectorText(line, SCREEN_W / 2, 204, 2.4f, finalHits ? rgb565(255, 90, 70) : rgb565(100, 255, 140), true);
+    }
   } else {
     drawVectorTextW("GAME OVER", SCREEN_W / 2, 120, 8.0f, rgb565(120, 20, 14), 8.0f);
     drawVectorTextW("GAME OVER", SCREEN_W / 2, 120, 8.0f, rgb565(255, 70, 50), 3.0f);
-    drawVectorText("OUT OF HEALTH", SCREEN_W / 2, 186, 3.2f, rgb565(240, 240, 245), true);
+    drawVectorText("OUT OF HEALTH", SCREEN_W / 2, 172, 3.2f, rgb565(240, 240, 245), true);
+    {
+      char num[24], line[96];
+      commas(num, sizeof(num), finalDeaths);
+      if (finalHits) snprintf(line, sizeof(line), "%d NUCLEAR MISSILE%s LANDED   -   %s DEAD", finalHits, finalHits == 1 ? "" : "S", num);
+      else snprintf(line, sizeof(line), "NO NUCLEAR MISSILES LANDED");
+      drawVectorText(line, SCREEN_W / 2, 204, 2.4f, finalHits ? rgb565(255, 90, 70) : rgb565(100, 255, 140), true);
+    }
   }
   // the end of game bonuses, one line at a time
   char b[80];
@@ -12169,7 +12251,14 @@ static void loadHiScores() {
   HiEntry t[HI_COUNT];
   size_t got = fread(t, 1, sizeof(t), f);
   fclose(f);
-  if (got != sizeof(t)) return;
+  struct OldEntry { char name[4]; int32_t score; int32_t secs; };   // (before version 054: no deaths)
+  if (got == sizeof(OldEntry) * HI_COUNT) {
+    OldEntry o[HI_COUNT];
+    memcpy(o, t, sizeof(o));
+    for (int i = 0; i < HI_COUNT; i++) { memcpy(t[i].name, o[i].name, 4); t[i].score = o[i].score; t[i].secs = o[i].secs; t[i].deaths = 0; }
+  } else if (got != sizeof(t)) {
+    return;
+  }
   for (int i = 0; i < HI_COUNT; i++)
     if (t[i].score < 0 || t[i].secs < 0 || t[i].name[3] != 0) return;   // (not ours: keep the defaults)
   memcpy(hiTable, t, sizeof(t));
@@ -12183,8 +12272,15 @@ static void saveHiScores() {
   fclose(f);
 }
 
+static void commas(char *out, int n, uint32_t v);
 static void hiLine(char *b, int n, const HiEntry &e, int rank) {
-  snprintf(b, n, "%d.   %.3s   %07ld   %3d:%02d", rank, e.name, (long)(e.score % 10000000), (int)(e.secs / 60 % 1000), (int)(e.secs % 60));
+  char d[24];
+  commas(d, sizeof(d), e.deaths);
+  snprintf(b, n, "%d.  %.3s  %07ld  %3d:%02d  %11s", rank, e.name, (long)(e.score % 10000000), (int)(e.secs / 60 % 1000), (int)(e.secs % 60), d);
+}
+static void resetHiScores() {
+  memcpy(hiTable, hiDefault, sizeof(hiTable));
+  saveHiScores();
 }
 
 static void goToTitle();
@@ -12219,6 +12315,7 @@ static void updateEntry(float dt) {
       memcpy(hiTable[entrySlot].name, entryName, 4);
       hiTable[entrySlot].score = (int32_t)score;
       hiTable[entrySlot].secs = (int32_t)playT;
+      hiTable[entrySlot].deaths = finalDeaths;
       saveHiScores();
       sfxPlay(SFX_FANFARE);
       entryOn = false;
@@ -12241,7 +12338,13 @@ static void drawEntry() {
   int ps = (int)playT;
   snprintf(b, sizeof(b), "%07ld     %d:%02d", score, ps / 60, ps % 60);
   drawVectorText(b, SCREEN_W / 2, 140, 5.0f, rgb565(240, 240, 245), true);
-  drawVectorText("ENTER YOUR INITIALS", SCREEN_W / 2, 196, 3.0f, rgb565(180, 184, 196), false);
+  {
+    char num[24], line[64];
+    commas(num, sizeof(num), finalDeaths);
+    snprintf(line, sizeof(line), "NUCLEAR DEATHS: %s", num);
+    drawVectorText(line, SCREEN_W / 2, 176, 2.4f, finalDeaths ? rgb565(255, 90, 70) : rgb565(100, 255, 140), true);
+  }
+  drawVectorText("ENTER YOUR INITIALS", SCREEN_W / 2, 212, 3.0f, rgb565(180, 184, 196), false);
   for (int k = 0; k < 3; k++) {
     int cx = SCREEN_W / 2 - 110 + k * 110, cy = 290;
     bool on = (k == entryPos);
@@ -12257,13 +12360,14 @@ static void drawEntry() {
     }
   }
   drawVectorText("UP / DOWN: LETTER     X: NEXT     LEFT: BACK", SCREEN_W / 2, 400, 2.4f, rgb565(150, 156, 170), false);
-  drawVectorText("RANK  INITIALS    SCORE    TIME PLAYED", SCREEN_W / 2, 452, 2.2f, rgb565(255, 190, 70), false);
+  drawVectorText("RANK  INITIALS    SCORE    TIME PLAYED       DEATHS", SCREEN_W / 2, 452, 2.2f, rgb565(255, 190, 70), false);
   for (int r = 0; r < HI_COUNT; r++) {
     HiEntry e;
     if (r == entrySlot) {
       memcpy(e.name, entryName, 4);
       e.score = (int32_t)score;
       e.secs = (int32_t)playT;
+      e.deaths = finalDeaths;
     } else {
       e = hiTable[r > entrySlot ? r - 1 : r];
     }
@@ -12274,7 +12378,7 @@ static void drawEntry() {
 
 // ============================================================ the settings (Triangle), STAGE 1's briefing
 #define SETTINGS_FILE QL_DATA_DIR "/settings.bin"
-#define SETTINGS_ITEMS 6
+#define SETTINGS_ITEMS 7
 static void loadSettings() {
   FILE *f = fopen(SETTINGS_FILE, "rb");
   if (!f) return;
@@ -12320,8 +12424,8 @@ static void jumpToStage2() {
 }
 
 static void updateSettings() {
-  if (pressed & BTN_UP) { settingsSel = (settingsSel + SETTINGS_ITEMS - 1) % SETTINGS_ITEMS; quitConfirm = false; sfxPlay(SFX_KEY); }
-  if (pressed & BTN_DOWN) { settingsSel = (settingsSel + 1) % SETTINGS_ITEMS; quitConfirm = false; sfxPlay(SFX_KEY); }
+  if (pressed & BTN_UP) { settingsSel = (settingsSel + SETTINGS_ITEMS - 1) % SETTINGS_ITEMS; quitConfirm = hiResetConfirm = false; sfxPlay(SFX_KEY); }
+  if (pressed & BTN_DOWN) { settingsSel = (settingsSel + 1) % SETTINGS_ITEMS; quitConfirm = hiResetConfirm = false; sfxPlay(SFX_KEY); }
   bool go = (pressed & (BTN_JUMP | BTN_USE)) != 0;
   bool side = (pressed & (BTN_LEFT | BTN_RIGHT)) != 0;
   if (settingsSel <= 1 && (go || side)) {          // the music: on / off
@@ -12335,11 +12439,14 @@ static void updateSettings() {
   } else if (settingsSel == 3 && (go || side)) {   // ALL ACCESS (for testing stage 2): every card reader opens
     s2AllAccess = !s2AllAccess;
     sfxPlay(SFX_CLICK);
-  } else if (settingsSel == 4 && go) {             // QUIT TO TITLE: X twice
+  } else if (settingsSel == 4 && go) {             // RESET HIGH SCORES: X twice
+    if (hiResetConfirm) { resetHiScores(); hiResetConfirm = false; hiResetDoneT = 2.0f; sfxPlay(SFX_POWERUP); }
+    else { hiResetConfirm = true; sfxPlay(SFX_CLICK); }
+  } else if (settingsSel == 5 && go) {             // QUIT TO TITLE: X twice
     if (quitConfirm) quitToTitle();
     else quitConfirm = true;
     sfxPlay(SFX_CLICK);
-  } else if (settingsSel == 5 && go) {             // RESUME
+  } else if (settingsSel == 6 && go) {             // RESUME
     settingsOn = false;
     sfxPlay(SFX_CLICK);
   }
@@ -12347,6 +12454,7 @@ static void updateSettings() {
 
 static void drawSettings() {
   gfxClipAll();
+  if (hiResetDoneT > 0) hiResetDoneT -= 1.0f / 60;
   blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 2, 4, 8, 0.72f);
   int x0 = 330, y0 = 100, x1 = 950, y1 = 640;
   fillRect(x0, y0, x1, y1, rgb565(12, 16, 26));
@@ -12354,20 +12462,21 @@ static void drawSettings() {
   drawVectorText("SETTINGS", SCREEN_W / 2, y0 + 40, 4.4f, rgb565(90, 220, 255), true);
   drawVectorText("GAME PAUSED", SCREEN_W / 2, y0 + 82, 2.2f, rgb565(255, 190, 70), false);
   for (int i = 0; i < SETTINGS_ITEMS; i++) {
-    int y = y0 + 140 + i * 58;
+    int y = y0 + 136 + i * 52;
     int item = i;
     bool sel = i == settingsSel;
     if (sel) fillRect(x0 + 24, y - 22, x1 - 24, y + 22, rgb565(36, 60, 90));
     uint16_t c = sel ? rgb565(255, 230, 120) : rgb565(220, 226, 236);
     const char *label = i == 0 ? "STAGE MUSIC" : i == 1 ? "ELEVATOR MUSIC" : i == 2 ? "JUMP TO STAGE 2" : i == 3 ? "ALL ACCESS (TEST)" :
-                        i == 4 ? (quitConfirm ? "X AGAIN TO QUIT" : "QUIT TO TITLE") : "RESUME";
+                        i == 4 ? (hiResetDoneT > 0 ? "HIGH SCORES RESET" : hiResetConfirm ? "X AGAIN TO RESET" : "RESET HIGH SCORES") :
+                        i == 5 ? (quitConfirm ? "X AGAIN TO QUIT" : "QUIT TO TITLE") : "RESUME";
     if (item <= 1 || item == 3) {
       bool on = item == 3 ? s2AllAccess : musicOn[i == 0 ? 1 : 0].load();
       drawVectorText(label, x0 + 50 + vectorTextWidth(label, 3.0f) / 2, y, 3.0f, c, true);
       const char *v = on ? "ON" : "OFF";
       drawVectorText(v, x1 - 60 - vectorTextWidth(v, 3.0f) / 2, y, 3.0f, on ? rgb565(100, 240, 140) : rgb565(255, 90, 70), true);
     } else {
-      drawVectorText(label, SCREEN_W / 2, y, 3.0f, i == 4 && quitConfirm ? rgb565(255, 90, 70) : c, true);
+      drawVectorText(label, SCREEN_W / 2, y, 3.0f, (i == 5 && quitConfirm) || (i == 4 && hiResetConfirm) ? rgb565(255, 90, 70) : i == 4 && hiResetDoneT > 0 ? rgb565(100, 240, 140) : c, true);
     }
   }
   drawVectorText("UP / DOWN: CHOOSE    X: CHANGE    TRIANGLE: BACK", SCREEN_W / 2, y1 - 26, 1.8f, rgb565(150, 158, 176), false);
@@ -12420,13 +12529,13 @@ static void drawTitleScores(float t) {
   const int y0 = TPANEL_Y0;
   float f = fminf(1.0f, t / 0.5f);
   drawVectorText("TOP 5 AGENTS", SCREEN_W / 2, y0 + 16, 3.0f, rgb565(255, 190, 70), true);
-  drawVectorText("RANK  INITIALS    SCORE    TIME PLAYED", SCREEN_W / 2, y0 + 62, 2.2f, dimmed(150, 200, 220, f), false);
+  drawVectorText("RANK  INITIALS    SCORE    TIME PLAYED       DEATHS", SCREEN_W / 2, y0 + 62, 2.2f, dimmed(150, 200, 220, f), false);
   for (int r = 0; r < HI_COUNT; r++) {
     float k = clampv((t - 0.3f - r * 0.18f) / 0.3f, 0.0f, 1.0f);
     if (k <= 0) continue;
     char b[64];
     hiLine(b, sizeof(b), hiTable[r], r + 1);
-    drawVectorText(b, SCREEN_W / 2, y0 + 108 + r * 44, 3.2f, r == 0 ? dimmed(255, 220, 120, k) : dimmed(236, 236, 242, k), true);
+    drawVectorText(b, SCREEN_W / 2, y0 + 108 + r * 44, 2.9f, r == 0 ? dimmed(255, 220, 120, k) : dimmed(236, 236, 242, k), true);
   }
 }
 
@@ -12519,26 +12628,69 @@ static void drawTitleEffects() {
     }
 }
 
+// The title's background: NUCLEAR MISSION's launch, over and over (a random site); every sixth, a landing (a random city)
+static int titleLaunches = 0;
+#define TS_CROP_Y 170                        // (the part of the scene's square shown: 720 wide, 405 high, filling the screen)
+static void updateTitleScene(float dt) {
+  sfxMute = true;
+  if (!launchOn) {
+    launchQueued = 0;
+    if (titleLaunches % 6 == 5) {
+      int c = fxRnd(0, N_CITIES);
+      landCity[0] = c;
+      landDeaths[0] = cities[c].lo + (uint32_t)fxRnd(0, 1000) * ((cities[c].hi - cities[c].lo) / 1000);
+      deathTotal = landDeaths[0];
+      startLaunchScene(8);
+    } else {
+      startLaunchScene(fxRnd(0, NUKE_SITES));
+    }
+    titleLaunches++;
+  }
+  updateLaunchScene(dt);
+  sfxMute = false;
+}
+static void drawTitleScene() {
+  pxRect(0, 0, FB_W - 1, FB_H - 1, 0);
+  if (!launchOn) return;
+  drawLaunchScene();
+  gfxClipAll();
+  for (int y = 0; y < LS_SIZE; y++) memcpy(frameSave + y * LS_SIZE, g_frame + (LS_Y + y) * FB_W + LS_X, LS_SIZE * 4);
+  const int SH = LS_SIZE * FB_H / FB_W;      // (405 rows of it, scaled up to the whole screen: bilinear, two channels at a time)
+  static int16_t xs[FB_W];
+  static uint16_t xw[FB_W];
+  static bool xsDone = false;
+  if (!xsDone) {
+    for (int x = 0; x < FB_W; x++) {
+      int fx = (x * LS_SIZE << 8) / FB_W;
+      xs[x] = (int16_t)(fx >> 8 > LS_SIZE - 2 ? LS_SIZE - 2 : fx >> 8);
+      xw[x] = (uint16_t)(fx & 255);
+    }
+    xsDone = true;
+  }
+  auto lerp = [](uint32_t p, uint32_t q, uint32_t w) -> uint32_t {   // (p..q by w/256, per channel)
+    uint32_t rb = ((p & 0xFF00FF) * (256 - w) + (q & 0xFF00FF) * w) >> 8 & 0xFF00FF;
+    uint32_t g = ((p & 0x00FF00) * (256 - w) + (q & 0x00FF00) * w) >> 8 & 0x00FF00;
+    return rb | g;
+  };
+  for (int y = 0; y < FB_H; y++) {
+    int fy = (y * SH << 8) / FB_H, sy = TS_CROP_Y + (fy >> 8), wy = fy & 255;
+    if (sy > LS_SIZE - 2) sy = LS_SIZE - 2;
+    const uint32_t *r0 = frameSave + sy * LS_SIZE, *r1 = r0 + LS_SIZE;
+    uint32_t *d = g_frame + y * FB_W;
+    for (int x = 0; x < FB_W; x++) {
+      int sx = xs[x];
+      uint32_t w = xw[x];
+      uint32_t v = lerp(lerp(r0[sx], r0[sx + 1], w), lerp(r1[sx], r1[sx + 1], w), (uint32_t)wy);
+      d[x] = lerp(0, v, 154) | (r0[sx] & 0xFF000000);   // (darkened, under the name)
+    }
+  }
+}
+
 static void drawTitle() {
   gfxTarget = g_frame;
   gfxClipAll();
-  // the dark of the shaft, lighter in the middle, girders standing in it
-  for (int y = 0; y < SCREEN_H; y += 4) {
-    float k = 1.0f - fabsf((float)(y - 300)) / 420.0f;
-    if (k < 0) k = 0;
-    fillRect(0, y, SCREEN_W - 1, y + 3, rgb565(8 + (int)(16 * k), 10 + (int)(20 * k), 16 + (int)(28 * k)));
-  }
-  float off = fmodf(clockT * 40.0f, 60.0f);    // rungs drifting down: a lift on its way
-  static const int girders[4] = { 150, 380, 900, 1130 };
-  for (int x : girders) {
-    fillRect(x, 0, x + 15, SCREEN_H - 1, rgb565(26, 32, 44));
-    fillRect(x, 0, x + 2, SCREEN_H - 1, rgb565(44, 52, 66));
-  }
-  for (int k = -1; k < 13; k++) {
-    int y = (int)(k * 60 + off);
-    drawLine(560, y, 720, y, rgb565(24, 28, 38), false);
-  }
-  drawTitleEffects();
+  drawTitleScene();                          // NUCLEAR MISSION's launch (and now and then a landing) behind it all
+  gfxClipAll();
   // the name, in big vector letters with a glow behind (now and then reality glitches: it splits red and cyan)
   const char *w1 = "QUANTUM", *w2 = "LOCKDOWN";
   float pulse = 0.5f + 0.5f * sinf(clockT * 2.0f);
@@ -12558,7 +12710,8 @@ static void drawTitle() {
   }
   drawVectorTextW(w1, SCREEN_W / 2, ty1, ts, main, 3.4f);
   drawVectorTextW(w2, SCREEN_W / 2, ty2, ts, main, 3.4f);
-  // the panel: the mission objectives, then the high scores, 15 seconds each
+  // the panel: the mission objectives, then the high scores, 15 seconds each (on a dark band, over the scene)
+  blendRect(150, TPANEL_Y0 - 14, SCREEN_W - 151, TPANEL_Y0 + 336, 0, 0, 0, 0.55f);
   float cyc = fmodf(titleT, TITLE_CYCLE);
   if (cyc < TITLE_STORY) drawTitleObjectives(cyc);
   else drawTitleScores(cyc - TITLE_STORY);
@@ -12623,6 +12776,9 @@ static void newGame() {
 static void goToTitle() {
   onTitle = true;
   titleT = 0;
+  launchOn = false;                          // (the title's own launches, from the first)
+  launchQueued = 0;
+  titleLaunches = 0;
   tuneWanted.store(3, std::memory_order_relaxed);   // (the title's tune, from the top)
   titleFromStart.store(true);
 }
@@ -12664,6 +12820,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
 
   if (onTitle) {
     titleT += dt;
+    updateTitleScene(dt);
     tuneWanted.store(3, std::memory_order_relaxed);
     if (pressed & BTN_JUMP) {
       newGame();
