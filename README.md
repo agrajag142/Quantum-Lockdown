@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 058: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 059: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -388,7 +388,8 @@ on the left walkway by the call buttons. When the car stops at his level he
 starts, and runs for the end of the walkway, where he cowers. He's slower
 than you: get close and press **X** to knock him out. The clock in the
 middle of the top bar becomes **BODY FOUND IN 1:00**, counting down (red;
-flashing and beeping in the last ten seconds); at zero: MISSION FAILED, the
+flashing and beeping in the last ten seconds; it comes first, the nuclear
+countdown smaller beside it - LAUNCH 4:32 / IMPACT 2:05); at zero: MISSION FAILED, the
 body was found. Then, beside him:
 
 1. **Square**: search him - his **level 1 access card** (ACCESS CARD LEVEL 1

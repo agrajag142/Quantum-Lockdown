@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "058"
+#define GAME_VERSION      "059"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -11241,11 +11241,23 @@ static void drawHud() {
   float w = vectorTextWidth(b, 2.6f);
   drawVectorText(b, 24 + w / 2, HUD_H / 2, 2.6f, rgb565(240, 240, 245), true);
   // the clock (red in the last minute, flashing in the last ten seconds)
-  if (bodyT >= 0) {                      // stage 2: the maintenance man will be found (in the bin: the mission's clock again)
+  if (bodyT >= 0) {                      // stage 2: the maintenance man will be found - first, and bigger; the nuclear countdown beside it, smaller
     int bs = (int)ceilf(bodyT);
     snprintf(b, sizeof(b), "BODY FOUND IN %d:%02d", bs / 60, bs % 60);
     bool fl = bs <= 10 && fmodf(clockT, 0.5f) < 0.25f;
-    drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 2.8f, fl ? rgb565(120, 30, 24) : rgb565(255, 70, 50), true);
+    bool impact = false;
+    float left = s2Countdown(&impact);
+    char n2[32];
+    if (left >= 0) {
+      int ns = (int)ceilf(left);
+      snprintf(n2, sizeof(n2), "%s %d:%02d", impact ? "IMPACT" : "LAUNCH", ns / 60, ns % 60);
+    } else {
+      snprintf(n2, sizeof(n2), "NO MISSILES LEFT");
+    }
+    float w1 = vectorTextWidth(b, 2.8f), w2 = vectorTextWidth(n2, 1.9f), x = SCREEN_W / 2 - (w1 + 40 + w2) / 2;
+    drawVectorText(b, x + w1 / 2, HUD_H / 2, 2.8f, fl ? rgb565(120, 30, 24) : rgb565(255, 70, 50), true);
+    fillRect((int)(x + w1 + 19), HUD_H / 2 - 10, (int)(x + w1 + 20), HUD_H / 2 + 10, rgb565(90, 100, 120));
+    drawVectorText(n2, x + w1 + 40 + w2 / 2, HUD_H / 2, 1.9f, left < 0 ? rgb565(100, 240, 140) : left <= 60 ? rgb565(255, 90, 70) : rgb565(255, 190, 70), false);
   } else {
   bool impact = false;
   float left = stage == 2 ? s2Countdown(&impact) : timeLeft;
