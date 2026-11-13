@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "057"
+#define GAME_VERSION      "058"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -906,6 +906,7 @@ static float warnT = 9;                // seconds since that alert (the lights f
 // What happened this game (for the end of game bonuses), and the bonuses
 static int nShocks = 0, nDroneHits = 0, nPitFalls = 0, nCaught = 0, nKitsUsed = 0;
 #define BONUS_LINES 6
+#define MISSILE_BONUS 5000                   // stage 2's end: each missile stopped (a server room) or destroyed (self destruct)
 static long bonusPts[BONUS_LINES];
 static long bonusTotal = 0;
 // The high scores
@@ -6065,6 +6066,7 @@ static void resetHazardsForEntry(bool fromLeft) {
 }
 
 static void computeBonuses();
+static float s2Countdown(bool *impact);
 
 static void enterRoom(int idx, bool fromLeft) {
   mode = MODE_ROOM;
@@ -6416,6 +6418,12 @@ static void computeBonuses() {
   int mins = timeLeft > 0 ? (int)(timeLeft / 60) : 0;
   bonusPts[0] = (long)mins * BONUS_PER_MINUTE;
   bonusPts[1] = nShocks == 0 ? BONUS_CLEAN : 0;
+  if (stage == 2 && scene != SC_STAGE_CLEAR) {   // stage 2's end: each missile stopped or destroyed, 5000 (no time, no electrocution)
+    int n = 0;
+    for (int i = 0; i < NUKE_SITES; i++) n += prevented[i] || nukeDestroyed[i];
+    bonusPts[0] = (long)n * MISSILE_BONUS;
+    bonusPts[1] = 0;
+  }
   bonusPts[2] = nDroneHits == 0 ? BONUS_CLEAN : 0;
   bonusPts[3] = nPitFalls == 0 ? BONUS_CLEAN : 0;
   bonusPts[4] = nCaught == 0 ? BONUS_CLEAN : 0;
@@ -6427,9 +6435,19 @@ static void computeBonuses() {
 }
 
 // Time off the clock (the electrified floor, a pit), with a message
+static void s2Penalty(float secs);
 static void loseTime(int secs, const char *what) {
-  timeLeft -= secs;
   char b[64];
+  if (stage == 2) {                          // stage 2: no clock of his own - the next launch (or impact) comes sooner
+    bool impact;
+    float left = s2Countdown(&impact);
+    s2Penalty((float)secs);
+    if (left >= 0) snprintf(b, sizeof(b), "%s  %s -%d SECONDS", what, impact ? "IMPACT" : "LAUNCH", secs);
+    else snprintf(b, sizeof(b), "%s", what);
+    showMsg(b, 2.6f);
+    return;
+  }
+  timeLeft -= secs;
   snprintf(b, sizeof(b), "%s  -%d SECONDS", what, secs);
   showMsg(b, 2.6f);
   if (timeLeft <= 0) {
@@ -7371,13 +7389,52 @@ static bool inFlight(int i) { return i < sitesLaunched && !prevented[i] && !nuke
 static int cityOfSite(int i) { return landCity[i]; }
 static uint32_t deathsSoFar() { return deathTotal; }
 
+// STAGE 2's countdown (the clock at the top): to the next launch; with none left to come, to the next impact.
+// -1: nothing left (every launch made or stopped, nothing in the air). *impact: which it is.
+static float s2Countdown(bool *impact) {
+  *impact = false;
+  bool launching = sitesHacked == NUKE_SITES || lockdown;
+  int next = sitesLaunched;
+  while (next < NUKE_SITES && prevented[next]) next++;
+  if (!launching && next < NUKE_SITES) {     // still hacking: the rest of the hacking, then the first launch's countdown
+    float t = hackSecs[sitesHacked] - hackT;
+    for (int j = sitesHacked + 1; j < NUKE_SITES; j++) t += hackSecs[j];
+    return t + LAUNCH_MINUTES[next] * 60;
+  }
+  if (launching && next < sitesHacked) return LAUNCH_MINUTES[next] * 60 - (next == sitesLaunched ? launchT : 0);
+  float best = -1;
+  for (int i = 0; i < NUKE_SITES; i++)
+    if (inFlight(i) && (best < 0 || landLeft[i] < best)) best = landLeft[i];
+  *impact = best >= 0;
+  return best;
+}
+// A penalty in stage 2: the countdown at the top, 30 seconds sooner (whatever it's counting to)
+static void s2Penalty(float secs) {
+  bool impact;
+  float left = s2Countdown(&impact);
+  if (left < 0) return;
+  bool launching = sitesHacked == NUKE_SITES || lockdown;
+  if (impact) {                              // the next to land
+    int soon = -1;
+    for (int i = 0; i < NUKE_SITES; i++)
+      if (inFlight(i) && (soon < 0 || landLeft[i] < landLeft[soon])) soon = i;
+    if (soon >= 0) landLeft[soon] = fmaxf(0.5f, landLeft[soon] - secs);
+  } else if (launching) {                    // the next launch
+    int next = sitesLaunched;
+    while (next < NUKE_SITES && prevented[next]) next++;
+    if (next == sitesLaunched) launchT = fminf(launchT + secs, LAUNCH_MINUTES[next] * 60 - 0.5f);
+  } else {                                   // still hacking: the hack under way (what's over carries on)
+    hackT += secs;
+  }
+}
+
 // The launch sites: hacking, launching, landing (in play time)
 static void updateNukes(float dt) {
   char b[64];
   if (!lockdown && sitesHacked < NUKE_SITES) {
     hackT += dt;
     if (hackT >= hackSecs[sitesHacked]) {
-      hackT = 0;
+      hackT = stage == 2 ? hackT - hackSecs[sitesHacked] : 0;   // (stage 2: a penalty past its end carries on)
       snprintf(b, sizeof(b), "%s HACKED", siteName[sitesHacked]);
       flyerAdd(b);
       sfxPlay(SFX_TICK24);
@@ -7416,7 +7473,9 @@ static void updateNukes(float dt) {
   }
   bool anyDestroyed = false;
   for (int i = 0; i < NUKE_SITES; i++) anyDestroyed |= nukeDestroyed[i];
-  if (launching && flown > 0 && sitesLaunched == sitesHacked && landed == flown && !launchOn && gameOver == END_NONE && !anyDestroyed) endGame(END_NUKES);   // (once the last strike's scene is over)
+  (void)anyDestroyed;                        // (they landing is no longer the end: stage 2 ends with his health, or Dr. Voss)
+  (void)flown;
+  (void)landed;
   checkAllStopped();
 }
 
@@ -8035,8 +8094,6 @@ static void npcKilled(int i, bool shot) {
   npcPersist(i);
   sfxPlay(SFX_HIT);
   addScore(500, n.x, n.y - 170 * n.scale);
-  timeLeft += KILL_TIME_BONUS;             // (each one he kills: 5 more minutes)
-  showMsg("+5:00 ON THE CLOCK", 2.0f);
   susp = 0;
   suspT = 0;
   if (n.kind == PK_PROFESSOR && bossDeadT < 0) {   // THE PROFESSOR: the end of the game (once he's down)
@@ -10296,7 +10353,8 @@ static void updateCameras(float dt) {
       if (c.movingT >= CAM_REACT) {    // CAUGHT
         c.view = 2;
         nCaught++;
-        timeLeft -= CAM_PENALTY;
+        if (stage == 2) { s2Penalty(CAM_PENALTY); timeLeft = 1; }   // (stage 2: the next launch or impact, sooner)
+        else timeLeft -= CAM_PENALTY;
         if (timeLeft <= 0) {
           timeLeft = 0;
           endGame(END_TIME);
@@ -11189,10 +11247,24 @@ static void drawHud() {
     bool fl = bs <= 10 && fmodf(clockT, 0.5f) < 0.25f;
     drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 2.8f, fl ? rgb565(120, 30, 24) : rgb565(255, 70, 50), true);
   } else {
-  int secs = (int)ceilf(timeLeft > 0 ? timeLeft : 0);
+  bool impact = false;
+  float left = stage == 2 ? s2Countdown(&impact) : timeLeft;
+  if (stage == 2 && left < 0) {
+    drawVectorText("NO MISSILES LEFT", SCREEN_W / 2, HUD_H / 2, 2.6f, rgb565(100, 240, 140), true);
+  } else {
+  int secs = (int)ceilf(left > 0 ? left : 0);
   snprintf(b, sizeof(b), "%d:%02d", secs / 60, secs % 60);
   bool lastMin = secs <= 60, flash = secs <= 10 && fmodf(clockT, 0.5f) < 0.25f;
-  drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 3.2f, flash ? rgb565(120, 30, 24) : (lastMin ? rgb565(255, 70, 50) : rgb565(255, 190, 70)), true);
+  uint16_t tc = flash ? rgb565(120, 30, 24) : (lastMin ? rgb565(255, 70, 50) : rgb565(255, 190, 70));
+  if (stage == 2) {                          // NUCLEAR LAUNCH 4:32 / NUCLEAR IMPACT 2:05
+    const char *lab = impact ? "NUCLEAR IMPACT" : "NUCLEAR LAUNCH";
+    float w1 = vectorTextWidth(lab, 2.2f), w2 = vectorTextWidth(b, 3.2f), x = SCREEN_W / 2 - (w1 + 16 + w2) / 2;
+    drawVectorText(lab, x + w1 / 2, HUD_H / 2, 2.2f, impact ? rgb565(255, 90, 70) : rgb565(255, 190, 70), true);
+    drawVectorText(b, x + w1 + 16 + w2 / 2, HUD_H / 2, 3.2f, tc, true);
+  } else {
+    drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 3.2f, tc, true);
+  }
+  }
   }
   // the health bar
   int hx1 = SCREEN_W - 26, hx0 = hx1 - 200, hy0 = HUD_H / 2 - 8, hy1 = HUD_H / 2 + 8;
@@ -11850,13 +11922,22 @@ static void drawGameOver() {
   // the end of game bonuses, one line at a time
   char b[80];
   int mins = (int)(bonusPts[0] / BONUS_PER_MINUTE);
+  bool s2End = stage == 2 && scene != SC_STAGE_CLEAR;   // (stage 2: the missiles line, no electrocution line)
   const char *what[BONUS_LINES] = { "", "NO ELECTROCUTION", "NO DRONE HITS", "NO FALLS DOWN PITS", "NEVER CAUGHT ON CAMERA", "NO FIRST AID USED" };
   drawVectorText(scene == SC_STAGE_CLEAR ? "STAGE 1 BONUS" : "END OF GAME BONUS", SCREEN_W / 2, 236, 2.6f, rgb565(255, 190, 70), true);
-  for (int i = 0; i < BONUS_LINES; i++) {
-    if (gameOverT < 0.6f + i * 0.2f) break;
-    if (i == 0) snprintf(b, sizeof(b), "TIME LEFT  %d MINUTE%s X %d", mins, mins == 1 ? "" : "S", BONUS_PER_MINUTE);
-    else snprintf(b, sizeof(b), "%s", what[i]);
-    float y = 272 + i * 30;
+  for (int i = 0, row = 0; i < BONUS_LINES; i++) {
+    if (s2End && i == 1) continue;           // (no electrocution in stage 2)
+    if (gameOverT < 0.6f + row * 0.2f) break;
+    if (i == 0 && s2End) {
+      long n = bonusPts[0] / MISSILE_BONUS;
+      snprintf(b, sizeof(b), "MISSILES STOPPED  %ld X %d", n, MISSILE_BONUS);
+    } else if (i == 0) {
+      snprintf(b, sizeof(b), "TIME LEFT  %d MINUTE%s X %d", mins, mins == 1 ? "" : "S", BONUS_PER_MINUTE);
+    } else {
+      snprintf(b, sizeof(b), "%s", what[i]);
+    }
+    float y = 272 + row * 30;
+    row++;
     bool got = bonusPts[i] > 0;
     uint16_t c = got ? rgb565(230, 236, 245) : rgb565(110, 116, 130);
     drawVectorText(b, 360 + vectorTextWidth(b, 2.3f) / 2, y, 2.3f, c, false);
@@ -12142,10 +12223,11 @@ static void drawStage2Brief() {
   drawRectOutline(x0, y0, x1, y1, rgb565(90, 200, 255), 3);
   fillRect(x0 + 3, y0 + 3, x1 - 3, y0 + 64, rgb565(10, 40, 70));
   drawVectorTextW("STAGE 2", SCREEN_W / 2, y0 + 34, 5.0f, rgb565(120, 220, 255), 2.6f);
-  drawVectorText("GET TO THE QUANTUM LAB", SCREEN_W / 2, y0 + 112, 4.0f, rgb565(230, 236, 245), true);
-  drawVectorText("AND DISABLE THE QUANTUM CORE", SCREEN_W / 2, y0 + 162, 3.4f, rgb565(255, 90, 70), true);
+  drawVectorText("STOP THE NUCLEAR LAUNCHES", SCREEN_W / 2, y0 + 100, 3.4f, rgb565(230, 236, 245), true);
+  drawVectorText("DESTROY THE MISSILES IN FLIGHT", SCREEN_W / 2, y0 + 146, 3.4f, rgb565(230, 236, 245), true);
+  drawVectorText("FIND AND ELIMINATE DR. VOSS", SCREEN_W / 2, y0 + 192, 3.4f, rgb565(255, 90, 70), true);
   // the quantum core: a glowing heart in its orbits
-  float qx = SCREEN_W / 2, qy = y0 + 320, t = clockT;
+  float qx = SCREEN_W / 2, qy = y0 + 330, t = clockT;
   glowDisc(qx, qy, 120, 40, 120, 255, 0.35f);
   fillCircle((int)qx, (int)qy, 26, rgb565(150, 220, 255));
   fillCircle((int)qx, (int)qy, 16, rgb565(240, 250, 255));
@@ -12929,8 +13011,13 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
         drainT -= HEALTH_DRAIN_SECONDS;
         hurt(1);
       }
-      timeLeft -= dt;
+      if (stage != 2) timeLeft -= dt;
       updateNukes(dt);
+      if (stage == 2) {                      // (the countdown: the next launch, else the next impact)
+        bool impact;
+        float left = s2Countdown(&impact);
+        timeLeft = left >= 0 ? left : 999;
+      }
       updateHealthAlerts(dt);
       updateFlyers(dt);
       updateLaunchScene(dt);
@@ -12944,7 +13031,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
         }
       }
       warnT += dt;
-      if (timeLeft <= 0) {
+      if (timeLeft <= 0 && stage != 2) {
         timeLeft = 0;
         endGame(END_TIME);
       }

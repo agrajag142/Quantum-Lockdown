@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 057: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 058: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -195,8 +195,8 @@ stages:
    Seoul, South Korea 1.5-2.5 million. (Launches and landings that happen while
    one is playing wait their turn; the game ends after the last one's scene.)
 
-When every launched missile has landed: MISSION FAILED - THE NUCLEAR MISSILES
-HAVE LANDED. Each change is announced without stopping the game: red words
+When every launched missile has landed, the game goes on (stage 2 ends only
+when his health runs out, or with Dr. Voss dead). Each change is announced without stopping the game: red words
 (NORTH ATLANTIC HACKED, ... LAUNCHED, ... IMPACT) come out of the middle of
 the screen, small and faint, and fly at you, growing huge as they fade
 away (2.6 seconds), while you carry on playing. A hack sounds like a heavy
@@ -313,8 +313,9 @@ Going in ends stage 1:
 1. **STAGE 1 COMPLETE**: the stage 1 bonus, worked out as at the end of the
    game (minutes left x 500, 1000 each for no electrocution, drone hits, pit
    falls, camera catches, first aid). The incidents are then counted afresh
-   for stage 2, and stage 2's countdown starts again at 15:00.
-2. **STAGE 2**: GET TO THE QUANTUM LAB AND DISABLE THE QUANTUM CORE (and
+   for stage 2. Stage 2 has no clock of its own (see **Stage 2's countdown**).
+2. **STAGE 2**: STOP THE NUCLEAR LAUNCHES, DESTROY THE MISSILES IN FLIGHT,
+   FIND AND ELIMINATE DR. VOSS (and
    `assets/stage2.mod` starts, if STAGE MUSIC is on). X to play.
 3. **The station** (after the picture: QUANTUMLOOP TRANSPORT SYSTEM, the
    departure board, benches, the portal and the transport's tube): the
@@ -560,7 +561,7 @@ anyone). **Search the case and the QX-9 is yours** (EXPERIMENTAL GUN FOUND): it
 replaces your knife or pistol (one weapon at a time; you won't swap it for
 either again). Fire it like the pistol (R1 / R2, or Square with someone in
 line): a blue bolt. **Each hit halves someone's size** - shot twice they're a
-quarter size and gone (a kill: +5:00, as any) - but **1 shot in 10 doubles them
+quarter size and gone (a kill: 500 points, as any) - but **1 shot in 10 doubles them
 instead** (up to 4 times the size). It works on the door guard's vest too.
 
 **The TEST CHAMBER**: a basic room to try the QX-9 out in - a TEST CHAMBER sign,
@@ -652,8 +653,24 @@ comes down from the ceiling on the far side (GUNFIRE HEARD - SECURITY DRONE
 DISPATCHED), hovers for 5 seconds, then scans for him like any drone. It stays
 in that room. Kill them all with the knife and no drone comes.
 
-**Each person he kills** (knife or pistol) puts **5 minutes** back on the
-clock (+5:00 ON THE CLOCK).
+**Each person he kills** (knife, pistol, QX-9, FX-5) is worth **500 points**
+(no time: stage 2 has no clock of its own).
+
+**Stage 2's countdown.** The clock at the top of the screen counts down to the
+**next launch** - NUCLEAR LAUNCH 4:32 (while sites are still being hacked, that
+includes the rest of the hacking) - and, once there are no launches left to
+come, to the **next impact** - NUCLEAR IMPACT 2:05. With nothing left to
+launch or land: NO MISSILES LEFT. Red in its last minute, an alert every ten
+seconds, flashing in the last ten. It never ends the game: **stage 2 ends only
+when health reaches zero** (or with Dr. Voss dead). **The penalties** that cost
+30 seconds - recognised, shot by a guard, caught on camera, down a pit - now
+take 30 seconds off that countdown (the next launch or impact comes sooner:
+"RECOGNISED!  LAUNCH -30 SECONDS").
+
+**Stage 2's end of game bonus**: **5000 for each missile stopped** (a server
+room terminal) **or destroyed** (the self destruct code), and 1000 each for no
+drone hits, no falls down pits, never caught on camera, no first aid used (no
+time left bonus, no electrocution bonus).
 
 **One weapon at a time**: he keeps the stronger. Finding the pistol drops the
 knife (KNIFE DROPPED - ONE WEAPON AT A TIME); finding the knife with the
@@ -710,7 +727,7 @@ cupboard and a desk: **the ACCESS CARD LEVEL 5** is in one of the four.
 When the last missile is dealt with and at least one was destroyed:
 **CONGRATULATIONS - YOU HAVE STOPPED ALL THE NUCLEAR MISSILES** (none
 landed) or **YOU HAVE DONE THE BEST YOU COULD** (some did), and you carry on.
-(If none were destroyed and they all land, it's still MISSION FAILED.)
+(If none were destroyed and they all land, the game goes on: NO MISSILES LEFT.)
 
 **Lift F: DR. VOSS** (the Professor) - the end. His office (DR. VOSS on the sign) (a world map screen,
 bookshelves, his desk, a globe) and him: a black coat, wild white hair,
