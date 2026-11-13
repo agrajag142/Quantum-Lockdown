@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 061: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 062: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -778,7 +778,8 @@ its dead appearing one by one, then the **TOTAL DEAD** - PRESS X - then the
 usual bonus and score page over the burning city, and X again to the high
 scores. Dying in stage 1 is all 5 cities; in stage 2, every missile not
 stopped or destroyed (launched or not, landed or not) is on the list. If none
-landed and **Dr. Voss is dead**: **MISSION SUCCESS** over green hills, a
+landed: green hills (with **Dr. Voss dead**, **MISSION SUCCESS**; out of
+health, GAME OVER - with NO NUCLEAR MISSILES LANDED under it) - a
 forest, a meadow of flowers swaying, clouds drifting and birds flying across
 (NO NUCLEAR MISSILES LANDED - THE WORLD IS SAFE), with the bonus and score.
 

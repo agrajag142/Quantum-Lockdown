@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "061"
+#define GAME_VERSION      "062"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -11985,7 +11985,7 @@ static void drawStrikesPage(float t) {
   }
 }
 static void goChoose(int why) {               // (at the end: which background)
-  goBg = finalHits > 0 ? GB_NUKE : (why == END_WIN ? GB_PEACE : GB_NONE);
+  goBg = finalHits > 0 ? GB_NUKE : GB_PEACE;   // (none landed: the green hills, however it ended)
   goPage = 0;
   goPageT0 = 0;
   goSceneOn = false;
