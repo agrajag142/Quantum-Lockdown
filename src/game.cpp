@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "059"
+#define GAME_VERSION      "060"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -12833,6 +12833,8 @@ static void drawTitle() {
 
 // A new game: a new complex, him in the car of shaft A at its top stop
 static void newGame() {
+  stage = 1;                                 // (first: the layout and the first lift stop are stage 1's, even after a game that ended in stage 2)
+  scene = SC_NONE;
   layOut(layoutSeed * 7919u + 13u + (uint32_t)(clockT * 1000.0f));
   enterShaft(START_SHAFT, topStop(START_SHAFT), true);
   // the opening: the duct is over the catwalk between the lift and the door to the first room
