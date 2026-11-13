@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "065"
+#define GAME_VERSION      "066"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -358,6 +358,21 @@ static bool simOn = false;                   // at the CODE ROOM's terminal, pla
 static int simState = 0, simRound = 0, simPos = 0, simLit = -1, simCurX = 3, simCurY = 2;
 static int simSeq[8];
 static float simT = 0, simLitT = 0;
+// ---- the STORE ROOM's robot (Impossible Mission's, a dumb one): it rolls left and right along one of the room's
+// three levels (chosen each game), and zaps him with an arc if he's in front of it within its reach - the live
+// floor's penalty. Short enough to somersault over; it can't be destroyed.
+static int s2RobotLevel = 0;
+#define ROB_HALF 30                          // (half its width)
+#define ROB_REACH 70.0f                      // its arc's reach, from its prongs
+#define ROB_MARGIN 14.0f                     // (and a little more)
+#define ROB_SPEED 72.0f
+#define ROB_WARN 0.35f                       // the prongs crackle, then the arc
+#define ROB_ARC 0.28f
+#define ROB_COOL 1.5f
+#define ROB_TURN 0.6f                        // (a pause at each end)
+static bool robOn = false;
+static float robX, robY, robX0, robX1, robWarnT = -1, robArcT = 0, robCool = 0, robTurnT = 0, robRoll = 0;
+static int robDir = 1;
 static void paintArmory2();
 static void arenaEnter(bool fromLeft);
 static int s2HazCard = 0;                    // (hazardous storage: which of its 6 things has the level 4 card)
@@ -690,6 +705,7 @@ static void layOutStage2() {
   for (int k = 0; k < 2; k++) { s2NpcScale[s2Room[4][0]][k] = 2; s2NpcScale[s2Room[4][1]][k] = 2; }   // (their soldiers, twice the size)
   s2NpcScale[s2Room[5][0]][0] = 2;
   s2DestructCard = 1 + rnd(4);
+  s2RobotLevel = rnd(3);                     // (the store room's robot: on the floor, the middle or the top)
   s2NukeCode = false;
   bossDeadT = -1;
   congratsT = 0;
@@ -6268,6 +6284,17 @@ static void enterRoom(int idx, bool fromLeft) {
   s2Recog = false;
   for (int k = 0; k < 4; k++) gShots[k].on = false;
   simOn = false;
+  robOn = stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_STORE;
+  if (robOn) {                               // the robot: its level, its run, starting at the far end from him
+    static const float ys[3] = { ROOM_FLOOR_Y, STORE_MID_Y, STORE_TOP_Y };
+    robY = ys[s2RobotLevel];
+    robX0 = s2RobotLevel == 0 ? 220.0f : 60.0f;
+    robX1 = s2RobotLevel == 0 ? 1000.0f : 1020.0f;
+    robX = fromLeft ? robX1 : robX0;
+    robDir = fromLeft ? -1 : 1;
+    robWarnT = -1;
+    robArcT = robCool = robTurnT = 0;
+  }
   auto addNpc = [&](uint8_t kind, float y, float a, float b, float start) {
     Npc &n = npcs[npcCount++];
     n.kind = kind;
@@ -9909,8 +9936,110 @@ static int atGuardBody() {
 }
 
 // Each frame of play in stage 2
+static bool robSees() {                      // him: on its level, in front of it, within its reach (and a little)
+  if (fabsf(agY - robY) > 4 || agState == ST_JUMP || agState == ST_KO || agState == ST_CAUGHT || agState == ST_SHOCK) return false;
+  float d = (agX - robX) * robDir;
+  return d > 0 && d < ROB_HALF + ROB_REACH + ROB_MARGIN + 18;
+}
+static void robZap() {                       // got him: the live floor's jolt (then 10 health, 30 seconds, the door)
+  sfxPlay(SFX_ZAP);
+  showMsg("ZAPPED BY THE ROBOT!", 1.6f);
+  setState(ST_SHOCK, 0.05f);
+}
+static void updateRobot(float dt) {
+  if (!robOn || gameOver != END_NONE) return;
+  if (robArcT > 0) robArcT -= dt;
+  if (robCool > 0) robCool -= dt;
+  if (robWarnT >= 0) {                       // crackling: then the arc
+    robWarnT += dt;
+    if (robWarnT >= ROB_WARN) {
+      robWarnT = -1;
+      robArcT = ROB_ARC;
+      robCool = ROB_COOL;
+      sfxPlay(SFX_ZAP);
+      if (robSees()) robZap();
+    }
+    return;
+  }
+  if (robArcT > 0 && robSees()) { robArcT = 0; robZap(); return; }   // (walked into the arc)
+  if (robCool <= 0 && robSees()) {           // in front of it: stop, crackle
+    robWarnT = 0;
+    sfxPlay(SFX_BUZZ);
+    return;
+  }
+  bool touching = fabsf(agY - robY) <= 4 && fabsf(agX - robX) < ROB_HALF + 14 && agState != ST_JUMP && agState != ST_KO &&
+                  agState != ST_CAUGHT && agState != ST_SHOCK;
+  if (touching && robCool <= 0) { robCool = ROB_COOL; robArcT = ROB_ARC; robZap(); return; }   // (touching it)
+  if (robTurnT > 0) {                        // turning round at the end of its run
+    robTurnT -= dt;
+    if (robTurnT <= 0) robDir = -robDir;
+    return;
+  }
+  robX += robDir * ROB_SPEED * dt;
+  robRoll += ROB_SPEED * dt;
+  if ((robDir > 0 && robX >= robX1) || (robDir < 0 && robX <= robX0)) {
+    robX = clampv(robX, robX0, robX1);
+    robTurnT = ROB_TURN;
+  }
+}
+static void drawRobot() {
+  if (!robOn) return;
+  float x = robX, y = robY;
+  int d = robDir;
+  uint16_t dark = rgb565(40, 44, 52), metal = rgb565(96, 102, 116), light = rgb565(150, 156, 170);
+  // the base: a track on three wheels
+  fillRect((int)x - ROB_HALF, (int)y - 16, (int)x + ROB_HALF, (int)y - 1, dark);
+  fillCircle((int)x - ROB_HALF, (int)y - 8, 8, dark);
+  fillCircle((int)x + ROB_HALF, (int)y - 8, 8, dark);
+  for (int w = -1; w <= 1; w++) {
+    float wx = x + w * 22, a = robRoll / 7.0f * d;
+    fillCircle((int)wx, (int)y - 8, 6, rgb565(70, 74, 84));
+    drawLineF(wx - cosf(a) * 5, y - 8 - sinf(a) * 5, wx + cosf(a) * 5, y - 8 + sinf(a) * 5, light, 1.5f);
+  }
+  // the antenna, its light blinking; the dome head; the body
+  drawLineF(x - d * 6.0f, y - 56, x - d * 10.0f, y - 74, light, 2.0f);
+  fillCircle((int)(x - d * 10), (int)y - 75, 3, (int)(clockT * 3) & 1 ? rgb565(255, 60, 40) : rgb565(110, 30, 24));
+  fillCircle((int)x, (int)y - 38, 20, light);
+  fillCircle((int)x - 6, (int)y - 46, 6, rgb565(200, 206, 218));
+  fillRect((int)x - 24, (int)y - 38, (int)x + 24, (int)y - 16, metal);
+  fillRect((int)x - 24, (int)y - 38, (int)x + 24, (int)y - 35, light);
+  for (int g = 0; g < 4; g++) fillRect((int)x - 16 + g * 8, (int)y - 30, (int)x - 12 + g * 8, (int)y - 21, dark);
+  // the visor: a red slit, its eye sweeping across
+  int vx0 = (int)x + (d > 0 ? -4 : -16), vx1 = vx0 + 20;
+  fillRect(vx0, (int)y - 50, vx1, (int)y - 44, rgb565(60, 10, 10));
+  float ex = x + d * 6 + sinf(clockT * 4) * 6;
+  glowDisc(ex, y - 47, 8, 255, 40, 30, 0.6f);
+  fillRect((int)ex - 2, (int)y - 49, (int)ex + 2, (int)y - 45, rgb565(255, 90, 70));
+  // the prongs
+  for (int pr = 0; pr < 2; pr++) {
+    float py = y - 32 + pr * 9;
+    drawLineF(x + d * 24.0f, py, x + d * 36.0f, py, rgb565(180, 186, 196), 3.0f);
+    fillCircle((int)(x + d * 37), (int)py, 2, rgb565(220, 230, 255));
+  }
+  float tipX = x + d * 38.0f, tipY = y - 27;
+  if (robWarnT >= 0) {                       // crackling
+    float k = robWarnT / ROB_WARN;
+    glowDisc(tipX, tipY, 10 + 14 * k, 140, 200, 255, 0.5f + 0.4f * fxRnd(0, 2));
+    for (int sp = 0; sp < 3; sp++)
+      drawLineF(tipX, tipY, tipX + frnd(-12, 12), tipY + frnd(-12, 12), rgb565(220, 240, 255), 1.5f);
+  }
+  if (robArcT > 0) {                         // the arc: two jagged strands out to its reach
+    for (int strand = 0; strand < 2; strand++) {
+      float px = tipX, py = tipY;
+      for (int sg = 1; sg <= 8; sg++) {
+        float nx = tipX + d * ROB_REACH * sg / 8.0f, ny = tipY + (sg < 8 ? frnd(-11, 11) : frnd(-4, 4));
+        drawLineF(px, py, nx, ny, strand ? rgb565(160, 210, 255) : rgb565(240, 250, 255), strand ? 3.0f : 1.6f);
+        px = nx;
+        py = ny;
+      }
+    }
+    glowDisc(tipX + d * ROB_REACH * 0.5f, tipY, ROB_REACH * 0.7f, 120, 190, 255, 0.35f);
+  }
+}
+
 static void updateStage2(float dt) {
   if (s2BumpT > 0) s2BumpT -= dt;
+  if (mode == MODE_ROOM) updateRobot(dt);
   if (congratsT > 0 && !termOn) congratsT -= dt;
   if (bossDeadT >= 0 && gameOver == END_NONE && (bossDeadT += dt) > 2.5f) endGame(END_WIN);   // THE PROFESSOR down: the end
   if (simState == SIM_WON) simT += dt;
@@ -13429,6 +13558,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (curRoom == CONTROL_ROOM) drawControlRoomAnim();
     if (stage == 2 && curRoom < S2_ROOMS) {
       drawLabRoomBack();
+      drawRobot();
       drawNpcs();
       drawLabRoomFront();
     }

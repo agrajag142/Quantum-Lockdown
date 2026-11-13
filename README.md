@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 065: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 066: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -438,6 +438,17 @@ him: ACCESS CARD LEVEL 2 FOUND).
 with variety - tall cupboards, grey double-door cabinets, lockers, racks of
 boxes, tins, sacks and jars, crates, a shrink-wrapped pallet, a wooden
 cupboard, stacks of boxes. Nobody in it: 16 things to search.
+**The robot** (Impossible Mission's, a dumb one): squat - a dome head with a
+red visor, its eye sweeping, an antenna, two prongs, on a track - and short
+enough to **somersault over**. Each game it's on one of the three levels (the
+floor, the middle or the top), rolling left and right along it, pausing to
+turn at each end. It only looks the way it's facing: if you're on its level,
+in front of it and within its reach (70, and a little more), it stops, its
+prongs crackle (0.35 seconds) and an **electric arc** jumps out to its reach.
+Caught by it - or touching it - is the live floor's penalty: ZAPPED BY THE
+ROBOT!, the jolt, then ELECTROCUTED! (10 health, and 30 seconds off the
+nuclear countdown), and you wake at the door. Then it rests 1.5 seconds
+before it can fire again. It can't be destroyed.
 
 **Lift B's rooms** (access level 2): its five rooms, at random levels, are the
 clone lab, the super soldier lab, the server room, QUANTUM LAB 1 and QUANTUM
