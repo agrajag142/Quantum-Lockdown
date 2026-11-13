@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "066"
+#define GAME_VERSION      "067"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -9704,90 +9704,212 @@ static void arPerson(float x, float y, float face, float sc, float walkT, bool w
   fillCircle((int)x, (int)y, (int)(9 * sc) + 1, head);                  // head (or helmet)
 }
 
+static void obBevel(int x0, int y0, int x1, int y1, uint16_t hi, uint16_t lo) {   // a lit top-left edge, a dark bottom-right
+  fillRect(x0, y0, x1, y0 + 2, hi);
+  fillRect(x0, y0, x0 + 2, y1, hi);
+  fillRect(x0, y1 - 2, x1, y1, lo);
+  fillRect(x1 - 2, y0, x1, y1, lo);
+}
 static void drawObstacle(const Obstacle &o) {
-  fillRect(o.x0 + 6, o.y0 + 6, o.x1 + 6, o.y1 + 6, rgb565(30, 32, 38));   // its shadow
+  blendRect(o.x0 + 4, o.y0 + 6, o.x1 + 10, o.y1 + 12, 0, 0, 0, 0.32f);   // its shadow, soft
+  blendRect(o.x0 + 2, o.y0 + 3, o.x1 + 5, o.y1 + 6, 0, 0, 0, 0.22f);
   int cx = (o.x0 + o.x1) / 2, cy = (o.y0 + o.y1) / 2;
   switch (o.kind) {
     case OB_DESK:
       fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(130, 96, 64));
-      drawRectOutline(o.x0, o.y0, o.x1, o.y1, rgb565(90, 64, 40), 2);
-      fillRect(cx - 22, o.y0 + 6, cx + 22, o.y0 + 14, rgb565(30, 32, 38));   // a monitor (from above), a keyboard
-      fillRect(cx - 18, o.y0 + 22, cx + 18, o.y0 + 32, rgb565(200, 200, 204));
-      fillRect(o.x1 - 30, o.y0 + 10, o.x1 - 12, o.y0 + 34, rgb565(236, 236, 230));
+      for (int y = o.y0 + 8; y < o.y1; y += 9) fillRect(o.x0 + 3, y, o.x1 - 3, y, rgb565(120, 88, 58));   // (the grain)
+      obBevel(o.x0, o.y0, o.x1, o.y1, rgb565(168, 128, 88), rgb565(84, 60, 38));
+      fillRect(cx - 24, o.y0 + 5, cx + 24, o.y0 + 13, rgb565(26, 28, 34));          // a monitor (from above), lit
+      fillRect(cx - 21, o.y0 + 13, cx + 21, o.y0 + 15, rgb565(80, 170, 255));
+      fillRect(cx - 18, o.y0 + 22, cx + 18, o.y0 + 32, rgb565(200, 200, 204));       // the keyboard
+      for (int k = 0; k < 3; k++) fillRect(cx - 16, o.y0 + 24 + k * 3, cx + 16, o.y0 + 24 + k * 3, rgb565(150, 150, 156));
+      fillRect(o.x1 - 32, o.y0 + 8, o.x1 - 12, o.y0 + 34, rgb565(236, 236, 230));    // papers, a mug
+      fillRect(o.x1 - 28, o.y0 + 12, o.x1 - 16, o.y0 + 12, rgb565(150, 150, 150));
+      fillCircle(o.x0 + 18, o.y0 + 22, 6, rgb565(200, 60, 50));
+      fillCircle(o.x0 + 18, o.y0 + 22, 3, rgb565(70, 40, 30));
+      arEllipse((float)cx, o.y1 + 14.0f, 14, 11, 0, rgb565(36, 38, 46));             // its chair
+      arEllipse((float)cx, o.y1 + 13.0f, 11, 8, 0, rgb565(60, 64, 76));
       break;
-    case OB_CRATE:
-      fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(170, 130, 80));
-      drawRectOutline(o.x0, o.y0, o.x1, o.y1, rgb565(110, 80, 46), 3);
-      drawLineF(o.x0 + 3, o.y0 + 3, o.x1 - 3, o.y1 - 3, rgb565(120, 88, 50), 3);
-      drawLineF(o.x1 - 3, o.y0 + 3, o.x0 + 3, o.y1 - 3, rgb565(120, 88, 50), 3);
+    case OB_CRATE: {
+      fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(176, 134, 82));
+      int w = o.x1 - o.x0;
+      for (int k = 1; k < 4; k++) fillRect(o.x0 + 3, o.y0 + k * (o.y1 - o.y0) / 4, o.x1 - 3, o.y0 + k * (o.y1 - o.y0) / 4, rgb565(140, 104, 60));   // the planks
+      drawRectOutline(o.x0, o.y0, o.x1, o.y1, rgb565(110, 80, 46), 4);
+      drawLineF(o.x0 + 4.0f, o.y0 + 4.0f, o.x1 - 4.0f, o.y1 - 4.0f, rgb565(126, 92, 52), 4);
+      obBevel(o.x0, o.y0, o.x1, o.y1, rgb565(210, 170, 110), rgb565(96, 68, 38));
+      for (int k = 0; k < 4; k++) fillCircle(k & 1 ? o.x1 - 5 : o.x0 + 5, k & 2 ? o.y1 - 5 : o.y0 + 5, 1, rgb565(70, 70, 76));   // nails
+      if (w > 60) drawVectorText("KEEP DRY", (float)cx, cy + 14.0f, 0.8f, rgb565(90, 60, 30), false);
       break;
+    }
     case OB_CABINET:
       fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(150, 156, 166));
-      drawRectOutline(o.x0, o.y0, o.x1, o.y1, rgb565(100, 106, 116), 2);
-      for (int y = o.y0 + 28; y < o.y1; y += 28) fillRect(o.x0 + 4, y, o.x1 - 4, y + 1, rgb565(100, 106, 116));
+      obBevel(o.x0, o.y0, o.x1, o.y1, rgb565(196, 202, 212), rgb565(96, 102, 112));
+      for (int y = o.y0 + 28; y < o.y1 - 6; y += 28) {
+        fillRect(o.x0 + 4, y, o.x1 - 4, y + 1, rgb565(100, 106, 116));
+        fillRect(cx - 8, y - 16, cx + 8, y - 13, rgb565(70, 74, 82));          // (a drawer's handle)
+      }
+      fillRect(o.x0 + 6, o.y0 + 4, o.x0 + 20, o.y0 + 10, rgb565(240, 236, 210));  // a label
       break;
     case OB_SOFA:
       fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(120, 40, 46));
-      fillRect(o.x0, o.y0, o.x1, o.y0 + 14, rgb565(90, 28, 34));
+      fillRect(o.x0, o.y0, o.x1, o.y0 + 14, rgb565(90, 28, 34));                  // its back
+      fillRect(o.x0, o.y0, o.x0 + 10, o.y1, rgb565(98, 30, 36));                  // its arms
+      fillRect(o.x1 - 10, o.y0, o.x1, o.y1, rgb565(98, 30, 36));
       for (int k = 0; k < 3; k++) {
-        int x0 = o.x0 + 6 + k * (o.x1 - o.x0 - 12) / 3;
-        fillRect(x0 + 2, o.y0 + 18, x0 + (o.x1 - o.x0 - 12) / 3 - 2, o.y1 - 4, rgb565(150, 54, 60));
+        int x0 = o.x0 + 12 + k * (o.x1 - o.x0 - 24) / 3, x1 = x0 + (o.x1 - o.x0 - 24) / 3 - 3;
+        fillRect(x0, o.y0 + 17, x1, o.y1 - 4, rgb565(150, 54, 60));
+        fillRect(x0, o.y0 + 17, x1, o.y0 + 19, rgb565(176, 74, 80));
+        fillCircle((x0 + x1) / 2, (o.y0 + o.y1) / 2 + 8, 1, rgb565(100, 30, 36));
       }
+      obBevel(o.x0, o.y0, o.x1, o.y1, rgb565(150, 60, 66), rgb565(70, 20, 26));
       break;
     case OB_PILLAR:
       fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(150, 150, 146));
-      drawRectOutline(o.x0, o.y0, o.x1, o.y1, rgb565(110, 110, 106), 3);
-      fillCircle(cx, cy, 8, rgb565(120, 120, 116));
+      fillRect(o.x0 + 6, o.y0 + 6, o.x1 - 6, o.y1 - 6, rgb565(170, 170, 164));     // its cap, stepped
+      obBevel(o.x0, o.y0, o.x1, o.y1, rgb565(200, 200, 194), rgb565(100, 100, 96));
+      obBevel(o.x0 + 6, o.y0 + 6, o.x1 - 6, o.y1 - 6, rgb565(206, 206, 200), rgb565(120, 120, 116));
+      glowDisc((float)cx, (float)cy, 14, 255, 240, 200, 0.25f);                    // (a lamp on top)
+      fillCircle(cx, cy, 5, rgb565(255, 244, 214));
       break;
-    default:   // a table, chairs at it
+    default:   // a table, chairs round it, a few things on it
+      for (int k = 0; k < 2; k++) {
+        arEllipse(o.x0 + 26.0f + k * 50, o.y1 + 12.0f, 13, 10, 0, rgb565(40, 44, 52));
+        arEllipse(o.x0 + 26.0f + k * 50, o.y0 - 12.0f, 13, 10, 0, rgb565(40, 44, 52));
+      }
       fillRect(o.x0, o.y0, o.x1, o.y1, rgb565(200, 204, 210));
-      drawRectOutline(o.x0, o.y0, o.x1, o.y1, rgb565(140, 146, 156), 2);
-      for (int k = 0; k < 2; k++) fillRect(o.x0 + 14 + k * 50, o.y1 + 4, o.x0 + 38 + k * 50, o.y1 + 16, rgb565(60, 64, 72));
+      obBevel(o.x0, o.y0, o.x1, o.y1, rgb565(236, 238, 242), rgb565(140, 146, 156));
+      fillCircle(o.x0 + 24, cy, 7, rgb565(240, 240, 240));                        // cups, a tray, a folder
+      fillCircle(o.x0 + 24, cy, 4, rgb565(110, 70, 40));
+      fillRect(cx - 4, o.y0 + 14, cx + 30, o.y0 + 30, rgb565(60, 110, 170));
+      fillRect(o.x1 - 26, o.y1 - 24, o.x1 - 10, o.y1 - 10, rgb565(230, 210, 120));
       break;
   }
 }
 
-static void drawArena() {
-  // the floor: tiles
-  for (int y = HUD_H; y < SCREEN_H; y += 80)
-    for (int x = 0; x < SCREEN_W; x += 80) {
-      bool alt = ((x / 80) + (y / 80)) & 1;
-      fillRect(x, y, x + 79, y + 79, alt ? rgb565(78, 82, 92) : rgb565(72, 76, 86));
-      fillRect(x, y, x + 79, y, rgb565(60, 64, 72));
-      fillRect(x, y, x, y + 79, rgb565(60, 64, 72));
+// ---- lift D's look: bevelled floor tiles (each room its own tint, vents, hazard stripes at the soldiers'
+// doors), thick walls with their tops, inner faces and shadows, door frames, pools of light, a vignette
+static uint16_t arShade(const uint8_t *c, int d) {
+  return rgb565(clampv(c[0] + d, 0, 255), clampv(c[1] + d, 0, 255), clampv(c[2] + d, 0, 255));
+}
+static void arStripes(int x0, int y0, int x1, int y1) {      // yellow and black, on the slant
+  fillRect(x0, y0, x1, y1, rgb565(30, 30, 34));
+  for (int x = x0 - (y1 - y0); x < x1; x += 22) {
+    int px[4] = { x, x + 11, x + 11 + (y1 - y0), x + (y1 - y0) }, py[4] = { y1, y1, y0, y0 };
+    for (int k = 0; k < 4; k++) px[k] = clampv(px[k], x0, x1);
+    fillPolygon(px, py, 4, rgb565(230, 186, 40));
+  }
+}
+static void drawArenaRoom() {
+  int ri = 0;
+  for (int f = 0; f < 3; f++) if (s2Room[3][f] == curRoom) ri = f;
+  static const uint8_t tint[3][3] = { { 74, 80, 94 }, { 64, 84, 86 }, { 86, 80, 72 } };   // (each room its own floor)
+  const uint8_t *tc = tint[ri];
+  // the floor: 64-unit tiles, bevelled, a few with vents
+  const int T = 64;
+  for (int y = AR_Y0; y <= AR_Y1; y += T)
+    for (int x = AR_X0; x <= AR_X1; x += T) {
+      int x1 = x + T - 1 > AR_X1 ? AR_X1 : x + T - 1, y1 = y + T - 1 > AR_Y1 ? AR_Y1 : y + T - 1;
+      int h = ((x / T) * 7 + (y / T) * 13 + (x / T) * (y / T) * 3) % 23;
+      fillRect(x, y, x1, y1, arShade(tc, (((x / T) + (y / T)) & 1) ? 4 : -2));
+      fillRect(x, y, x1, y + 1, arShade(tc, 18));
+      fillRect(x, y, x + 1, y1, arShade(tc, 12));
+      fillRect(x, y1 - 1, x1, y1, arShade(tc, -20));
+      fillRect(x1 - 1, y, x1, y1, arShade(tc, -16));
+      if (h == 5 && x1 - x > 40 && y1 - y > 40) {            // a vent
+        fillRect(x + 14, y + 14, x1 - 14, y1 - 14, arShade(tc, -34));
+        for (int v = y + 18; v < y1 - 16; v += 6) fillRect(x + 17, v, x1 - 17, v + 2, arShade(tc, -10));
+      } else if (h == 11 || h == 17) {                         // a scuff
+        fillRect(x + 20, y + 30, x + 38, y + 32, arShade(tc, -10));
+      }
     }
-  // the walls (gaps for the doors)
-  uint16_t wc = rgb565(40, 44, 52), wl = rgb565(96, 102, 116);
-  fillRect(0, HUD_H, SCREEN_W - 1, AR_Y0 - 1, wc);
-  fillRect(0, AR_Y1 + 1, SCREEN_W - 1, SCREEN_H - 1, wc);
-  fillRect(0, HUD_H, AR_X0 - 1, SCREEN_H - 1, wc);
-  fillRect(AR_X1 + 1, HUD_H, SCREEN_W - 1, SCREEN_H - 1, wc);
-  fillRect(AR_X0, AR_Y0 - 3, AR_X1, AR_Y0 - 1, wl);
-  fillRect(AR_X0 - 3, AR_Y0, AR_X0 - 1, AR_Y1, wl);
-  fillRect(AR_X1 + 1, AR_Y0, AR_X1 + 3, AR_Y1, wl);
-  fillRect(AR_X0, AR_Y1 + 1, AR_X1, AR_Y1 + 3, wl);
-  // the doors: in at the bottom left, out at the top right, the soldiers' at the top
-  fillRect(0, AR_DOOR_L0, AR_X0 + 3, AR_DOOR_L1, rgb565(72, 76, 86));
-  drawVectorText("IN", AR_X0 + 34, (AR_DOOR_L0 + AR_DOOR_L1) / 2.0f, 1.6f, rgb565(120, 220, 140), true);
+  // the floor's markings: hazard stripes inside the soldiers' doors, a mat at the IN door, a lane to the EXIT
+  arStripes(AR_SPAWN_X0 - 10, AR_Y0, AR_SPAWN_X1 + 10, AR_Y0 + 18);
+  arStripes(AR_SPAWN2_X0 - 10, AR_Y1 - 18, AR_SPAWN2_X1 + 10, AR_Y1);
+  fillRect(AR_X0, AR_DOOR_L0 + 4, AR_X0 + 40, AR_DOOR_L1 - 4, rgb565(50, 90, 60));
+  fillRect(AR_X1 - 44, AR_DOOR_R0 + 4, AR_X1, AR_DOOR_R1 - 4, rooms[curRoom].noRightDoor ? rgb565(90, 40, 36) : rgb565(50, 90, 60));
+  // pools of light from the ceiling, a lamp flickering now and then
+  static const int lx[6] = { 240, 640, 1040, 240, 640, 1040 }, ly[6] = { 220, 220, 220, 550, 550, 550 };
+  for (int k = 0; k < 6; k++) {
+    float fl = (k == 4 && fmodf(clockT, 7.0f) > 6.6f && ((int)(clockT * 20) & 1)) ? 0.03f : 0.11f;
+    glowDisc((float)lx[k], (float)ly[k], 250, 255, 244, 214, fl);
+  }
+  // the walls' shadow on the floor (top and left: the light's from the bottom right)
+  for (int k = 0; k < 4; k++) {
+    blendRect(AR_X0, AR_Y0 + k * 6, AR_X1, AR_Y0 + k * 6 + 5, 0, 0, 0, 0.30f - k * 0.07f);
+    blendRect(AR_X0 + k * 5, AR_Y0, AR_X0 + k * 5 + 4, AR_Y1, 0, 0, 0, 0.26f - k * 0.06f);
+  }
+  // the walls: their tops (panels, seams, rivets), the top wall's inner face, a lit edge
+  uint16_t wTop = rgb565(64, 68, 80), wSeam = rgb565(44, 48, 58), wEdge = rgb565(130, 138, 156), wFace = rgb565(38, 42, 50);
+  fillRect(0, HUD_H, SCREEN_W - 1, AR_Y0 - 1, wTop);
+  fillRect(0, AR_Y1 + 1, SCREEN_W - 1, SCREEN_H - 1, wTop);
+  fillRect(0, HUD_H, AR_X0 - 1, SCREEN_H - 1, wTop);
+  fillRect(AR_X1 + 1, HUD_H, SCREEN_W - 1, SCREEN_H - 1, wTop);
+  for (int x = 40; x < SCREEN_W; x += 96) {
+    fillRect(x, HUD_H, x + 1, AR_Y0 - 12, wSeam);
+    fillRect(x, AR_Y1 + 2, x + 1, SCREEN_H - 1, wSeam);
+    fillCircle(x + 8, HUD_H + 6, 1, wEdge);
+    fillCircle(x + 8, SCREEN_H - 6, 1, wEdge);
+  }
+  for (int y = AR_Y0 + 40; y < AR_Y1; y += 96) {
+    fillRect(0, y, AR_X0 - 2, y + 1, wSeam);
+    fillRect(AR_X1 + 2, y, SCREEN_W - 1, y + 1, wSeam);
+  }
+  fillRect(AR_X0, AR_Y0 - 12, AR_X1, AR_Y0 - 1, wFace);   // (the top wall's inner face: we see it from above, a little)
+  for (int x = AR_X0; x < AR_X1; x += 48) fillRect(x, AR_Y0 - 12, x, AR_Y0 - 1, rgb565(30, 33, 40));
+  fillRect(AR_X0 - 2, AR_Y0 - 13, AR_X1 + 2, AR_Y0 - 12, wEdge);
+  fillRect(AR_X0 - 2, AR_Y0, AR_X0 - 1, AR_Y1 + 2, wEdge);
+  fillRect(AR_X1 + 1, AR_Y0, AR_X1 + 2, AR_Y1 + 2, rgb565(90, 96, 110));
+  fillRect(AR_X0 - 2, AR_Y1 + 1, AR_X1 + 2, AR_Y1 + 2, rgb565(90, 96, 110));
+  // the doors: frames, the floor through them
+  auto post = [&](int x0, int y0, int x1, int y1) {
+    fillRect(x0, y0, x1, y1, rgb565(150, 158, 174));
+    drawRectOutline(x0, y0, x1, y1, rgb565(90, 96, 110), 1);
+  };
+  fillRect(0, AR_DOOR_L0, AR_X0 + 1, AR_DOOR_L1, rgb565(54, 90, 62));
+  post(0, AR_DOOR_L0 - 8, AR_X0 + 2, AR_DOOR_L0 - 1);
+  post(0, AR_DOOR_L1 + 1, AR_X0 + 2, AR_DOOR_L1 + 8);
+  drawVectorText("IN", AR_X0 + 34, (AR_DOOR_L0 + AR_DOOR_L1) / 2.0f, 1.6f, rgb565(140, 240, 160), true);
   bool sealed = rooms[curRoom].noRightDoor;
+  post(AR_X1 - 2, AR_DOOR_R0 - 8, SCREEN_W - 1, AR_DOOR_R0 - 1);
+  post(AR_X1 - 2, AR_DOOR_R1 + 1, SCREEN_W - 1, AR_DOOR_R1 + 8);
   if (!sealed) {
-    fillRect(AR_X1 - 3, AR_DOOR_R0, SCREEN_W - 1, AR_DOOR_R1, rgb565(72, 76, 86));
+    fillRect(AR_X1 - 1, AR_DOOR_R0, SCREEN_W - 1, AR_DOOR_R1, rgb565(54, 90, 62));
     float p = 0.5f + 0.5f * sinf(clockT * 4);
-    drawVectorText("EXIT", AR_X1 - 44, (AR_DOOR_R0 + AR_DOOR_R1) / 2.0f, 1.8f, rgb565((int)(140 + 100 * p), 255, (int)(140 + 100 * p)), true);
-    int ax[3] = { AR_X1 - 10, AR_X1 + 14, AR_X1 - 10 }, ay[3] = { (AR_DOOR_R0 + AR_DOOR_R1) / 2 - 14, (AR_DOOR_R0 + AR_DOOR_R1) / 2, (AR_DOOR_R0 + AR_DOOR_R1) / 2 + 14 };
+    glowDisc(AR_X1 - 10, (AR_DOOR_R0 + AR_DOOR_R1) / 2.0f, 60, 80, 255, 120, 0.12f + 0.1f * p);
+    drawVectorText("EXIT", AR_X1 - 50, (AR_DOOR_R0 + AR_DOOR_R1) / 2.0f, 1.8f, rgb565((int)(140 + 100 * p), 255, (int)(140 + 100 * p)), true);
+    int ax[3] = { AR_X1 - 6, AR_X1 + 16, AR_X1 - 6 }, ay[3] = { (AR_DOOR_R0 + AR_DOOR_R1) / 2 - 14, (AR_DOOR_R0 + AR_DOOR_R1) / 2, (AR_DOOR_R0 + AR_DOOR_R1) / 2 + 14 };
     fillPolygon(ax, ay, 3, rgb565(120, 255, 140));
   } else {
-    fillRect(AR_X1 - 3, AR_DOOR_R0, AR_X1 + 12, AR_DOOR_R1, rgb565(120, 40, 36));
-    drawVectorText("SEALED", AR_X1 - 50, (AR_DOOR_R0 + AR_DOOR_R1) / 2.0f, 1.5f, rgb565(255, 120, 100), true);
+    fillRect(AR_X1 - 1, AR_DOOR_R0, SCREEN_W - 1, AR_DOOR_R1, rgb565(110, 36, 32));
+    for (int y = AR_DOOR_R0 + 8; y < AR_DOOR_R1; y += 16) fillRect(AR_X1 + 2, y, SCREEN_W - 4, y + 3, rgb565(150, 50, 44));
+    drawVectorText("SEALED", AR_X1 - 56, (AR_DOOR_R0 + AR_DOOR_R1) / 2.0f, 1.5f, rgb565(255, 120, 100), true);
   }
-  fillRect(AR_SPAWN_X0, HUD_H, AR_SPAWN_X1, AR_Y0 + 2, rgb565(30, 30, 34));
-  fillRect(AR_SPAWN_X0 - 8, HUD_H, AR_SPAWN_X0 - 1, AR_Y0, rgb565(240, 196, 40));
-  fillRect(AR_SPAWN_X1 + 1, HUD_H, AR_SPAWN_X1 + 8, AR_Y0, rgb565(240, 196, 40));
-  fillCircle(AR_SPAWN_X1 + 24, HUD_H + 14, 6, (int)(clockT * 3) & 1 ? rgb565(255, 50, 40) : rgb565(110, 20, 20));
-  fillRect(AR_SPAWN2_X0, AR_Y1 - 2, AR_SPAWN2_X1, SCREEN_H - 1, rgb565(30, 30, 34));   // the bottom one
-  fillRect(AR_SPAWN2_X0 - 8, AR_Y1, AR_SPAWN2_X0 - 1, SCREEN_H - 1, rgb565(240, 196, 40));
-  fillRect(AR_SPAWN2_X1 + 1, AR_Y1, AR_SPAWN2_X1 + 8, SCREEN_H - 1, rgb565(240, 196, 40));
-  fillCircle(AR_SPAWN2_X1 + 24, SCREEN_H - 12, 6, (int)(clockT * 3 + 1) & 1 ? rgb565(255, 50, 40) : rgb565(110, 20, 20));
+  // the soldiers' doors: dark openings in the walls, framed, a red beacon each
+  fillRect(AR_SPAWN_X0, HUD_H, AR_SPAWN_X1, AR_Y0 - 1, rgb565(16, 16, 20));
+  post(AR_SPAWN_X0 - 10, HUD_H, AR_SPAWN_X0 - 1, AR_Y0);
+  post(AR_SPAWN_X1 + 1, HUD_H, AR_SPAWN_X1 + 10, AR_Y0);
+  fillRect(AR_SPAWN2_X0, AR_Y1 + 1, AR_SPAWN2_X1, SCREEN_H - 1, rgb565(16, 16, 20));
+  post(AR_SPAWN2_X0 - 10, AR_Y1, AR_SPAWN2_X0 - 1, SCREEN_H - 1);
+  post(AR_SPAWN2_X1 + 1, AR_Y1, AR_SPAWN2_X1 + 10, SCREEN_H - 1);
+  for (int d = 0; d < 2; d++) {
+    float bx = d ? AR_SPAWN2_X1 + 26.0f : AR_SPAWN_X1 + 26.0f, by = d ? SCREEN_H - 10.0f : HUD_H + 14.0f;
+    float a = clockT * 5 + d * 3;
+    glowDisc(bx, by, 26, 255, 40, 30, 0.18f + 0.18f * fabsf(sinf(a)));
+    fillCircle((int)bx, (int)by, 6, sinf(a) > 0 ? rgb565(255, 60, 44) : rgb565(140, 24, 20));
+  }
+}
+static void drawArenaVignette() {            // the corners darker (over the room, under the words)
+  for (int k = 0; k < 5; k++) {
+    float a = 0.10f - k * 0.02f;
+    int w = 26 + k * 24;
+    blendRect(AR_X0, AR_Y0, AR_X0 + w, AR_Y1, 0, 0, 0, a);
+    blendRect(AR_X1 - w, AR_Y0, AR_X1, AR_Y1, 0, 0, 0, a);
+    blendRect(AR_X0, AR_Y1 - w / 2, AR_X1, AR_Y1, 0, 0, 0, a);
+  }
+}
+
+static void drawArena() {
+  drawArenaRoom();
   // things in the room
   for (int i = 0; i < AR_OBS; i++) {
     drawObstacle(arObs[i]);
@@ -9853,6 +9975,7 @@ static void drawArena() {
   }
   drawFlames();
   drawArHazards();
+  drawArenaVignette();
   if (arSearchAt >= 0 && !arSearched[curRoom][arSearchAt] && arProg[arSearchAt] <= 0)   // (beside something: what Square does)
     drawVectorText("X: SEARCH", apX, apY - 46, 1.8f, rgb565(255, 230, 140), true);
   if (nothingShowT > 0)

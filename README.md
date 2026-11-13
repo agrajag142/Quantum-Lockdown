@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 066: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 067: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -595,7 +595,15 @@ lights flickering) and a workstation - **6 things to search**. **One security
 camera** pans left and right. No one works in here.
 
 **Lift D's rooms: SECURITY ZONES, seen from above** (all three, the same
-room). A different kind of play: the room from above, you walking any of 8
+room). **Their look**: bevelled floor tiles (each room its own tint -
+steel blue, teal, sand), vents and scuffs here and there, hazard stripes inside
+the soldiers' doors, green mats at the IN and EXIT doors; pools of light from
+the ceiling (one lamp flickering now and then); thick walls - panelled tops,
+seams and rivets, the top wall's inner face, their shadows on the floor -
+framed doors, a red beacon pulsing at each soldiers' door; soft shadows under
+the furniture, bevelled edges and more on it (monitors lit, mugs, chairs at the
+desks and the table, planked crates, drawer handles, cushions, a lamp on each
+pillar); the corners darker. A different kind of play: the room from above, you walking any of 8
 ways (the D-pad / stick), from the IN door at the bottom left to the EXIT at the
 top right (out to lift E's walkway; or back the way you came). Desks, crates,
 cabinets, a sofa, pillars and a table are in the way - cover for you and them;
