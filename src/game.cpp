@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "060"
+#define GAME_VERSION      "061"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -6398,6 +6398,7 @@ static void startJump() {
 }
 
 static void computeFinalToll();
+static void goChoose(int why);
 static void endGame(int why) {
   if (gameOver == END_NONE) {
     gameOver = (EndReason)why;
@@ -6409,6 +6410,7 @@ static void endGame(int why) {
     }
     computeBonuses();
     computeFinalToll();
+    goChoose(why);
   }
 }
 
@@ -6750,6 +6752,7 @@ static int landCity[NUKE_SITES];
 static uint32_t landDeaths[NUKE_SITES], deathTotal = 0;
 static bool cityUsed[N_CITIES];
 static int lsKind = 0;                 // the cut scene playing: 0 a launch, 1 a landing
+static bool lsNoNames = false;         // (the title's and the end's cut scenes: no names, no words)
 static int ldSite = 0, ldBuildings = 0;
 static int16_t ldBX[32], ldBW[32], ldBH[32];
 
@@ -6961,8 +6964,8 @@ static void drawLandScene() {
     float a = 1.0f - b / 0.8f;
     lsTint(LS_SIZE / 2, LS_SIZE / 2, 560, 255, 255, 250, a);
   }
-  // the words: the city, the toll
-  if (b > 1.0f) {
+  // the words: the city, the toll (not at the end of the game: it lists them itself)
+  if (b > 1.0f && !lsNoNames) {
     char name[48], line[64], num[24];
     snprintf(name, sizeof(name), "%s, %s", ct.name, ct.country);
     int n = clampv(lsTyped, 0, (int)strlen(name));
@@ -6989,7 +6992,6 @@ static void drawLandScene() {
 }
 
 // The site's sign: yellow and black edged, its name stencilled (on the title: blank)
-static bool lsNoNames = false;               // (the title's cut scenes: no site names, no MISSILE LAUNCHED)
 static void lsSign(int cx, int cy, int w, float size) {
   lsRect(cx - w / 2 - 6, cy - 34, cx + w / 2 + 6, cy + 34, rgb565(20, 20, 22));
   lsHazard(cx - w / 2 - 6, cx + w / 2 + 6, cy - 34, cy - 26);
@@ -11859,27 +11861,182 @@ static void drawPanel() {
 }
 
 // GAME OVER: why, and the score
+// The end of the game's background: the cities hit (the landing, once, then the city burning, and the list of
+// strikes), or with none landed and Dr. Voss dead, green hills, flowers, forest and birds
+enum GoBg : uint8_t { GB_NONE, GB_NUKE, GB_PEACE };
+static GoBg goBg = GB_NONE;
+static int goPage = 0;                       // (GB_NUKE: 0 the strikes, 1 the bonus and score)
+static float goPageT0 = 0;
+static bool goSceneOn = false;
+static void drawScaledScene(int cropY, uint32_t bright);
+#define GO_CROP_Y 120                        // (the burning city: the cloud in, the ground's edge out)
+static void goStartScene() {                 // the landing: the city with the most dead
+  int best = -1;
+  for (int i = 0; i < NUKE_SITES; i++) {
+    if (prevented[i] || nukeDestroyed[i] || (lockdown && i >= sitesHacked)) continue;
+    if (best < 0 || landDeaths[i] > landDeaths[best]) best = i;
+  }
+  launchOn = false;
+  launchQueued = 0;
+  if (best < 0) return;
+  launchOn = true;
+  lsKind = 1;
+  startLandScene(best);
+  goSceneOn = true;
+}
+static void drawPeaceScene(float t) {        // the world, safe
+  for (int y = 0; y < 440; y += 6) {         // the sky: deep blue to pale
+    float k = y / 440.0f;
+    fillRect(0, y, SCREEN_W - 1, y + 5, rgb565((int)(70 + 110 * k), (int)(140 + 80 * k), (int)(230 + 20 * k)));
+  }
+  glowDisc(1040, 120, 170, 255, 240, 170, 0.35f);   // the sun
+  fillCircle(1040, 120, 44, rgb565(255, 246, 200));
+  for (int c = 0; c < 5; c++) {              // clouds drifting
+    float x = fmodf(c * 330 + t * 14, 1640.0f) - 180, y = 70 + (c * 53) % 130;
+    uint16_t w = rgb565(250, 250, 255);
+    fillCircle((int)x, (int)y, 26, w);
+    fillCircle((int)x + 30, (int)y - 12, 32, w);
+    fillCircle((int)x + 64, (int)y, 24, w);
+    fillRect((int)x - 4, (int)y, (int)x + 70, (int)y + 20, w);
+  }
+  auto hill = [](float base, float a1, float f1, float a2, float f2, float ph, uint16_t c) {
+    for (int x = 0; x < SCREEN_W; x += 8) {
+      int y = (int)(base - a1 * sinf(x * f1 + ph) - a2 * sinf(x * f2 + ph * 1.7f));
+      fillRect(x, y, x + 7, SCREEN_H - 1, c);
+    }
+  };
+  hill(360, 40, 0.004f, 18, 0.011f, 0.5f, rgb565(120, 170, 160));   // far hills, misty
+  hill(420, 46, 0.006f, 14, 0.017f, 2.1f, rgb565(80, 150, 90));     // the middle hills
+  for (int i = 0; i < 46; i++) {             // the forest along them
+    int x = (i * 29 + (i * 7) % 13) % SCREEN_W;
+    float hy = 420 - 46 * sinf(x * 0.006f + 2.1f) - 14 * sinf(x * 0.017f + 3.57f);
+    int h = 34 + (i * 11) % 26;
+    fillRect(x - 2, (int)hy - 8, x + 2, (int)hy + 4, rgb565(80, 56, 36));
+    if (i % 3) {                             // pines
+      int px[3] = { x - 14, x + 14, x }, py[3] = { (int)hy - 4, (int)hy - 4, (int)hy - h };
+      fillPolygon(px, py, 3, i % 2 ? rgb565(30, 100, 50) : rgb565(36, 112, 58));
+    } else {                                 // round ones
+      fillCircle(x, (int)hy - h / 2, h / 3 + 4, rgb565(50, 130, 60));
+      fillCircle(x - 6, (int)hy - h / 2 + 6, h / 4 + 2, rgb565(60, 146, 70));
+    }
+  }
+  hill(560, 26, 0.005f, 10, 0.02f, 4.0f, rgb565(110, 190, 90));     // the meadow
+  for (int i = 0; i < 120; i++) {            // flowers, swaying
+    int x = (i * 53 + (i * i) % 37) % SCREEN_W;
+    float base = 560 - 26 * sinf(x * 0.005f + 4.0f) - 10 * sinf(x * 0.02f + 6.8f);
+    int y = (int)(base + 14 + (i * 31) % (SCREEN_H - (int)base - 20));
+    float sw = 3 * sinf(t * 1.8f + i);
+    drawLineF((float)x, (float)y + 10, x + sw, (float)y, rgb565(60, 140, 50), 1.5f);
+    static const uint16_t fc[5] = { rgb565(255, 90, 90), rgb565(255, 220, 70), rgb565(250, 250, 250), rgb565(200, 120, 255), rgb565(255, 150, 200) };
+    fillCircle((int)(x + sw), y, 4, fc[i % 5]);
+    fillCircle((int)(x + sw), y, 1, rgb565(255, 230, 120));
+  }
+  for (int i = 0; i < 9; i++) {              // birds, in a loose V, flapping across
+    float bx = fmodf(t * 70 + 200, 1700.0f) - 200 - (i / 2) * 34 * 1.0f, by = 170 + (i % 2 ? 1 : -1) * (i / 2) * 18 + 6 * sinf(t + i);
+    float flap = sinf(t * 9 + i * 0.7f) * 7;
+    uint16_t bc = rgb565(40, 44, 60);
+    drawLineF(bx - 12, by - flap, bx, by, bc, 2.0f);
+    drawLineF(bx, by, bx + 12, by - flap, bc, 2.0f);
+  }
+}
+// The strikes, listed over the burning city (the first page of a game that ended with missiles landed)
+static void goHeader(const char **title, bool *good, const char **reason) {
+  *good = false;
+  if (gameOver == END_WIN) { *title = "MISSION COMPLETE"; *good = true; *reason = "DR. VOSS IS DEAD"; }
+  else if (gameOver == END_TIME) { *title = "MISSION FAILED"; *reason = "POWER FAILURE - THE GENERATORS HAVE SHUT DOWN"; }
+  else if (gameOver == END_BODY) { *title = "MISSION FAILED"; *reason = "THE MAINTENANCE MAN'S BODY WAS FOUND"; }
+  else if (gameOver == END_NUKES) { *title = "MISSION FAILED"; *reason = "THE NUCLEAR MISSILES HAVE LANDED"; }
+  else { *title = "GAME OVER"; *reason = "OUT OF HEALTH"; }
+}
+static void drawStrikesPage(float t) {
+  const char *title, *reason;
+  bool good;
+  goHeader(&title, &good, &reason);
+  float b = t - LD_FALL;                      // (since the detonation)
+  if (b < 0.6f) return;
+  blendRect(0, 66, SCREEN_W - 1, 196, 0, 0, 0, 0.55f);
+  drawVectorTextW(title, SCREEN_W / 2, 112, 7.0f, good ? rgb565(20, 90, 40) : rgb565(120, 20, 14), 8.0f);
+  drawVectorTextW(title, SCREEN_W / 2, 112, 7.0f, good ? rgb565(100, 255, 140) : rgb565(255, 70, 50), 3.0f);
+  drawVectorText(reason, SCREEN_W / 2, 166, 2.8f, rgb565(240, 240, 245), true);
+  if (b < 1.6f) return;
+  int list[NUKE_SITES], n = 0;
+  for (int i = 0; i < NUKE_SITES; i++)
+    if (!prevented[i] && !nukeDestroyed[i] && !(lockdown && i >= sitesHacked)) list[n++] = i;
+  int y0 = 230, rowH = 42, y1 = y0 + 40 + n * rowH + 64;
+  blendRect(260, y0 - 22, SCREEN_W - 261, y1, 0, 0, 0, 0.62f);
+  drawVectorText(n == 1 ? "NUCLEAR STRIKE" : "NUCLEAR STRIKES", SCREEN_W / 2, (float)y0, 2.8f, rgb565(255, 190, 70), true);
+  int shown = (int)((b - 1.6f) / 0.6f) + 1;  // (one by one)
+  char num[24], line[64];
+  for (int k = 0; k < n && k < shown; k++) {
+    const City &ct = cities[landCity[list[k]]];
+    int y = y0 + 44 + k * rowH;
+    snprintf(line, sizeof(line), "%s, %s", ct.name, ct.country);
+    drawTextLeft(line, 300, (float)y, 2.6f, rgb565(240, 230, 220), true);
+    commas(num, sizeof(num), landDeaths[list[k]]);
+    drawTextLeft(num, SCREEN_W - 300 - vectorTextWidth(num, 2.8f), (float)y, 2.8f, rgb565(255, 90, 70), true);
+  }
+  if (shown > n) {
+    int y = y0 + 44 + n * rowH;
+    fillRect(300, y - 18, SCREEN_W - 300, y - 17, rgb565(150, 90, 80));
+    commas(num, sizeof(num), finalDeaths);
+    drawTextLeft("TOTAL DEAD", 300, (float)y + 14, 3.0f, rgb565(255, 190, 70), true);
+    drawTextLeft(num, SCREEN_W - 300 - vectorTextWidth(num, 3.6f), (float)y + 14, 3.6f, rgb565(255, 60, 40), true);
+    if (fmodf(clockT, 1.0f) < 0.7f) drawVectorText("PRESS X", SCREEN_W / 2, (float)SCREEN_H - 40, 3.0f, rgb565(240, 240, 245), true);
+  }
+}
+static void goChoose(int why) {               // (at the end: which background)
+  goBg = finalHits > 0 ? GB_NUKE : (why == END_WIN ? GB_PEACE : GB_NONE);
+  goPage = 0;
+  goPageT0 = 0;
+  goSceneOn = false;
+  launchOn = false;                          // (no cut scene left playing beside the game)
+  launchQueued = 0;
+}
+static bool goStrikesDone() {                // (every line shown: X goes on)
+  int n = finalHits;
+  return lsT - LD_FALL > 1.6f + n * 0.6f + 0.6f;
+}
+
 static float gameOverShownT() { return gameOverT - (gameOver == END_TIME ? POWER_FAIL_PANEL : 0.0f); }   // (the power failing first)
 static void drawGameOver() {
   float gameOverT = scene == SC_STAGE_CLEAR ? sceneT : gameOverShownT();
   if (gameOverT < 0) return;
   float k = gameOverT / 1.0f;
   if (k > 1) k = 1;
-  blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 0.65f * k);
+  if (scene != SC_STAGE_CLEAR && goBg != GB_NONE) {   // the end of the game's background, over everything
+    gfxClipAll();
+    if (goBg == GB_NUKE) {
+      if (goSceneOn) drawScaledScene(GO_CROP_Y, 170);
+      else pxRect(0, 0, FB_W - 1, FB_H - 1, 0);
+      if (k < 1) blendRect(0, 0, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 1 - k);
+      if (goPage == 0) { drawStrikesPage(lsT); return; }
+      gameOverT -= goPageT0;
+      if (gameOverT < 0) return;
+      k = fminf(1.0f, gameOverT);
+      blendRect(0, 0, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 0.5f * k);
+    } else {
+      drawPeaceScene(gameOverT);
+      if (k < 1) blendRect(0, 0, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 1 - k);
+      blendRect(240, 70, SCREEN_W - 241, SCREEN_H - 70, 0, 0, 0, 0.5f * k);
+    }
+  } else {
+    blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 0.65f * k);
+  }
   if (gameOverT < 0.4f) return;
   if (scene == SC_STAGE_CLEAR) {
     drawVectorTextW("STAGE 1 COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
     drawVectorTextW("STAGE 1 COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
     drawVectorText("YOU REACHED THE QUANTUMLOOP", SCREEN_W / 2, 186, 3.2f, rgb565(240, 240, 245), true);
   } else if (gameOver == END_WIN && stage == 2) {   // THE PROFESSOR dead: how the missiles went
-    drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
-    drawVectorTextW("MISSION COMPLETE", SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
+    const char *t2 = finalHits ? "MISSION COMPLETE" : "MISSION SUCCESS";
+    drawVectorTextW(t2, SCREEN_W / 2, 120, 7.0f, rgb565(20, 90, 40), 8.0f);
+    drawVectorTextW(t2, SCREEN_W / 2, 120, 7.0f, rgb565(100, 255, 140), 3.0f);
     drawVectorText("DR. VOSS IS DEAD", SCREEN_W / 2, 172, 3.0f, rgb565(240, 240, 245), true);
     {
       char num[24], line[96];
       commas(num, sizeof(num), finalDeaths);
       if (finalHits) snprintf(line, sizeof(line), "%d NUCLEAR MISSILE%s LANDED   -   %s DEAD", finalHits, finalHits == 1 ? "" : "S", num);
-      else snprintf(line, sizeof(line), "NO NUCLEAR MISSILES LANDED");
+      else snprintf(line, sizeof(line), "NO NUCLEAR MISSILES LANDED - THE WORLD IS SAFE");
       drawVectorText(line, SCREEN_W / 2, 204, 2.4f, finalHits ? rgb565(255, 90, 70) : rgb565(100, 255, 140), true);
     }
   } else if (gameOver == END_WIN) {
@@ -12382,6 +12539,9 @@ static void goToTitle();
 
 // The game is over (or won): a place in the table? then the initials, else the title
 static void afterGame() {
+  goBg = GB_NONE;
+  goSceneOn = false;
+  launchOn = false;
   entrySlot = -1;
   for (int i = 0; i < HI_COUNT; i++)
     if (score > hiTable[i].score) { entrySlot = i; break; }
@@ -12753,9 +12913,14 @@ static void updateTitleScene(float dt) {
   updateLaunchScene(dt);
   sfxMute = false;
 }
+static void drawScaledScene(int cropY, uint32_t bright);
 static void drawTitleScene() {
   pxRect(0, 0, FB_W - 1, FB_H - 1, 0);
   if (!launchOn) return;
+  drawScaledScene(TS_CROP_Y, 154);
+}
+// The cut scene's square (a launch, a landing), a crop of it scaled up to fill the screen, darkened (bright/256)
+static void drawScaledScene(int cropY, uint32_t bright) {
   lsNoNames = true;
   drawLaunchScene();
   lsNoNames = false;
@@ -12779,7 +12944,7 @@ static void drawTitleScene() {
     return rb | g;
   };
   for (int y = 0; y < FB_H; y++) {
-    int fy = (y * SH << 8) / FB_H, sy = TS_CROP_Y + (fy >> 8), wy = fy & 255;
+    int fy = (y * SH << 8) / FB_H, sy = cropY + (fy >> 8), wy = fy & 255;
     if (sy > LS_SIZE - 2) sy = LS_SIZE - 2;
     const uint32_t *r0 = frameSave + sy * LS_SIZE, *r1 = r0 + LS_SIZE;
     uint32_t *d = g_frame + y * FB_W;
@@ -12787,7 +12952,7 @@ static void drawTitleScene() {
       int sx = xs[x];
       uint32_t w = xw[x];
       uint32_t v = lerp(lerp(r0[sx], r0[sx + 1], w), lerp(r1[sx], r1[sx + 1], w), (uint32_t)wy);
-      d[x] = lerp(0, v, 154) | (r0[sx] & 0xFF000000);   // (darkened, under the name)
+      d[x] = lerp(0, v, bright) | (r0[sx] & 0xFF000000);   // (darkened, under the words)
     }
   }
 }
@@ -12951,7 +13116,15 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
 
   if (gameOver != END_NONE) {           // the game is over: X (after a moment) to the high scores, or the title
     gameOverT += dt;
-    if (gameOverShownT() > 2.2f && (pressed & BTN_JUMP)) {
+    if (goBg == GB_NUKE) {                   // the landing, then the city burning on (no end to it)
+      if (!goSceneOn && gameOverShownT() >= 0) goStartScene();
+      if (goSceneOn) updateLandScene(dt);
+      if (goPage == 0) {
+        if (goSceneOn && goStrikesDone() && (pressed & BTN_JUMP)) { goPage = 1; goPageT0 = gameOverShownT(); sfxPlay(SFX_KEY); }
+        pressed = 0;
+      }
+    }
+    if (gameOverShownT() - goPageT0 > 2.2f && (pressed & BTN_JUMP)) {
       afterGame();
       liftHum.store(0, std::memory_order_relaxed);
       droneHum.store(0, std::memory_order_relaxed);
@@ -13243,7 +13416,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   droneHum.store(mode == MODE_ROOM && (curHazard == HZ_DRONE || curHazard == HZ_CAMDRONE) && !mapOn && !settingsOn && gameOver == END_NONE ? 1 : 0, std::memory_order_relaxed);
   int was = liftHum.exchange(hum, std::memory_order_relaxed);
   if (was != 0 && hum == 0 && !mapOn) sfxPlay(SFX_LIFT_STOP);
-  drawHud();
+  if (!(gameOver != END_NONE && goBg != GB_NONE && gameOverShownT() >= 1.0f)) drawHud();   // (the end's own background: no top bar)
 }
 
 // For the PC test build: where he is and what he is doing

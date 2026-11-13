@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 060: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 061: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -768,6 +768,19 @@ takes turns, 15 seconds each: MISSION OBJECTIVES, then TOP 5 AGENTS. On the PS5 
 `/download0/quantum-lockdown/hiscores.bin` (the title's own storage; a table
 from before version 054 is kept, its deaths 0). The settings' RESET HIGH
 SCORES puts the table back to its five made-up agents.
+
+**The end of the game's backdrop.** If any missile counts as landed (see the
+death toll below): the screen fills with the **nuclear landing** cut scene,
+played once for the worst-hit city, and then that **city burns on** behind
+everything. Over it, first: the ending (GAME OVER - OUT OF HEALTH, MISSION
+FAILED - ..., or MISSION COMPLETE) and **NUCLEAR STRIKES**, each city hit and
+its dead appearing one by one, then the **TOTAL DEAD** - PRESS X - then the
+usual bonus and score page over the burning city, and X again to the high
+scores. Dying in stage 1 is all 5 cities; in stage 2, every missile not
+stopped or destroyed (launched or not, landed or not) is on the list. If none
+landed and **Dr. Voss is dead**: **MISSION SUCCESS** over green hills, a
+forest, a meadow of flowers swaying, clouds drifting and birds flying across
+(NO NUCLEAR MISSILES LANDED - THE WORLD IS SAFE), with the bonus and score.
 
 **The death toll.** At the start of each game, each of the 5 nuclear sites is
 given its city and its toll (from the cities' ranges). However the game ends
