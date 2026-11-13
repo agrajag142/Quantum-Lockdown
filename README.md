@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 064: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 065: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -131,6 +131,11 @@ DOCUMENTS; the rest have nothing.
 - **Falling down a pit:** a scream (`src/scream_sound.h`, made from
   scream.mp3: trimmed to its 2.2 seconds of scream and built into the game, so
   there is no file to copy). `SCREAM_VOLUME` sets its level.
+- **Someone burnt by the FX-5** (side on or from above): one of four cries
+  at random - a short grunt, a high yelp, a low groan, a strained grunt -
+  never the same one twice running (`src/pain_sounds.h`, made from
+  pain_sfx.zip's four WAVs: built in, no files to copy). `PAIN_VOLUME` sets
+  their level.
 - **Cameras and the drone:** NUCLEAR MISSION's alarm when caught; the
   drone's rotors whine quietly while it is in the room, its gun cracks, and a
   hit thuds.
@@ -960,6 +965,7 @@ checked on the PC before it goes on the console.
 | --- | --- |
 | `src/game.cpp` | the game: the complex, the shafts, the rooms, the agent, searching, the map (settings at the top: columns, rows, rooms, rooms per column) |
 | `src/scream_sound.h` | the pit scream, as samples (24 kHz mono) |
+| `src/pain_sounds.h` | the four cries of the burnt, as samples (24 kHz mono) |
 | `src/rooms_wide.h` | the room layouts (1280 units wide, four levels) |
 | `src/gfx.cpp`, `gfx.h` | drawing: the 1920x1080 picture, unit-space calls as in the sketch, vector letters |
 | `src/ps5_platform.cpp` | the PS5 side: the TV picture, the DualSense, the sound, the loop |

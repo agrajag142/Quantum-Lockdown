@@ -29,6 +29,7 @@
 #include "people.h"            // (the kinds of people: stage 2's chef and maintenance man)
 #pragma GCC diagnostic pop
 #include "scream_sound.h"
+#include "pain_sounds.h"
 #include <sys/stat.h>
 
 #include "micromod.h"
@@ -40,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "064"
+#define GAME_VERSION      "065"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -184,6 +185,7 @@
 #define SFX_VOLUME            1.00f  // the sound effects (steps, the lift)
 #define LIFT_HUM_VOLUME       0.30f  // the lift's motor while it moves (room lift pads a little quieter)
 #define SCREAM_VOLUME         0.55f  // his scream, falling down a pit (scream_sound.h)
+#define PAIN_VOLUME           0.60f  // the cry of someone burnt by the FX-5 (pain_sounds.h: one of four at random)
 #define AUDIO_RATE        48000      // the PS5's output rate
 
 #define HUD_H    40
@@ -1010,6 +1012,7 @@ enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX
                      SFX_HEART, SFX_HPALERT,   // (low health: a heartbeat, the warning)
                      SFX_FLAME };              // (the FX-5: a roaring whoosh)
 #define SFX_TONE 64                          // (64..95: the CODE ROOM's notes)
+#define SFX_PAIN 100                         // (100..103: the cries of someone burnt by the FX-5, pain_sounds.h)
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
 struct Voice {
   bool active;
@@ -1045,6 +1048,15 @@ static uint8_t sfxRing[64];
 static std::atomic<int> sfxHead{0}, sfxTail{0};
 
 static bool sfxMute = false;                 // (the title's cut scenes: silent, under its tune)
+static void sfxPlay(uint8_t sfx);
+static void sfxPain() {                       // someone burnt: one of the four cries, not the last one again
+  static int last = -1;
+  int k = fxRnd(0, PAIN_SOUNDS - 1);
+  if (k >= last && last >= 0) k++;
+  else if (last < 0) k = fxRnd(0, PAIN_SOUNDS);
+  last = k;
+  sfxPlay((uint8_t)(SFX_PAIN + k));
+}
 static void sfxPlay(uint8_t sfx) {           // (the game's side of the queue)
   if (sfxMute) return;
   int h = sfxHead.load(std::memory_order_relaxed), nx = (h + 1) & 63;
@@ -1072,6 +1084,8 @@ static void startVoice(Wave wave, float f0, float f1, int delayMs, int lengthMs,
 }
 
 static float screamPos = -1;           // (the sound thread's) where the scream is playing, in its samples; < 0 not playing
+static float painPos = -1;             // (the sound thread's) the burnt one's cry: where it is, which
+static int painClip = 0;
 
 static void startEffect(uint8_t sfx) {
   if (sfx >= SFX_TONE && sfx < SFX_TONE + 32) {   // the CODE ROOM's squares: a note each (32 semitones up from middle C)
@@ -1167,6 +1181,10 @@ static void startEffect(uint8_t sfx) {
       break;
     case SFX_KEY:                              // the terminal's menu: a short tick
       startVoice(WAVE_SQUARE, 1800, 1800, 0, 12, 0.08f);
+      break;
+    case SFX_PAIN: case SFX_PAIN + 1: case SFX_PAIN + 2: case SFX_PAIN + 3:   // a burnt one's cry: a recording too
+      painClip = sfx - SFX_PAIN;
+      painPos = 0;
       break;
     case SFX_SCREAM:                           // a recording, not the synthesiser (from the start each time)
       screamPos = 0;
@@ -1370,6 +1388,17 @@ void gameAudio(short *out, int frames) {
       }
       mix += voiceSample(v);
       if (++v.pos >= v.length) v.active = false;
+    }
+    if (painPos >= 0) {                      // the burnt one's cry: 24 kHz, the same way
+      int i = (int)painPos;
+      const int16_t *ps = painSamples[painClip];
+      if (i + 1 >= painLen[painClip]) {
+        painPos = -1;
+      } else {
+        float k = painPos - i;
+        mix += (ps[i] + (ps[i + 1] - ps[i]) * k) * (PAIN_VOLUME / 32768.0f * 3.6f);
+        painPos += (float)PAIN_RATE / AUDIO_RATE;
+      }
     }
     if (screamPos >= 0) {                    // the scream: 24 kHz, stepped through at 48 kHz (in between: blended)
       int i = (int)screamPos;
@@ -8335,7 +8364,7 @@ static void flameHitNpcs() {
       if (fabsf(f.x - n.x) < 30 * fmaxf(n.scale, 0.5f) && f.y > n.y - 170 * n.scale && f.y < n.y + 4) {
         n.burn = true;
         npcKilled(i, true);
-        sfxPlay(SFX_SCREAM);
+        sfxPain();
         break;
       }
     }
@@ -9449,7 +9478,8 @@ static void arKill(int i, int how) {         // (how: 0 shot / knifed, 1 burnt, 
   if (how == 2) g.dieT = 9;                  // (gone)
   arKilled[curRoom]++;
   addScore(AR_KILL_SCORE, g.x, g.y - 30);
-  sfxPlay(how == 1 ? SFX_SCREAM : SFX_HIT);
+  if (how == 1) sfxPain();
+  else sfxPlay(SFX_HIT);
   if (arKilled[curRoom] >= AR_TOTAL) showMsg("ALL 15 DOWN - THE ROOM IS CLEAR", 2.5f);
 }
 
