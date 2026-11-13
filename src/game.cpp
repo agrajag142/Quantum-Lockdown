@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "062"
+#define GAME_VERSION      "063"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -178,6 +178,7 @@
 #define ELEVATOR_MUSIC_VOLUME 0.40f  // elevator.mod, while he stands in the lift car: 0.0 = off ... 1.0 = full
 #define STAGE1_MUSIC_VOLUME   0.25f  // stage1.mod, the rest of the time in stage 1
 #define TITLE_MUSIC_VOLUME    0.35f  // title.mod, on the title screen (and while initials are entered)
+#define GAMEOVER_MUSIC_VOLUME 0.35f  // gameovergood.mod (no missiles landed) / gameoverbad.mod (some did), on the end of game screen
 #define STAGE2_MUSIC_VOLUME   0.25f  // stage2.mod, stage 2 (from its briefing on)
 #define MUSIC_FADE_SECONDS    0.8f   // fading in and out (the two cross over)
 #define SFX_VOLUME            1.00f  // the sound effects (steps, the lift)
@@ -986,6 +987,16 @@ long micromod4_calculate_mod_file_len(signed char *module_header);
 long micromod4_initialise(signed char *data, long sampling_rate);
 void micromod4_set_gain(long value);
 void micromod4_get_audio(short *output_buffer, long count);
+long micromod5_calculate_mod_file_len(signed char *module_header);
+long micromod5_initialise(signed char *data, long sampling_rate);
+void micromod5_set_gain(long value);
+void micromod5_get_audio(short *output_buffer, long count);
+void micromod5_set_position(long pos);
+long micromod6_calculate_mod_file_len(signed char *module_header);
+long micromod6_initialise(signed char *data, long sampling_rate);
+void micromod6_set_gain(long value);
+void micromod6_get_audio(short *output_buffer, long count);
+void micromod6_set_position(long pos);
 }
 
 enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX_FOUND, SFX_FANFARE, SFX_LAND,
@@ -1009,20 +1020,25 @@ struct Voice {
 static Voice voices[MAX_VOICES];
 static uint32_t noiseState = 22222;
 
-static std::atomic<int> tuneWanted{3};    // 0 none, 1 the lift's (elevator.mod), 2 stage 1's (stage1.mod), 3 the title's (title.mod), 4 stage 2's (stage2.mod)
+static std::atomic<int> tuneWanted{3};    // 0 none, 1 the lift's (elevator.mod), 2 stage 1's (stage1.mod), 3 the title's (title.mod), 4 stage 2's (stage2.mod),
+                                          // 5 the good end's (gameovergood.mod), 6 the bad end's (gameoverbad.mod)
 static std::atomic<int> liftHum{0};       // 0 still, 1 the car going up, 2 down, 3 / 4 a room's lift pad
 static std::atomic<int> droneHum{0};      // a drone in the room: its rotors' whine (0 none)
-#define TUNES 4                            // 0 elevator.mod, 1 stage1.mod, 2 title.mod, 3 stage2.mod: a MOD player each
-static bool tuneReady[TUNES] = { false, false, false, false };
+#define TUNES 6                            // 0 elevator.mod, 1 stage1.mod, 2 title.mod, 3 stage2.mod, 4 gameovergood.mod, 5 gameoverbad.mod: a MOD player each
+static bool tuneReady[TUNES] = { false, false, false, false, false, false };
 static char tuneProblem[TUNES][48] = { "NO ELEVATOR.MOD IN THE ASSETS", "NO STAGE1.MOD IN THE ASSETS", "NO TITLE.MOD IN THE ASSETS",
-                                       "NO STAGE2.MOD IN THE ASSETS" };
-static float tuneGain[TUNES] = { 0, 0, 0, 0 };   // (the sound thread's)
+                                       "NO STAGE2.MOD IN THE ASSETS", "NO GAMEOVERGOOD.MOD IN THE ASSETS", "NO GAMEOVERBAD.MOD IN THE ASSETS" };
+static float tuneGain[TUNES] = { 0, 0, 0, 0, 0, 0 };   // (the sound thread's)
 static std::atomic<bool> titleFromStart{false};   // (back at the title: its tune starts again from the top)
 static long (*const modLen[TUNES])(signed char *) = { micromod_calculate_mod_file_len, micromod2_calculate_mod_file_len,
-                                                     micromod3_calculate_mod_file_len, micromod4_calculate_mod_file_len };
-static long (*const modInit[TUNES])(signed char *, long) = { micromod_initialise, micromod2_initialise, micromod3_initialise, micromod4_initialise };
-static void (*const modGain[TUNES])(long) = { micromod_set_gain, micromod2_set_gain, micromod3_set_gain, micromod4_set_gain };
-static void (*const modAudio[TUNES])(short *, long) = { micromod_get_audio, micromod2_get_audio, micromod3_get_audio, micromod4_get_audio };
+                                                     micromod3_calculate_mod_file_len, micromod4_calculate_mod_file_len,
+                                                     micromod5_calculate_mod_file_len, micromod6_calculate_mod_file_len };
+static long (*const modInit[TUNES])(signed char *, long) = { micromod_initialise, micromod2_initialise, micromod3_initialise, micromod4_initialise,
+                                                            micromod5_initialise, micromod6_initialise };
+static void (*const modGain[TUNES])(long) = { micromod_set_gain, micromod2_set_gain, micromod3_set_gain, micromod4_set_gain,
+                                             micromod5_set_gain, micromod6_set_gain };
+static void (*const modAudio[TUNES])(short *, long) = { micromod_get_audio, micromod2_get_audio, micromod3_get_audio, micromod4_get_audio,
+                                                       micromod5_get_audio, micromod6_get_audio };
 static short tuneBuf[2048 * 2];
 static uint8_t sfxRing[64];
 static std::atomic<int> sfxHead{0}, sfxTail{0};
@@ -1316,7 +1332,7 @@ static inline float droneSample(int on) {
 
 void gameSetTune(int which, signed char *data, long len) {
   if (which < 0 || which >= TUNES || !data || len < 1084) return;
-  static const char *const names[TUNES] = { "ELEVATOR.MOD", "STAGE1.MOD", "TITLE.MOD", "STAGE2.MOD" };
+  static const char *const names[TUNES] = { "ELEVATOR.MOD", "STAGE1.MOD", "TITLE.MOD", "STAGE2.MOD", "GAMEOVERGOOD.MOD", "GAMEOVERBAD.MOD" };
   const char *name = names[which];
   long need = modLen[which](data);
   if (need < 0) { snprintf(tuneProblem[which], 48, "%s: NOT A MOD FILE", name); return; }
@@ -1372,10 +1388,12 @@ void gameAudio(short *out, int frames) {
   int want = tuneWanted.load(std::memory_order_relaxed);
   if (tuneReady[2] && tuneGain[2] <= 0 && titleFromStart.exchange(false)) micromod3_set_position(0);
   for (int k = 0; k < TUNES; k++) {
-    static const float vols[TUNES] = { ELEVATOR_MUSIC_VOLUME, STAGE1_MUSIC_VOLUME, TITLE_MUSIC_VOLUME, STAGE2_MUSIC_VOLUME };
+    static const float vols[TUNES] = { ELEVATOR_MUSIC_VOLUME, STAGE1_MUSIC_VOLUME, TITLE_MUSIC_VOLUME, STAGE2_MUSIC_VOLUME,
+                                       GAMEOVER_MUSIC_VOLUME, GAMEOVER_MUSIC_VOLUME };
     float vol = vols[k];
-    bool allowed = k == 2 || musicOn[k == 3 ? 1 : k].load(std::memory_order_relaxed);   // (the settings: stage music, both stages; elevator music)
+    bool allowed = k == 2 || k >= 4 || musicOn[k == 3 ? 1 : k].load(std::memory_order_relaxed);   // (the settings: stage music, both stages; elevator music)
     float target = (tuneReady[k] && want == k + 1 && allowed) ? vol : 0.0f;
+    if (k >= 4 && tuneReady[k] && tuneGain[k] <= 0 && target > 0) (k == 4 ? micromod5_set_position : micromod6_set_position)(0);   // (the end's tune: from the top)
     if (!tuneReady[k] || (tuneGain[k] <= 0 && target <= 0)) continue;
     memset(tuneBuf, 0, (size_t)frames * 4);
     modAudio[k](tuneBuf, frames);
@@ -13405,6 +13423,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (tune == 1 && !musicOn[0].load(std::memory_order_relaxed)) tune = stage == 2 ? 4 : 2;   // (elevator music off: the stage's carries on in the car)
   if (gameOver != END_NONE || scene == SC_STAGE_CLEAR) tune = 0;
   else if (scene == SC_RIDE || scene == SC_STAGE2_BRIEF || scene == SC_FADE_OUT || scene == SC_ARRIVE) tune = 4;
+  if (gameOver != END_NONE && goBg != GB_NONE) tune = goBg == GB_PEACE ? 5 : 6;   // the end of the game: its own tune, good or bad
   tuneWanted.store(tune, std::memory_order_relaxed);
   rideHum.store(scene == SC_RIDE && !settingsOn ? 1 : 0, std::memory_order_relaxed);
   int hum = 0;

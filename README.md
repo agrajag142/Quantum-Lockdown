@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 062: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 063: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -768,6 +768,11 @@ takes turns, 15 seconds each: MISSION OBJECTIVES, then TOP 5 AGENTS. On the PS5 
 `/download0/quantum-lockdown/hiscores.bin` (the title's own storage; a table
 from before version 054 is kept, its deaths 0). The settings' RESET HIGH
 SCORES puts the table back to its five made-up agents.
+
+**The end of the game's music**: `assets/gameovergood.mod` with no missiles
+landed (the green hills), `assets/gameoverbad.mod` with any landed (the burning
+city), from the top each time, until the high scores (then the title's tune).
+Always on (like the title's), at `GAMEOVER_MUSIC_VOLUME`.
 
 **The end of the game's backdrop.** If any missile counts as landed (see the
 death toll below): the screen fills with the **nuclear landing** cut scene,

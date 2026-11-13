@@ -23,8 +23,10 @@ case ${1:-} in
         gcc -O2 -c "$here/src/micromod2.c" -o "$out/micromod2.o"
         gcc -O2 -c "$here/src/micromod3.c" -o "$out/micromod3.o"
         gcc -O2 -c "$here/src/micromod4.c" -o "$out/micromod4.o"
-        g++ -std=c++20 -O2 -I"$here/src" "$here/src/game.cpp" "$here/src/gfx.cpp" "$here/sim/sim_main.cpp" "$out/micromod.o" "$out/micromod2.o" "$out/micromod3.o" "$out/micromod4.o" -o "$out/sim"
-        "$out/sim" "${2:-$here/sim/tour.txt}" "$out/shots" "$here/assets/elevator.mod" "$here/assets/stage1.mod" "$here/assets/title.mod" "$here/assets/stage2.mod"
+        gcc -O2 -c "$here/src/micromod5.c" -o "$out/micromod5.o"
+        gcc -O2 -c "$here/src/micromod6.c" -o "$out/micromod6.o"
+        g++ -std=c++20 -O2 -I"$here/src" "$here/src/game.cpp" "$here/src/gfx.cpp" "$here/sim/sim_main.cpp" "$out/micromod.o" "$out/micromod2.o" "$out/micromod3.o" "$out/micromod4.o" "$out/micromod5.o" "$out/micromod6.o" -o "$out/sim"
+        "$out/sim" "${2:-$here/sim/tour.txt}" "$out/shots" "$here/assets/elevator.mod" "$here/assets/stage1.mod" "$here/assets/title.mod" "$here/assets/stage2.mod" "$here/assets/gameovergood.mod" "$here/assets/gameoverbad.mod"
         if python3 -c 'import PIL' 2>/dev/null; then
             python3 -c 'import sys, glob, os
 from PIL import Image
