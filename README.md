@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 063: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 064: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -565,11 +565,18 @@ line): a blue bolt. **Each hit halves someone's size** - shot twice they're a
 quarter size and gone (a kill: 500 points, as any) - but **1 shot in 10 doubles them
 instead** (up to 4 times the size). It works on the door guard's vest too.
 
-**The TEST CHAMBER**: a basic room to try the QX-9 out in - a TEST CHAMBER sign,
-an observation window, two height charts on the wall, a bench, a laundry bin
-of jumpsuits, the scales, a gurney, a trolley of syringes and sample jars, a
-water cooler and a locker (7 things to search) and **three test subjects** in orange jumpsuits
-walking about.
+**DR. VOSS'S QUANTUM COMPUTER** (where the hacking was done): dark gunmetal
+walls and, in the middle, **the quantum computer** - a glass cryostat on a
+plinth, its gold cold stages hanging inside with **blue lights** blinking on
+every tier and the chip at the bottom pulsing blue, **three cooling fans**
+spinning in a housing above it, and **cooling gas rising slowly** round it. On
+the left wall, **SITE STATUS** - each of the 5 sites as it stands: LOCKED OUT
+(never hacked), HACKED, LAUNCHED, IMPACT, STOPPED or DESTROYED. On the right,
+its monitor: **QUANTUM LOCKDOWN** flashing red (HACKING HALTED - QUBITS
+FROZEN). Below: the control console, the qubit calibration rack, the computer's
+base, the cryogenic coolant tanks (LN2, LHE), the processor rack (its blue
+lights flickering) and a workstation - **6 things to search**. **One security
+camera** pans left and right. No one works in here.
 
 **Lift D's rooms: SECURITY ZONES, seen from above** (all three, the same
 room). A different kind of play: the room from above, you walking any of 8

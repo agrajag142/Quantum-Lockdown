@@ -40,7 +40,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "063"
+#define GAME_VERSION      "064"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -272,7 +272,7 @@ static std::atomic<int> rideHum{0};    // the journey's rumble
 // walkway, its right door (where the next lift comes down that far) on the next lift's left one;
 // each door has a card reader (access level 1..5: once in, always open). In rooms[0..20].
 enum LabKind : uint8_t { LK_LAB, LK_KITCHEN, LK_MEDICAL, LK_SECURITY, LK_ADMIN, LK_CLEANING, LK_STORE, LK_CLONE, LK_SOLDIER, LK_SERVER, LK_QLAB1, LK_QLAB2, LK_ARMORY, LK_TEST, LK_HAZARD, LK_ARMORY2, LK_ARENA, LK_SIMON, LK_DESTRUCT, LK_BOSS };
-static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM", "QUANTUM LAB 1", "QUANTUM LAB 2", "ARMORY", "TEST CHAMBER", "HAZ STORAGE", "ARMORY 2", "SECURITY ZONE", "CODE ROOM", "SELF DESTRUCT", "DR. VOSS" };
+static const char *const labKindName[] = { "LAB", "KITCHEN", "MEDICAL BAY", "SECURITY", "ADMIN", "CLEANING", "STORE ROOM", "CLONE LAB", "SOLDIER LAB", "SERVER ROOM", "QUANTUM LAB 1", "QUANTUM LAB 2", "ARMORY", "QUANTUM COMPUTER", "HAZ STORAGE", "ARMORY 2", "SECURITY ZONE", "CODE ROOM", "SELF DESTRUCT", "DR. VOSS" };
 static int8_t s2Room[S2_LIFTS][S2_LEVELS];   // the room on the right of each lift at each level (-1 none)
 static uint8_t s2Kind[S2_ROOMS], s2Lvl[S2_ROOMS];   // what it is, the access level its doors need
 static bool s2Aid[S2_LIFTS][S2_LEVELS];      // each left walkway's first aid cabinet: used
@@ -652,11 +652,12 @@ static void layOutStage2() {
       rooms[idx].hazard = bh[k];
     }
   }
-  {                                          // lift C: three of its four rooms the EXPERIMENTAL ARMORY, the TEST CHAMBER, HAZARDOUS STORAGE
+  {                                          // lift C: the EXPERIMENTAL ARMORY, DR. VOSS'S QUANTUM COMPUTER (a camera), HAZARDOUS STORAGE, ARMORY 2
     int fl[4] = { 0, 1, 2, 3 };
     for (int i = 3; i > 0; i--) { int j = rnd(i + 1), t = fl[i]; fl[i] = fl[j]; fl[j] = t; }
     s2Kind[s2Room[2][fl[0]]] = LK_ARMORY;
-    s2Kind[s2Room[2][fl[1]]] = LK_TEST;
+    s2Kind[s2Room[2][fl[1]]] = LK_TEST;        // (LK_TEST: the QUANTUM COMPUTER room, where the hacking was done)
+    rooms[s2Room[2][fl[1]]].hazard = HZ_CAMERA;   // (one camera, panning)
     s2Kind[s2Room[2][fl[2]]] = LK_HAZARD;
     s2Kind[s2Room[2][fl[3]]] = LK_ARMORY2;     // (the FX-5)
     s2HazCard = rnd(6);                      // (the level 4 card: one of its 6 things)
@@ -1976,9 +1977,13 @@ static const LabItem armoryItems[] = {
   { 640, ROOM_FLOOR_Y, 200, 260 },                                                            // the glass case (the gun)
   { 190, ROOM_FLOOR_Y, 110, 220 }, { 340, ROOM_FLOOR_Y, 140, 110 }, { 470, ROOM_FLOOR_Y, 80, 160 },   // the rack, the workbench, the cell charger
   { 830, ROOM_FLOOR_Y, 100, 110 }, { 945, ROOM_FLOOR_Y, 90, 110 }, { 1080, ROOM_FLOOR_Y, 140, 100 } }; // the gel table, ammo crates, the firing booth
-static const LabItem testItems[] = {
-  { 230, ROOM_FLOOR_Y, 140, 70 }, { 1000, ROOM_FLOOR_Y, 50, 130 }, { 1100, ROOM_FLOOR_Y, 80, 190 },   // a bench, the water cooler, a locker
-  { 342, ROOM_FLOOR_Y, 50, 80 }, { 480, ROOM_FLOOR_Y, 60, 160 }, { 655, ROOM_FLOOR_Y, 170, 90 }, { 820, ROOM_FLOOR_Y, 70, 110 } };   // a laundry bin, the scales, a gurney, a trolley
+static const LabItem testItems[] = {        // DR. VOSS'S QUANTUM COMPUTER room: all searchable
+  { 180, ROOM_FLOOR_Y, 160, 100 },   // the control console
+  { 330, ROOM_FLOOR_Y, 70, 220 },    // the qubit calibration rack
+  { 640, ROOM_FLOOR_Y, 280, 80 },    // the quantum computer's base (its access panel)
+  { 880, ROOM_FLOOR_Y, 90, 170 },    // the cryogenic coolant tanks
+  { 1010, ROOM_FLOOR_Y, 100, 230 },  // the processor rack
+  { 1155, ROOM_FLOOR_Y, 90, 120 } }; // a workstation   // a laundry bin, the scales, a gurney, a trolley
 #define ARMORY_CASE_X0 548
 #define ARMORY_CASE_X1 732
 #define ARMORY_CASE_Y0 420
@@ -2135,76 +2140,85 @@ static void paintArmory() {
   }
 }
 
+// ---- lift C: DR. VOSS'S QUANTUM COMPUTER (where the hacking was done). The machine in the middle: a glass cryostat
+// on a plinth, the gold tiers of its cold stages inside, cooling fans above it; the sites' status on the left wall,
+// its monitor on the right (QUANTUM LOCKDOWN); consoles, racks, coolant tanks, a workstation. (Its lights, the fans,
+// the cooling gas and the screens: drawQComputerAnim, each frame.)
+#define QC_X 640
+#define QC_GLASS_Y0 232
+#define QC_GLASS_Y1 600
+static void qcFrame(int x0, int y0, int x1, int y1) {          // a wall screen's bezel
+  fillRect(x0 - 8, y0 - 8, x1 + 8, y1 + 8, rgb565(30, 34, 44));
+  drawRectOutline(x0 - 8, y0 - 8, x1 + 8, y1 + 8, rgb565(90, 110, 140), 2);
+  fillRect(x0, y0, x1, y1, rgb565(4, 10, 22));
+}
 static void paintTestRoom() {
-  fillRect(380, 140, 900, 200, rgb565(240, 196, 40));                        // the sign
-  drawRectOutline(380, 140, 900, 200, rgb565(20, 20, 22), 3);
-  drawVectorText("TEST CHAMBER", 640, 170, 3.6f, rgb565(20, 20, 22), true);
-  fillRect(500, 240, 780, 360, rgb565(70, 76, 86));                          // the observation window
-  fillRect(510, 250, 770, 350, rgb565(20, 36, 54));
-  drawLine(530, 340, 600, 260, rgb565(60, 90, 120), false);
-  drawLine(560, 340, 630, 260, rgb565(60, 90, 120), false);
-  drawVectorText("OBSERVATION", 640, 376, 1.4f, rgb565(90, 100, 120), false);
-  for (int hc = 0; hc < 2; hc++) {                                           // height charts on the wall
-    int x = hc ? 880 : 380, top = ROOM_FLOOR_Y - 400;
-    fillRect(x, top, x + 34, ROOM_FLOOR_Y - 1, rgb565(240, 242, 246));
-    drawRectOutline(x, top, x + 34, ROOM_FLOOR_Y - 1, rgb565(150, 156, 166), 1);
-    for (int k = 0; k <= 20; k++) {
-      int y = ROOM_FLOOR_Y - 1 - k * 20;
-      fillRect(x, y, x + (k % 5 == 0 ? 20 : 10), y, rgb565(40, 40, 46));
-      if (k % 5 == 0 && k) {
-        char b[8];
-        snprintf(b, sizeof(b), "%d", k / 5);
-        drawVectorText(b, x + 27, y, 1.0f, rgb565(40, 40, 46), false);
+  // the fans' housing over the machine, its ducts down to the cryostat
+  fillRect(460, 116, 820, 204, rgb565(40, 46, 58));
+  drawRectOutline(460, 116, 820, 204, rgb565(110, 130, 160), 2);
+  for (int f = 0; f < 3; f++) fillCircle(527 + f * 113, 160, 38, rgb565(14, 18, 26));
+  fillRect(560, 204, 580, QC_GLASS_Y0, rgb565(70, 80, 96));
+  fillRect(700, 204, 720, QC_GLASS_Y0, rgb565(70, 80, 96));
+  // the cryostat: a cap, the glass, the cold stages hanging inside
+  fillRect(526, QC_GLASS_Y0 - 14, 754, QC_GLASS_Y0 + 6, rgb565(150, 160, 176));
+  fillRect(540, QC_GLASS_Y0 + 6, 740, QC_GLASS_Y1, rgb565(8, 14, 30));
+  static const int tierY[4] = { 280, 360, 440, 516 }, tierW[4] = { 170, 140, 110, 80 };
+  fillRect(QC_X - 4, QC_GLASS_Y0 + 6, QC_X + 4, 560, rgb565(180, 150, 70));   // (the centre rod)
+  for (int t = 0; t < 4; t++) {
+    int w = tierW[t] / 2, y = tierY[t];
+    if (t < 3)                                                    // the rods and the coax down to the next
+      for (int r = -1; r <= 1; r += 2) {
+        int xa = QC_X + r * (w - 10), xb = QC_X + r * (tierW[t + 1] / 2 - 10);
+        drawLine(xa, y, xb, tierY[t + 1], rgb565(200, 170, 80), false);
+        drawLine(xa - r * 14, y, xb - r * 8, tierY[t + 1], rgb565(150, 170, 200), false);
+        drawLine(xa - r * 24, y, xb - r * 14, tierY[t + 1], rgb565(120, 140, 180), false);
       }
-    }
+    fillRect(QC_X - w, y - 7, QC_X + w, y + 7, rgb565(214, 172, 74));
+    fillRect(QC_X - w, y - 7, QC_X + w, y - 4, rgb565(250, 214, 120));
   }
-  fillRect(140, 300, 300, 360, rgb565(200, 40, 40));                         // a warning
-  drawVectorText("TEST SUBJECTS", 220, 320, 1.4f, rgb565(250, 250, 250), true);
-  drawVectorText("ONLY", 220, 344, 1.4f, rgb565(250, 250, 250), true);
-  // the bench, the water cooler, a locker
-  fillRect(160, ROOM_FLOOR_Y - 44, 300, ROOM_FLOOR_Y - 36, rgb565(140, 110, 80));
-  fillRect(170, ROOM_FLOOR_Y - 36, 176, ROOM_FLOOR_Y - 1, rgb565(90, 96, 106));
-  fillRect(284, ROOM_FLOOR_Y - 36, 290, ROOM_FLOOR_Y - 1, rgb565(90, 96, 106));
-  fillRect(978, ROOM_FLOOR_Y - 80, 1022, ROOM_FLOOR_Y - 1, rgb565(220, 224, 230));
-  fillRect(984, ROOM_FLOOR_Y - 130, 1016, ROOM_FLOOR_Y - 80, rgb565(150, 200, 240));
-  fillRect(984, ROOM_FLOOR_Y - 134, 1016, ROOM_FLOOR_Y - 128, rgb565(70, 110, 170));
-  fillRect(994, ROOM_FLOOR_Y - 70, 1006, ROOM_FLOOR_Y - 64, rgb565(60, 120, 200));
-  fillRect(1060, ROOM_FLOOR_Y - 190, 1140, ROOM_FLOOR_Y - 1, rgb565(150, 160, 176));
-  fillRect(1099, ROOM_FLOOR_Y - 186, 1101, ROOM_FLOOR_Y - 4, rgb565(90, 96, 108));
-  for (int y = ROOM_FLOOR_Y - 176; y < ROOM_FLOOR_Y - 150; y += 6) { fillRect(1066, y, 1094, y + 2, rgb565(90, 96, 108)); fillRect(1106, y, 1134, y + 2, rgb565(90, 96, 108)); }
-  // a laundry bin of orange jumpsuits
-  fillRect(318, ROOM_FLOOR_Y - 70, 366, ROOM_FLOOR_Y - 6, rgb565(110, 120, 136));
-  fillRect(318, ROOM_FLOOR_Y - 70, 366, ROOM_FLOOR_Y - 64, rgb565(150, 160, 176));
-  fillRect(322, ROOM_FLOOR_Y - 80, 346, ROOM_FLOOR_Y - 68, rgb565(240, 130, 40));
-  fillRect(340, ROOM_FLOOR_Y - 84, 362, ROOM_FLOOR_Y - 70, rgb565(220, 110, 30));
-  fillCircle(324, ROOM_FLOOR_Y - 4, 4, rgb565(40, 40, 46));
-  fillCircle(360, ROOM_FLOOR_Y - 4, 4, rgb565(40, 40, 46));
-  drawVectorText("SUBJECTS", 342, ROOM_FLOOR_Y - 40, 0.9f, rgb565(230, 234, 240), false);
-  // the scales: a platform, a column, the sliding weights
-  fillRect(452, ROOM_FLOOR_Y - 14, 508, ROOM_FLOOR_Y - 1, rgb565(80, 86, 96));
-  fillRect(496, ROOM_FLOOR_Y - 150, 504, ROOM_FLOOR_Y - 14, rgb565(170, 176, 186));
-  fillRect(462, ROOM_FLOOR_Y - 152, 512, ROOM_FLOOR_Y - 144, rgb565(200, 204, 212));
-  fillRect(470, ROOM_FLOOR_Y - 156, 478, ROOM_FLOOR_Y - 140, rgb565(60, 64, 72));
-  fillRect(492, ROOM_FLOOR_Y - 120, 520, ROOM_FLOOR_Y - 104, rgb565(230, 234, 240));
-  fillRect(496, ROOM_FLOOR_Y - 116, 516, ROOM_FLOOR_Y - 108, rgb565(30, 40, 30));
-  // a gurney: a padded top, a pillow, the frame on wheels, a strap
-  fillRect(574, ROOM_FLOOR_Y - 70, 736, ROOM_FLOOR_Y - 58, rgb565(120, 170, 190));
-  fillRect(574, ROOM_FLOOR_Y - 76, 612, ROOM_FLOOR_Y - 70, rgb565(240, 242, 246));
-  fillRect(660, ROOM_FLOOR_Y - 72, 672, ROOM_FLOOR_Y - 56, rgb565(60, 50, 40));
-  fillRect(586, ROOM_FLOOR_Y - 58, 592, ROOM_FLOOR_Y - 10, rgb565(150, 156, 166));
-  fillRect(718, ROOM_FLOOR_Y - 58, 724, ROOM_FLOOR_Y - 10, rgb565(150, 156, 166));
-  fillRect(580, ROOM_FLOOR_Y - 34, 730, ROOM_FLOOR_Y - 30, rgb565(150, 156, 166));
-  fillCircle(589, ROOM_FLOOR_Y - 6, 6, rgb565(40, 40, 46));
-  fillCircle(721, ROOM_FLOOR_Y - 6, 6, rgb565(40, 40, 46));
-  // a trolley: two trays of syringes and sample jars
-  fillRect(788, ROOM_FLOOR_Y - 104, 852, ROOM_FLOOR_Y - 98, rgb565(190, 196, 206));
-  fillRect(788, ROOM_FLOOR_Y - 54, 852, ROOM_FLOOR_Y - 48, rgb565(190, 196, 206));
-  fillRect(790, ROOM_FLOOR_Y - 104, 794, ROOM_FLOOR_Y - 10, rgb565(150, 156, 166));
-  fillRect(846, ROOM_FLOOR_Y - 104, 850, ROOM_FLOOR_Y - 10, rgb565(150, 156, 166));
-  for (int k = 0; k < 4; k++) fillRect(798 + k * 12, ROOM_FLOOR_Y - 120, 804 + k * 12, ROOM_FLOOR_Y - 104, k & 1 ? rgb565(240, 130, 40) : rgb565(120, 200, 140));
-  fillRect(800, ROOM_FLOOR_Y - 62, 840, ROOM_FLOOR_Y - 56, rgb565(230, 234, 240));
-  fillCircle(794, ROOM_FLOOR_Y - 5, 5, rgb565(40, 40, 46));
-  fillCircle(846, ROOM_FLOOR_Y - 5, 5, rgb565(40, 40, 46));
+  fillRect(QC_X - 30, 548, QC_X + 30, 566, rgb565(40, 60, 90));   // the chip (the QPU), at the bottom
+  for (int k = 0; k < 2; k++) fillRect(546 + k * 176, QC_GLASS_Y0 + 10, 552 + k * 176, QC_GLASS_Y1 - 6, rgb565(60, 90, 130));   // the glass's edges catching light
+  fillRect(526, QC_GLASS_Y1, 754, QC_GLASS_Y1 + 10, rgb565(150, 160, 176));
+  // the plinth (its access panel, searchable)
+  fillRect(500, QC_GLASS_Y1 + 10, 780, ROOM_FLOOR_Y - 1, rgb565(36, 42, 54));
+  drawRectOutline(500, QC_GLASS_Y1 + 10, 780, ROOM_FLOOR_Y - 1, rgb565(90, 110, 140), 2);
+  fillRect(600, QC_GLASS_Y1 + 26, 680, ROOM_FLOOR_Y - 14, rgb565(26, 30, 40));
+  drawVectorText("Q-CORE", 640, QC_GLASS_Y1 + 46, 1.4f, rgb565(120, 200, 255), false);
+  // the wall screens: the sites' status (left), the quantum computer's monitor (right)
+  qcFrame(70, 150, 390, 400);
+  qcFrame(880, 150, 1210, 380);
+  // the control console (under the sites' screen)
+  fillRect(100, ROOM_FLOOR_Y - 96, 260, ROOM_FLOOR_Y - 88, rgb565(120, 130, 150));
+  int kx[4] = { 96, 264, 256, 104 }, ky[4] = { ROOM_FLOOR_Y - 96, ROOM_FLOOR_Y - 96, ROOM_FLOOR_Y - 116, ROOM_FLOOR_Y - 116 };
+  fillPolygon(kx, ky, 4, rgb565(60, 70, 86));
+  fillRect(106, ROOM_FLOOR_Y - 88, 254, ROOM_FLOOR_Y - 1, rgb565(36, 42, 54));
+  for (int c = 0; c < 10; c++) fillRect(112 + c * 14, ROOM_FLOOR_Y - 112, 120 + c * 14, ROOM_FLOOR_Y - 106, rgb565(30, 40, 56));
+  // the qubit calibration rack
+  fillRect(295, ROOM_FLOOR_Y - 220, 365, ROOM_FLOOR_Y - 1, rgb565(30, 36, 48));
+  drawRectOutline(295, ROOM_FLOOR_Y - 220, 365, ROOM_FLOOR_Y - 1, rgb565(90, 110, 140), 2);
+  for (int k = 0; k < 6; k++) fillRect(302, ROOM_FLOOR_Y - 210 + k * 34, 358, ROOM_FLOOR_Y - 186 + k * 34, rgb565(18, 22, 30));
+  // the coolant tanks: two frosted cylinders, their pipes to the plinth
+  for (int t = 0; t < 2; t++) {
+    int cx = 860 + t * 42;
+    fillRect(cx - 18, ROOM_FLOOR_Y - 160, cx + 18, ROOM_FLOOR_Y - 1, rgb565(176, 196, 214));
+    fillCircle(cx, ROOM_FLOOR_Y - 160, 18, rgb565(176, 196, 214));
+    fillRect(cx - 12, ROOM_FLOOR_Y - 150, cx - 8, ROOM_FLOOR_Y - 10, rgb565(230, 240, 250));
+    fillRect(cx - 18, ROOM_FLOOR_Y - 90, cx + 18, ROOM_FLOOR_Y - 76, rgb565(60, 120, 200));
+  }
+  drawVectorText("LN2", 860, ROOM_FLOOR_Y - 83, 0.9f, rgb565(240, 244, 250), false);
+  drawVectorText("LHE", 902, ROOM_FLOOR_Y - 83, 0.9f, rgb565(240, 244, 250), false);
+  fillRect(780, ROOM_FLOOR_Y - 40, 842, ROOM_FLOOR_Y - 32, rgb565(150, 170, 200));
+  // the processor rack
+  fillRect(960, ROOM_FLOOR_Y - 230, 1060, ROOM_FLOOR_Y - 1, rgb565(26, 30, 40));
+  drawRectOutline(960, ROOM_FLOOR_Y - 230, 1060, ROOM_FLOOR_Y - 1, rgb565(90, 110, 140), 2);
+  for (int k = 0; k < 8; k++) fillRect(968, ROOM_FLOOR_Y - 222 + k * 27, 1052, ROOM_FLOOR_Y - 202 + k * 27, rgb565(16, 20, 28));
+  // the workstation: a desk, a curved screen
+  fillRect(1110, ROOM_FLOOR_Y - 70, 1200, ROOM_FLOOR_Y - 62, rgb565(120, 130, 150));
+  fillRect(1116, ROOM_FLOOR_Y - 62, 1124, ROOM_FLOOR_Y - 1, rgb565(80, 90, 106));
+  fillRect(1186, ROOM_FLOOR_Y - 62, 1194, ROOM_FLOOR_Y - 1, rgb565(80, 90, 106));
+  fillRect(1150, ROOM_FLOOR_Y - 84, 1160, ROOM_FLOOR_Y - 70, rgb565(60, 64, 72));
+  fillRect(1118, ROOM_FLOOR_Y - 124, 1192, ROOM_FLOOR_Y - 84, rgb565(30, 34, 44));
+  fillRect(1122, ROOM_FLOOR_Y - 120, 1188, ROOM_FLOOR_Y - 88, rgb565(6, 16, 34));
 }
 
 
@@ -5008,7 +5022,7 @@ static void paintLabRoom() {
   bool clean = s2Kind[idx] == LK_CLEANING || s2Kind[idx] == LK_STORE;   // (three levels: no duct)
   if (!clean) labDuctBand(0, SCREEN_W - 1, CEIL_Y + 16, CEIL_Y + 58);   // (the cleaning room: its top level up there instead)
   if (s2Kind[idx] == LK_SERVER) serverWall(0, SCREEN_W - 1, CEIL_Y + 61, ROOM_FLOOR_Y - 1);   // (shiny metal, not white tiles)
-  else if (s2Kind[idx] == LK_ARMORY || s2Kind[idx] == LK_ARMORY2) armoryWall();               // (dark gunmetal)
+  else if (s2Kind[idx] == LK_ARMORY || s2Kind[idx] == LK_ARMORY2 || s2Kind[idx] == LK_TEST) armoryWall();   // (dark gunmetal)
   else labWall(0, SCREEN_W - 1, clean ? CEIL_Y + 13 : CEIL_Y + 61, ROOM_FLOOR_Y - 1);
   if (s2Kind[idx] == LK_CLONE) {
     paintCloneLab();
@@ -5025,7 +5039,7 @@ static void paintLabRoom() {
   } else if (s2Kind[idx] == LK_ARMORY2) {
     paintArmory2();
   } else if (s2Kind[idx] == LK_TEST) {
-    paintTestRoom();
+    paintTestRoom();                         // (DR. VOSS'S QUANTUM COMPUTER)
   } else if (s2Kind[idx] == LK_HAZARD) {
     paintHazStorage();
   } else if (s2Kind[idx] == LK_SIMON) {
@@ -5585,8 +5599,101 @@ static void drawEndRoomsBack(int k) {
   }
 }
 
+static void drawQComputerAnim() {
+  float t = clockT;
+  // the fans, spinning
+  for (int f = 0; f < 3; f++) {
+    int cx = 527 + f * 113, cy = 160;
+    float a0 = t * 9.0f * (f == 1 ? -1 : 1) + f;
+    for (int b = 0; b < 5; b++) {
+      float a = a0 + b * 1.2566f;
+      drawLineF((float)cx, (float)cy, cx + cosf(a) * 32, cy + sinf(a) * 32, rgb565(120, 140, 170), 5.0f);
+    }
+    fillCircle(cx, cy, 8, rgb565(160, 176, 200));
+    drawCircle(cx, cy, 38, rgb565(80, 100, 130));
+  }
+  // the cryostat's glow; the lights on its stages, blinking blue; the chip, pulsing
+  glowDisc(QC_X, 420, 190, 60, 150, 255, 0.10f + 0.04f * sinf(t * 1.3f));
+  static const int tierY[4] = { 280, 360, 440, 516 }, tierW[4] = { 170, 140, 110, 80 };
+  for (int k = 0; k < 4; k++)
+    for (int i = 0; i < 6; i++) {
+      int x = QC_X - tierW[k] / 2 + 12 + i * (tierW[k] - 24) / 5;
+      bool on = ((int)(t * 4 + i * 3 + k * 5) % 7) != 0;
+      if (on) { glowDisc((float)x, (float)tierY[k] + 12, 9, 80, 180, 255, 0.6f); fillCircle(x, tierY[k] + 12, 2, rgb565(180, 230, 255)); }
+    }
+  float pulse = 0.5f + 0.5f * sinf(t * 3.0f);
+  glowDisc(QC_X, 557, 50, 60, 170, 255, 0.35f + 0.3f * pulse);
+  fillRect(QC_X - 26, 551, QC_X + 26, 563, rgb565(60 + (int)(80 * pulse), 150 + (int)(60 * pulse), 255));
+  blendRect(540, QC_GLASS_Y0 + 6, 740, QC_GLASS_Y1, 120, 190, 255, 0.07f);   // (the glass)
+  // the racks' lights
+  for (int r = 0; r < 6; r++)
+    for (int c = 0; c < 6; c++) {
+      bool on = ((int)(t * 3 + r * 7 + c * 11) % 5) != 0;
+      fillRect(306 + c * 8, ROOM_FLOOR_Y - 202 + r * 34, 310 + c * 8, ROOM_FLOOR_Y - 196 + r * 34, on ? rgb565(70, 170, 255) : rgb565(20, 40, 70));
+    }
+  for (int r = 0; r < 8; r++)
+    for (int c = 0; c < 9; c++) {
+      bool on = ((int)(t * 5 + r * 5 + c * 13) % 6) > 1;
+      fillRect(974 + c * 9, ROOM_FLOOR_Y - 215 + r * 27, 979 + c * 9, ROOM_FLOOR_Y - 210 + r * 27,
+               on ? ((r + c) % 4 ? rgb565(60, 160, 255) : rgb565(150, 230, 255)) : rgb565(18, 34, 60));
+    }
+  for (int c = 0; c < 10; c++)                                 // the console's keys
+    if (((int)(t * 2 + c * 3) % 4) == 0) fillRect(112 + c * 14, ROOM_FLOOR_Y - 112, 120 + c * 14, ROOM_FLOOR_Y - 106, rgb565(70, 170, 255));
+  // the cooling gas, rising slowly round the machine
+  for (int j = 0; j < 22; j++) {
+    float u = fmodf(t * 0.07f + j * 0.137f, 1.0f);
+    int side = j & 1 ? 1 : -1;
+    float x = QC_X + side * (118 + 50 * u + 10 * sinf(t * 0.8f + j)), y = ROOM_FLOOR_Y - 30 - u * 470;
+    float a = 0.34f * (1 - u) * fminf(1.0f, u * 6);
+    glowDisc(x, y, 22 + 44 * u, 220, 240, 255, a);
+    glowDisc(x + side * 6, y - 8, 12 + 24 * u, 240, 250, 255, a * 0.8f);
+  }
+  // the sites' status
+  drawVectorText("SITE STATUS", 230, 172, 2.0f, rgb565(120, 200, 255), true);
+  fillRect(84, 188, 376, 189, rgb565(40, 90, 140));
+  for (int i = 0; i < NUKE_SITES; i++) {
+    int y = 214 + i * 38;
+    drawTextLeft(siteName[i], 86, (float)y, 1.25f, rgb565(190, 210, 235), false);
+    const char *st;
+    uint16_t c;
+    bool fl = false;
+    if (prevented[i]) { st = "STOPPED"; c = rgb565(90, 240, 130); }
+    else if (nukeDestroyed[i]) { st = "DESTROYED"; c = rgb565(90, 240, 130); }
+    else if (i < sitesLaunched && landLeft[i] <= 0) { st = "IMPACT"; c = rgb565(255, 60, 40); fl = true; }
+    else if (i < sitesLaunched) { st = "LAUNCHED"; c = rgb565(255, 150, 40); fl = true; }
+    else if (i < sitesHacked) { st = "HACKED"; c = rgb565(255, 80, 60); }
+    else { st = "LOCKED OUT"; c = rgb565(80, 170, 255); }
+    if (fl && fmodf(t, 1.0f) > 0.7f) continue;
+    drawTextLeft(st, 376 - vectorTextWidth(st, 1.5f), (float)y + 14, 1.5f, c, true);
+  }
+  // the quantum computer's monitor: QUANTUM LOCKDOWN
+  drawTextLeft("Q-CORE  1024 QUBITS", 892, 166, 1.3f, rgb565(100, 170, 230), false);
+  fillRect(890, 180, 1200, 181, rgb565(40, 90, 140));
+  bool on = fmodf(t, 1.2f) < 0.85f;
+  if (on) {
+    drawVectorTextW("QUANTUM", 1045, 216, 4.0f, rgb565(120, 20, 14), 5.0f);
+    drawVectorTextW("QUANTUM", 1045, 216, 4.0f, rgb565(255, 70, 50), 2.0f);
+    drawVectorTextW("LOCKDOWN", 1045, 262, 4.0f, rgb565(120, 20, 14), 5.0f);
+    drawVectorTextW("LOCKDOWN", 1045, 262, 4.0f, rgb565(255, 70, 50), 2.0f);
+  }
+  drawVectorText("HACKING HALTED - QUBITS FROZEN", 1045, 300, 1.2f, rgb565(150, 200, 240), false);
+  for (int i = 0; i < 30; i++) {                               // the qubits: a flat, frozen trace with a flicker
+    int x = 892 + i * 10, h = 2 + (int)(3 * fabsf(sinf(t * 0.7f + i * 0.9f)));
+    fillRect(x, 352 - h, x + 6, 352, rgb565(60, 140, 220));
+  }
+  // the workstation's screen
+  for (int l = 0; l < 4; l++) {
+    int w = 20 + (int)(40 * fabsf(sinf(t * 0.5f + l * 1.7f)));
+    fillRect(1126, ROOM_FLOOR_Y - 116 + l * 7, 1126 + w, ROOM_FLOOR_Y - 113 + l * 7, rgb565(80, 170, 255));
+  }
+}
+
 static void drawLabRoomBack() {
   int k = s2Kind[curRoom];
+  if (k == LK_TEST) {
+    drawQComputerAnim();
+    return;
+  }
   if (k == LK_SIMON || k == LK_DESTRUCT) {
     drawEndRoomsBack(k);
     return;
@@ -6198,11 +6305,6 @@ static void enterRoom(int idx, bool fromLeft) {
   if (stage == 2 && idx < S2_ROOMS && (s2Kind[idx] == LK_ARMORY || s2Kind[idx] == LK_ARMORY2)) {   // two scientists walking, either side of the case
     addNpc(PK_SCIENTIST, ROOM_FLOOR_Y, 160, 620, 120);
     addNpc(PK_SENIOR, ROOM_FLOOR_Y, 660, 1150, 300);
-  }
-  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_TEST) {      // three test subjects milling about
-    addNpc(PK_SUBJECT, ROOM_FLOOR_Y, 200, 620, 60);
-    addNpc(PK_SUBJECT, ROOM_FLOOR_Y, 460, 900, 260);
-    addNpc(PK_SUBJECT, ROOM_FLOOR_Y, 720, 1150, 120);
   }
   if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_QLAB1) {     // three scientists: at the glove box, walking the floor, on the deck
     addNpc(PK_SCIENTIST, ROOM_FLOOR_Y, 857, 857, 0);
