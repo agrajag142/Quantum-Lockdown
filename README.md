@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 067: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 068: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -991,6 +991,6 @@ checked on the PC before it goes on the console.
 | `src/micromod.c`, `.h` | the MOD player (Martin Cameron's Micromod, as in NUCLEAR MISSION); `micromod2.c`, `micromod3.c`, `micromod4.c` more copies of it (one a tune) |
 | `src/agent_rig.h`, `people.h` | NUCLEAR MISSION's agent and people, unchanged |
 | `sim/` | the PC test build, the room layout checker and the icon maker (not compiled into the app) |
-| `sce_sys/` | `param.json` (PPSA99903) and the home-screen icon |
+| `sce_sys/` | `param.json` (PPSA99903) and the home-screen icon (`icon0.png`: made by `sim/icon_layers.cpp` and `sim/make_icon.py` - the agent running under the quantum core's orbits, a missile rising over a burning city, QUANTUM LOCKDOWN in glowing letters) |
 | `assets/` | files copied into the app: put `elevator.mod` here |
 | `docs/PS5_NOTES.md` | what we learned getting NUCLEAR MISSION running on a real PS5 |
