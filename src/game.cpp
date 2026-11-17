@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "075"
+#define GAME_VERSION      "076"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -5227,6 +5227,123 @@ static void paintLabRoom() {
   paintLabSide(true, doorYR, !rooms[idx].noRightDoor);
 }
 
+// ============================================================ the abandoned look (stage 1)
+// Years of neglect on a stage 1 room's back wall: dust gathered at the top and
+// bottom, water stains and rust run down from the ribs, cracks across the
+// panels, paint flaking off, a damp-stained panel, cobwebs in the corners. Only
+// the wall: drawn before the equipment, lifts and platforms go over it. The
+// same room always looks the same (from its seed)
+static uint32_t ageRnd;
+static int ageR(int n) { ageRnd = ageRnd * 1664525u + 1013904223u; return (int)((ageRnd >> 8) % (uint32_t)n); }
+static float ageF() { return ageR(10000) / 10000.0f; }
+static void ageLine(float x0, float y0, float x1, float y1, float w, int r, int g, int b, float a) {   // a see-through line
+  float dx = x1 - x0, dy = y1 - y0, l = sqrtf(dx * dx + dy * dy);
+  if (l < 0.01f) return;
+  float nx = -dy / l * w * 0.5f, ny = dx / l * w * 0.5f;
+  float xs[4] = { x0 + nx, x1 + nx, x1 - nx, x0 - nx }, ys[4] = { y0 + ny, y1 + ny, y1 - ny, y0 - ny };
+  blendPolygonF(xs, ys, 4, r, g, b, a);
+}
+static void ageCrack(float x, float y, float dir, int len, int depth, int wr, int wg, int wb) {   // a jagged crack, branching
+  for (int i = 0; i < len; i++) {
+    float seg = 7 + ageR(9);
+    dir += (ageF() - 0.5f) * 1.1f;
+    float nx = x + cosf(dir) * seg, ny = y + sinf(dir) * seg;
+    float w = 2.2f * (1.0f - i / (float)(len + 2));
+    ageLine(x + 0.8f, y + 1.0f, nx + 0.8f, ny + 1.0f, w * 0.7f + 0.4f, wr + 70, wg + 70, wb + 70, 0.22f);   // its lit lower lip
+    ageLine(x, y, nx, ny, w + 0.6f, wr / 5, wg / 5, wb / 5, 0.85f);
+    if (depth > 0 && ageR(5) == 0) ageCrack(nx, ny, dir + (ageR(2) ? 0.9f : -0.9f), len / 2, depth - 1, wr, wg, wb);
+    x = nx; y = ny;
+  }
+}
+static void ageWeb(float cx, float cy, int qx, int qy, float r) {   // a cobweb in a corner (qx, qy: which way it opens)
+  const int spokes = 6;
+  float ax[spokes], ay[spokes];
+  for (int k = 0; k < spokes; k++) {
+    float an = (k / (float)(spokes - 1)) * 1.5708f + (ageF() - 0.5f) * 0.15f;
+    float rr = r * (0.8f + ageF() * 0.25f);
+    ax[k] = cosf(an) * qx; ay[k] = sinf(an) * qy;
+    ageLine(cx, cy, cx + ax[k] * rr, cy + ay[k] * rr, 1.1f, 220, 224, 230, 0.32f);
+  }
+  for (float f = 0.22f; f < 1.0f; f += 0.16f + ageF() * 0.06f)   // the rings: sagging between the spokes
+    for (int k = 0; k + 1 < spokes; k++) {
+      float ra = r * f, mx = cx + (ax[k] + ax[k + 1]) * 0.5f * ra * 0.86f, my = cy + (ay[k] + ay[k + 1]) * 0.5f * ra * 0.86f;
+      ageLine(cx + ax[k] * ra, cy + ay[k] * ra, mx, my, 0.9f, 220, 224, 230, 0.26f);
+      ageLine(mx, my, cx + ax[k + 1] * ra, cy + ay[k + 1] * ra, 0.9f, 220, 224, 230, 0.26f);
+    }
+  blendRect((int)cx - (qx < 0 ? (int)(r * 0.3f) : 0), (int)cy - (qy < 0 ? (int)(r * 0.3f) : 0),
+            (int)cx + (qx > 0 ? (int)(r * 0.3f) : 0), (int)cy + (qy > 0 ? (int)(r * 0.3f) : 0), 200, 204, 210, 0.12f);   // dust caught in its heart
+}
+static void paintAgeing(int wr, int wg, int wb, const int *ribs) {
+  ageRnd = 0x9E3779B9u ^ (uint32_t)rooms[curRoom].seed * 2654435761u ^ (uint32_t)curRoom * 40503u;
+  const int top = CEIL_Y + 24, bot = ROOM_FLOOR_Y - 8;
+  // a panel stained by damp (or two): darker, with a tide mark
+  for (int n = 1 + ageR(2); n > 0; n--) {
+    int x = ageR(9) * 144, y0 = top + ageR(260);
+    int y1 = y0 + 140 + ageR(200);
+    if (y1 > bot) y1 = bot;
+    blendRect(x + 6, y0, x + 137, y1, 40, 30, 20, 0.20f);
+    blendRect(x + 6, y0, x + 137, y0 + 3, 70, 55, 30, 0.30f);
+    for (int k = 0; k < 5; k++) blendRect(x + 6, y1 - 8 + k * 2, x + 137, y1 - 7 + k * 2, 40, 30, 20, 0.18f - k * 0.03f);
+  }
+  // dust: thick along the foot of the wall, a grimy band under the ceiling
+  for (int k = 0; k < 12; k++) blendRect(0, bot - 60 + k * 5, SCREEN_W - 1, bot + 7, 90, 80, 64, 0.045f);
+  for (int k = 0; k < 8; k++) blendRect(0, CEIL_Y, SCREEN_W - 1, CEIL_Y + 50 - k * 6, 30, 26, 20, 0.05f);
+  // on top of each rib, a line of settled dust
+  for (int k = 0; k < 4; k++) blendRect(0, ribs[k] - 1, SCREEN_W - 1, ribs[k] + 1, 190, 180, 160, 0.30f);
+  // rust bleeding down from the rivets, water running down from the ribs
+  for (int k = 0; k < 4; k++)
+    for (int x = 18; x < SCREEN_W; x += 36) {
+      if (ageR(4)) continue;
+      int len = 14 + ageR(46);
+      for (int j = 0; j < len; j += 2)
+        blendRect(x - 1, ribs[k] + 9 + j, x + 1, ribs[k] + 10 + j, 150, 70, 30, 0.42f * (1.0f - j / (float)len));
+    }
+  for (int n = 5 + ageR(5); n > 0; n--) {
+    int x = 10 + ageR(SCREEN_W - 20), k = ageR(4), y = ribs[k] + 10;
+    int len = 40 + ageR(110), w = 2 + ageR(5);
+    for (int j = 0; j < len; j += 3) {
+      float a = 0.16f * (1.0f - j / (float)len);
+      int wob = (j / 21) % 2;
+      blendRect(x + wob, y + j, x + wob + w, y + j + 2, 30, 26, 18, a);
+    }
+  }
+  // cracks across the panels
+  for (int n = 2 + ageR(3); n > 0; n--) {
+    int px = ageR(9) * 144;
+    float x = px + 20 + ageR(100), y = top + 20 + ageR(bot - top - 60);
+    float dir = ageF() * 6.283f;
+    ageCrack(x, y, dir, 5 + ageR(6), 2, wr, wg, wb);
+  }
+  // paint flaking away: patches of bare grey metal with a ragged lit edge
+  for (int n = 3 + ageR(4); n > 0; n--) {
+    float cx = 20 + ageR(SCREEN_W - 40), cy = top + 10 + ageR(bot - top - 20);
+    float r = 6 + ageR(12), xs[9], ys[9];
+    for (int k = 0; k < 9; k++) {
+      float an = k * 6.283f / 9, rr = r * (0.55f + ageF() * 0.6f);
+      xs[k] = cx + cosf(an) * rr * 1.3f; ys[k] = cy + sinf(an) * rr;
+    }
+    float sx[9], sy[9];
+    for (int k = 0; k < 9; k++) { sx[k] = xs[k] + 1.5f; sy[k] = ys[k] + 2.0f; }
+    blendPolygonF(sx, sy, 9, wr / 4, wg / 4, wb / 4, 0.45f);             // the paint's broken edge throws a shadow
+    blendPolygonF(xs, ys, 9, 128, 124, 116, 0.55f);                       // the bare metal
+    for (int k = 0; k < 9; k++) {
+      if (ageR(3) == 0) blendRect((int)xs[k], (int)ys[k], (int)xs[k] + 1, (int)ys[k] + 1, 120, 60, 30, 0.6f);   // pitting
+      if (ys[k] < cy) ageLine(xs[k], ys[k], xs[(k + 1) % 9], ys[(k + 1) % 9], 1.0f, wr + 70, wg + 70, wb + 70, 0.45f);   // the curled-up lip, catching the light
+    }
+  }
+  // cobwebs: the room's top corners, under a rib or two, in a panel corner
+  ageWeb(44, CEIL_Y + 1, 1, 1, 46 + ageR(26));
+  ageWeb(SCREEN_W - 45, CEIL_Y + 1, -1, 1, 46 + ageR(26));
+  for (int n = 2 + ageR(3); n > 0; n--) {
+    int k = ageR(3), x = 40 + ageR(SCREEN_W - 80), q = ageR(2) ? 1 : -1;
+    ageWeb((float)x, (float)ribs[k] + 10, q, 1, 22 + ageR(22));
+  }
+  {
+    int px = ageR(9) * 144, q = ageR(2);
+    ageWeb(q ? px + 137.0f : px + 6.0f, (float)top, q ? -1 : 1, 1, 30 + ageR(20));
+  }
+}
+
 static void paintRoom() {
   gfxTarget = roomBg;
   gfxClipAll();
@@ -5264,6 +5381,7 @@ static void paintRoom() {
   fillRect(0, HUD_H, SCREEN_W - 1, CEIL_Y - 1, rgb565(52, 58, 70));
   fillRect(0, CEIL_Y - 3, SCREEN_W - 1, CEIL_Y - 1, rgb565(30, 34, 42));
   paintPipe(CEIL_Y + 4, 14);
+  if (stage == 1) paintAgeing(wr, wg, wb, ribs);   // (abandoned for years)
   // the room's number, stencilled on the back wall
   char b[16];
   snprintf(b, sizeof(b), "%d", curRoom + 1);
