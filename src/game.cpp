@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "074"
+#define GAME_VERSION      "075"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -5808,7 +5808,7 @@ static void drawQComputerAnim() {
     else if (i < sitesHacked) { st = "HACKED"; c = rgb565(255, 80, 60); }
     else { st = "LOCKED OUT"; c = rgb565(80, 170, 255); }
     if (fl && fmodf(t, 1.0f) > 0.7f) continue;
-    drawTextLeft(st, 376 - vectorTextWidth(st, 1.5f), (float)y + 14, 1.5f, c, true);
+    drawTextLeft(st, 376 - vectorTextWidth(st, 1.5f), (float)y, 1.5f, c, true);   // (on the name's line)
   }
   // the quantum computer's monitor: QUANTUM LOCKDOWN
   drawTextLeft("Q-CORE  1024 QUBITS", 892, 166, 1.3f, rgb565(100, 170, 230), false);
@@ -13704,7 +13704,7 @@ static void drawVossScene() {
       const char *w = st == 0 ? "SECURE" : st == 1 ? "BREACHING..." : "HACKED";
       uint16_t c = st == 0 ? rgb565(90, 240, 130) : st == 1 ? rgb565(255, 190, 60) : rgb565(255, 70, 50);
       if (st == 1 && fmodf(t, 0.5f) > 0.32f) continue;
-      drawTextLeft(w, 376 - vectorTextWidth(w, 1.5f), (float)y + 14, 1.5f, c, true);
+      drawTextLeft(w, 376 - vectorTextWidth(w, 1.5f), (float)y, 1.5f, c, true);   // (on the name's line)
     }
   }
   if (pw > 0.15f) {                          // the quantum computer's monitor (right)

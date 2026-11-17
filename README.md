@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 074: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 075: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -592,7 +592,7 @@ walls and, in the middle, **the quantum computer** - a glass cryostat on a
 plinth, its gold cold stages hanging inside with **blue lights** blinking on
 every tier and the chip at the bottom pulsing blue, **three cooling fans**
 spinning in a housing above it, and **cooling gas rising slowly** round it. On
-the left wall, **SITE STATUS** - each of the 5 sites as it stands: LOCKED OUT
+the left wall, **SITE STATUS** - each of the 5 sites, its state on the same line: LOCKED OUT
 (never hacked), HACKED, LAUNCHED, IMPACT, STOPPED or DESTROYED. On the right,
 its monitor: **QUANTUM LOCKDOWN** flashing red (HACKING HALTED - QUBITS
 FROZEN). Below: the control console, the qubit calibration rack, the computer's
