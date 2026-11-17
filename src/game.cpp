@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "069"
+#define GAME_VERSION      "070"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -6239,6 +6239,7 @@ static void computeBonuses();
 static float s2Countdown(bool *impact);
 
 static void plasmaEnter();
+static float camGasT = -1;                   // (a camera's gas, with all 3 generators on: how long since)
 static void enterRoom(int idx, bool fromLeft) {
   mode = MODE_ROOM;
   curRoom = idx;
@@ -6260,6 +6261,7 @@ static void enterRoom(int idx, bool fromLeft) {
   darkT = 0;
   lightsOut = false;
   plasmaEnter();                             // (stage 1's power surge, if 2 generators are on)
+  camGasT = -1;
   int y = fromLeft ? doorYL : doorYR;
   placeAgent(fromLeft ? 36 : SCREEN_W - 36, (float)y, fromLeft ? 1 : -1);
   // the cameras: each starts its sweep at the far end of the room
@@ -10733,6 +10735,51 @@ static void startCaught() {
   camCaughtPending = false;
   setState(ST_CAUGHT, 0.15f);
 }
+// ---- with all 3 generators on, a stage 1 camera that catches him also floods the room with gas (10 health)
+#define CAM_GAS_HURT 10
+#define CAM_GAS_FILL 1.4f                    // (filling the room, top down...)
+#define CAM_GAS_CLEAR 1.8f                   // (...and clearing, once he's back at the door)
+static void drawCamGas() {
+  if (camGasT < 0) return;
+  float fill = fminf(1.0f, camGasT / CAM_GAS_FILL);
+  float fade = camGasT > CAUGHT_SECONDS ? 1.0f - (camGasT - CAUGHT_SECONDS) / CAM_GAS_CLEAR : 1.0f;
+  if (fade <= 0) return;
+  float level = CEIL_Y + (ROOM_FLOOR_Y - CEIL_Y) * fill;   // how far down it's come
+  blendRect(0, CEIL_Y, SCREEN_W - 1, (int)level, 120, 190, 60, 0.30f * fade);
+  for (int i = 0; i < 46; i++) {                           // its billows, rolling, thickest at its front
+    float x = fmodf(i * 97.0f + sinf(clockT * 0.7f + i) * 40 + clockT * (i & 1 ? 18 : -14), SCREEN_W + 120.0f) - 60;
+    float y = CEIL_Y + fmodf(i * 53.0f, fmaxf(level - CEIL_Y, 1.0f));
+    if (i % 3 == 0) y = level - 10 + 8 * sinf(clockT * 2 + i);
+    glowDisc(x, y, 40 + (i % 5) * 9, 150, 210, 80, 0.20f * fade);
+  }
+  for (int v = 0; v < 4; v++) {                             // the vents it pours from
+    int x = 160 + v * 320;
+    fillRect(x - 20, CEIL_Y, x + 20, CEIL_Y + 8, rgb565(60, 64, 56));
+    if (camGasT < CAUGHT_SECONDS) glowDisc((float)x, CEIL_Y + 14.0f, 30, 170, 230, 90, 0.5f * fade);
+  }
+}
+static void camCatch() {                     // a camera's caught him: the penalty (and with all 3 generators on, gas)
+  nCaught++;
+  if (stage == 2) { s2Penalty(CAM_PENALTY); timeLeft = 1; }   // (stage 2: the next launch or impact, sooner)
+  else timeLeft -= CAM_PENALTY;
+  if (timeLeft <= 0) {
+    timeLeft = 0;
+    endGame(END_TIME);
+  }
+  sfxPlay(SFX_ALARM);
+  char b[64];
+  if (stage == 1 && generatorsOn() >= GENERATORS) {   // all 3 generators on: gas too
+    snprintf(b, sizeof(b), "CAUGHT ON CAMERA!  GAS!  -%d SECONDS", CAM_PENALTY);
+    camGasT = 0;
+    sfxPlay(SFX_HISS);
+    hurt(CAM_GAS_HURT);
+  } else {
+    snprintf(b, sizeof(b), "CAUGHT ON CAMERA!  -%d SECONDS", CAM_PENALTY);
+  }
+  showMsg(b, 2.6f);
+  if (agState == ST_JUMP || agState == ST_FALL) camCaughtPending = true;   // (hands up when he lands)
+  else startCaught();
+}
 static void updateCameras(float dt) {
   bool caught = agState == ST_CAUGHT || camCaughtPending;
   if (camCaughtPending && agState != ST_JUMP && agState != ST_FALL) {
@@ -10759,19 +10806,7 @@ static void updateCameras(float dt) {
       c.view = 1;
       if (c.movingT >= CAM_REACT) {    // CAUGHT
         c.view = 2;
-        nCaught++;
-        if (stage == 2) { s2Penalty(CAM_PENALTY); timeLeft = 1; }   // (stage 2: the next launch or impact, sooner)
-        else timeLeft -= CAM_PENALTY;
-        if (timeLeft <= 0) {
-          timeLeft = 0;
-          endGame(END_TIME);
-        }
-        sfxPlay(SFX_ALARM);
-        char b[48];
-        snprintf(b, sizeof(b), "CAUGHT ON CAMERA!  -%d SECONDS", CAM_PENALTY);
-        showMsg(b, 2.6f);
-        if (agState == ST_JUMP || agState == ST_FALL) camCaughtPending = true;   // (hands up when he lands)
-        else startCaught();
+        camCatch();
         return;
       }
     } else {
@@ -11027,6 +11062,7 @@ static void drawPlasma() {
 }
 
 static void updateHazards(float dt) {
+  if (camGasT >= 0 && (camGasT += dt) > CAUGHT_SECONDS + CAM_GAS_CLEAR) camGasT = -1;
   if (mode != MODE_ROOM || gameOver != END_NONE) return;
   updatePlasma(dt);
   if (camCount > 0) updateCameras(dt);
@@ -11819,8 +11855,11 @@ static void drawHud() {
     float w1 = vectorTextWidth(lab, 2.2f), w2 = vectorTextWidth(b, 3.2f), x = SCREEN_W / 2 - (w1 + 16 + w2) / 2;
     drawVectorText(lab, x + w1 / 2, HUD_H / 2, 2.2f, impact ? rgb565(255, 90, 70) : rgb565(255, 190, 70), true);
     drawVectorText(b, x + w1 + 16 + w2 / 2, HUD_H / 2, 3.2f, tc, true);
-  } else {
-    drawVectorText(b, SCREEN_W / 2, HUD_H / 2, 3.2f, tc, true);
+  } else {                                   // stage 1: POWER FAILURE: 14:32
+    const char *lab = "POWER FAILURE:";
+    float w1 = vectorTextWidth(lab, 2.2f), w2 = vectorTextWidth(b, 3.2f), x = SCREEN_W / 2 - (w1 + 16 + w2) / 2;
+    drawVectorText(lab, x + w1 / 2, HUD_H / 2, 2.2f, lastMin ? rgb565(255, 90, 70) : rgb565(255, 190, 70), true);
+    drawVectorText(b, x + w1 + 16 + w2 / 2, HUD_H / 2, 3.2f, tc, true);
   }
   }
   }
@@ -13896,6 +13935,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mode == MODE_ROOM && agState == ST_SHOCK) drawShockSparks();
   if (mode == MODE_ROOM && camCount > 0) drawCameras();
   if (mode == MODE_ROOM && !lightsOut) drawPlasma();
+  if (mode == MODE_ROOM) drawCamGas();
   if (mode == MODE_ROOM && stage == 2 && curRoom < S2_ROOMS && (s2Kind[curRoom] == LK_CLONE || s2Kind[curRoom] == LK_QLAB2)) drawGas();
   if (mode == MODE_ROOM && stage == 2 && curRoom < S2_ROOMS && s2Kind[curRoom] == LK_HAZARD) drawHazStorage();
   if (mode == MODE_ROOM && (curHazard == HZ_DRONE || curHazard == HZ_CAMDRONE)) drawDrone();

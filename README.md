@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 069: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 070: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -101,7 +101,8 @@ DOCUMENTS; the rest have nothing.
 
 ## On screen
 
-- **The top bar:** the score on the left, the countdown in the middle, the
+- **The top bar:** the score on the left, the countdown in the middle (stage 1:
+  POWER FAILURE: 14:32; stage 2: NUCLEAR LAUNCH / NUCLEAR IMPACT), the
   health bar on the right.
 - **The lift area** is laid out like Impossible Mission's: the shaft view
   across the top with the lift in the middle, and a panel under it. In the
@@ -882,6 +883,11 @@ None in room 1, where he starts. The map marks the ones he has been in.
   "CAUGHT ON CAMERA! -30 SECONDS", 30 seconds off the clock, hands up, and back
   at the door he came in by. Each camera starts its sweep at the far end, and
   gives him a moment after he comes in.
+  **With all 3 power generators on**, a camera that catches him also floods
+  the room with **gas** ("CAUGHT ON CAMERA! GAS! -30 SECONDS"): it pours from
+  vents in the ceiling and fills the room top down while his hands are up,
+  costs **10 health** as well as the 30 seconds, and clears once he's back at
+  the door.
 - **Drone** (3 rooms, 10%): it starts at the far side of the room, its narrow
   red scanning beam turning right round it (through anything). The beam sees
   him whether he moves or not. When it does, the beam goes off ("THE DRONE
