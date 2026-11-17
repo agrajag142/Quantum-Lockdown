@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 072: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 073: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -288,8 +288,12 @@ A room of its own in the middle column of the map (between lifts E and F), on
 a random row, one level high, with a door at the bottom on each side. Its
 equipment is NUCLEAR MISSION's LCC, with the new **QUANTUM DRIVE BAY** (12
 slots and a counter) on the left; the main computer and its printer in the
-middle, a display over it (the countdown, once there is power), and on the
-right the reel to reel tape units, the fan and three computer racks. The map always shows it (in
+middle, a display over it (POWER OUTAGE and the countdown, once there is
+power); between the drive bay and the computer the **POWER GRID** unit (a lamp
+for each generator that is on, the OUTPUT readout: 3 KW plus 5 KW a generator,
+up to 18 KW, a level bar and four breakers); and on the right the **Q-STORE**
+quantum storage array (a glass column of turning rings of light between two
+towers), the fan and three computer racks. The map always shows it (in
 purple).
 
 - **The drive bay:** stand at it and press Square: every drive he is carrying
@@ -330,7 +334,8 @@ Going in ends stage 1:
    turn, with a rising whine and a chime (NEXT DEPARTURE STAGE 2, NOW
    BOARDING). Then the **doors** (Square at them): they slide open with a hiss.
    The way back up is shut once stage 2 has begun.
-4. **On board** (the clock waits): he walks in, fade to black, then the
+4. **On board** (the nuclear countdown keeps running - launches and impacts
+   happen during the ride): he walks in, fade to black, then the
    cabin: him on a seat, the tunnel rushing past the windows, the display
    counting down to arrival, a deep rumble - about 20 seconds
    (`RIDE_SECONDS`). Fade to black again.

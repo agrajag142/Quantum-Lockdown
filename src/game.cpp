@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "072"
+#define GAME_VERSION      "073"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -2925,7 +2925,9 @@ static const uint8_t wallColours[COLS][3] = {
 #define BAY_X         160          // the QUANTUM DRIVE BAY (200 wide), on the left
 #define BAY_TOP       (ROOM_FLOOR_Y - 262)
 static const int ccRackX[3] = { 1000, 1066, 1160 };   // (the racks and tape units: on the right)
-static const int ccTapeX[2] = { 804, 872 };
+#define CC_PWR_X0 296                         // the POWER GRID unit (between the drive bay and the main computer)
+#define CC_PWR_X1 516
+#define CC_STORE_X 870                        // the QUANTUM STORAGE ARRAY (where the tape units were)
 #define CC_FAN_X 862
 #define CC_FAN_Y 330
 
@@ -2968,17 +2970,43 @@ static void paintControlRoom() {
     for (int r = 0; r < 4; r++) fillRect(x0 + 6, fy - 80 + r * 16, x1 - 6, fy - 72 + r * 16, rgb565(54, 58, 68));   // vents
     fillRect(x1 - 3, fy - 228, x1, fy - 1, rgb565(26, 28, 34));
   }
-  // reel to reel tape units
-  for (int k = 0; k < 2; k++) {
-    int x0 = ccTapeX[k], x1 = x0 + 62;
-    fillRect(x0, fy - 228, x1, fy - 1, rgb565(168, 166, 156));
-    fillRect(x0, fy - 228, x1, fy - 225, rgb565(206, 204, 194));
-    fillRect(x1 - 3, fy - 224, x1, fy - 1, rgb565(130, 128, 120));
-    fillRect(x0 + 5, fy - 216, x1 - 5, fy - 104, rgb565(40, 44, 52));      // the window
-    fillRect(x0 + 8, fy - 96, x1 - 8, fy - 84, rgb565(60, 62, 66));        // tape head
-    for (int b = 0; b < 3; b++) fillRect(x0 + 8 + b * 16, fy - 72, x0 + 18 + b * 16, fy - 64, rgb565(90, 92, 100));
-    fillRect(x0 + 6, fy - 50, x1 - 6, fy - 8, rgb565(150, 148, 140));      // lower door
-    drawRectOutline(x0 + 6, fy - 50, x1 - 6, fy - 8, rgb565(120, 118, 112), 1);
+  // the POWER GRID unit: conduits up into the ceiling, a cabinet, its screen (what it shows: each frame)
+  for (int k = 0; k < 3; k++) {
+    int cx = CC_PWR_X0 + 40 + k * 70;
+    fillRect(cx - 7, CC_CEIL_Y + 18, cx + 7, fy - 236, rgb565(54, 60, 72));
+    fillRect(cx - 7, CC_CEIL_Y + 18, cx - 4, fy - 236, rgb565(90, 98, 114));
+    for (int y = CC_CEIL_Y + 40; y < fy - 240; y += 60) fillRect(cx - 10, y, cx + 10, y + 5, rgb565(80, 86, 100));
+  }
+  fillRect(CC_PWR_X0, fy - 236, CC_PWR_X1, fy - 1, rgb565(52, 58, 70));
+  fillRect(CC_PWR_X0, fy - 236, CC_PWR_X1, fy - 232, rgb565(130, 138, 156));
+  fillRect(CC_PWR_X1 - 4, fy - 232, CC_PWR_X1, fy - 1, rgb565(34, 38, 48));
+  fillRect(CC_PWR_X0 + 10, fy - 226, CC_PWR_X1 - 10, fy - 204, rgb565(20, 24, 32));
+  drawVectorText("POWER GRID", (CC_PWR_X0 + CC_PWR_X1) / 2.0f, fy - 215.0f, 1.6f, rgb565(255, 200, 80), true);
+  fillRect(CC_PWR_X0 + 10, fy - 196, CC_PWR_X1 - 10, fy - 92, rgb565(6, 12, 10));     // its screen
+  drawRectOutline(CC_PWR_X0 + 10, fy - 196, CC_PWR_X1 - 10, fy - 92, rgb565(110, 116, 128), 2);
+  for (int k = 0; k < 4; k++) {                                                    // breakers
+    int bx = CC_PWR_X0 + 18 + k * 50;
+    fillRect(bx, fy - 80, bx + 34, fy - 40, rgb565(36, 40, 50));
+    fillRect(bx + 13, fy - 74, bx + 21, fy - 58, rgb565(200, 204, 212));
+  }
+  hazardBand(CC_PWR_X0 + 4, CC_PWR_X1 - 6, fy - 22, fy - 14);
+  // the QUANTUM STORAGE ARRAY: two black towers, a glass column between them (its rings of light: each frame)
+  {
+    int x = CC_STORE_X;
+    fillRect(x - 84, fy - 30, x + 84, fy - 1, rgb565(30, 32, 40));                 // its plinth
+    fillRect(x - 84, fy - 30, x + 84, fy - 27, rgb565(90, 96, 110));
+    for (int s2 = -1; s2 <= 1; s2 += 2) {                                         // the towers
+      int t0 = x + s2 * 64 - 18, t1 = x + s2 * 64 + 18;
+      fillRect(t0, fy - 250, t1, fy - 30, rgb565(16, 18, 24));
+      fillRect(t0, fy - 250, t1, fy - 246, rgb565(70, 76, 90));
+      fillRect(s2 < 0 ? t0 : t1 - 3, fy - 246, s2 < 0 ? t0 + 3 : t1, fy - 30, rgb565(44, 48, 60));
+      fillRect(x + s2 * 64 - 3, fy - 236, x + s2 * 64 + 3, fy - 44, rgb565(10, 20, 34));   // (its light strip's channel)
+    }
+    fillRect(x - 46, fy - 244, x + 46, fy - 226, rgb565(60, 66, 80));               // the column's cap and base
+    fillRect(x - 46, fy - 48, x + 46, fy - 30, rgb565(60, 66, 80));
+    fillRect(x - 40, fy - 226, x + 40, fy - 48, rgb565(6, 12, 24));                 // the glass
+    fillRect(x - 38, fy - 224, x - 35, fy - 50, rgb565(50, 80, 120));
+    drawVectorText("Q-STORE", (float)x, fy - 235.0f, 1.2f, rgb565(120, 200, 255), false);
   }
   // the fan on the wall: housing (the blades turn)
   fillCircle(CC_FAN_X, CC_FAN_Y, 46, rgb565(50, 54, 62));
@@ -11418,14 +11446,64 @@ static void drawControlRoomAnim() {
         int x = ccRackX[k] + 10 + c * 9, y = fy - 216 + r * 9;
         fillRect(x, y, x + 4, y + 3, rgb565(col[0], col[1], col[2]));
       }
-  for (int k = 0; k < 2; k++) {          // the tape reels: running, stopping, changing direction
-    float a = 3.2f * t + 2.6f * sinf(t * 0.45f + k * 2.0f) * 3.0f;
-    int x0 = ccTapeX[k];
-    drawReel(x0 + 31, fy - 188, a);
-    drawReel(x0 + 31, fy - 134, -a * 0.8f);
-    drawLine(x0 + 53, fy - 188, x0 + 53, fy - 96, rgb565(70, 66, 60), false);
-    bool lamp = ((int)(t * 3 + k) & 1);
-    fillRect(x0 + 50, fy - 72, x0 + 54, fy - 64, lamp ? rgb565(255, 190, 40) : rgb565(80, 60, 20));
+  {                                      // the QUANTUM STORAGE ARRAY: rings of light turning in its glass, data racing up its towers
+    int x = CC_STORE_X;
+    glowDisc((float)x, fy - 137.0f, 90, 60, 160, 255, 0.10f + 0.04f * sinf(t * 2));
+    blendRect(x - 4, fy - 224, x + 4, fy - 50, 120, 200, 255, 0.35f + 0.2f * sinf(t * 5));   // its core beam
+    for (int r = 0; r < 6; r++) {
+      float cy = fy - 206 + r * 31 + 4 * sinf(t * 1.3f + r);
+      float ph = t * (2.0f + r * 0.35f) * (r & 1 ? -1 : 1);
+      for (int sg = 0; sg < 16; sg++) {
+        float a0 = ph + sg * 0.3927f, a1 = a0 + 0.3927f;
+        bool front = sinf((a0 + a1) / 2) > 0;
+        drawLineF(x + cosf(a0) * 34, cy + sinf(a0) * 6, x + cosf(a1) * 34, cy + sinf(a1) * 6,
+                  front ? rgb565(150, 230, 255) : rgb565(40, 90, 150), front ? 2.5f : 1.5f);
+      }
+      float bx = x + cosf(ph * 1.7f) * 34, by = cy + sinf(ph * 1.7f) * 6;              // a bit of data going round
+      glowDisc(bx, by, 8, 160, 230, 255, 0.6f);
+    }
+    for (int s2 = -1; s2 <= 1; s2 += 2)
+      for (int k = 0; k < 12; k++) {         // the towers' strips: pulses racing upward
+        float u = fmodf(t * 0.9f + k / 12.0f + (s2 > 0 ? 0.5f : 0), 1.0f);
+        float y = fy - 44 - u * 192;
+        int lx = x + s2 * 64;
+        fillRect(lx - 2, (int)y - 5, lx + 2, (int)y + 5, rgb565(80, (int)(160 + 90 * u), 255));
+      }
+    for (int k = 0; k < 6; k++) {            // and a row of status lights on each tower
+      bool on = ((int)(t * 4 + k * 3) % 5) != 0;
+      fillRect(x - 76 + k * 4, fy - 240, x - 75 + k * 4, fy - 238, on ? rgb565(80, 240, 120) : rgb565(20, 60, 30));
+      fillRect(x + 52 + k * 4, fy - 240, x + 53 + k * 4, fy - 238, on ? rgb565(80, 160, 255) : rgb565(20, 40, 70));
+    }
+  }
+  {                                      // the POWER GRID unit's screen: the generators, the power (3 kW, +5 kW each)
+    int n = generatorsOn(), kw = 3 + 5 * n, cx = (CC_PWR_X0 + CC_PWR_X1) / 2;
+    char b[24];
+    for (int g = 0; g < GENERATORS; g++) {   // a lamp each
+      int lx = CC_PWR_X0 + 44 + g * 62, ly = fy - 176;
+      bool on = g < n;
+      if (on) glowDisc((float)lx, (float)ly, 16, 80, 255, 120, 0.4f);
+      fillCircle(lx, ly, 8, on ? rgb565(90, 255, 130) : rgb565(110, 24, 20));
+      snprintf(b, sizeof(b), "GEN %d", g + 1);
+      drawVectorText(b, (float)lx, ly + 18.0f, 1.0f, on ? rgb565(140, 240, 160) : rgb565(150, 70, 60), false);
+    }
+    snprintf(b, sizeof(b), "%d KW", kw);     // the readout (its unlit segments behind it)
+    drawVectorText("88 KW", cx + 30.0f, fy - 130.0f, 3.0f, rgb565(14, 34, 18), true);
+    drawVectorText(b, cx + 30.0f, fy - 130.0f, 3.0f, n == GENERATORS ? rgb565(100, 255, 140) : rgb565(255, 200, 60), true);
+    drawTextLeft("OUTPUT", CC_PWR_X0 + 18.0f, fy - 130.0f, 1.1f, rgb565(120, 170, 140), false);
+    int m0 = CC_PWR_X0 + 18, m1 = CC_PWR_X1 - 18, segs = 18;   // the bar: 18 kW full
+    for (int k = 0; k < segs; k++) {
+      int x0 = m0 + k * (m1 - m0) / segs, x1 = m0 + (k + 1) * (m1 - m0) / segs - 2;
+      bool lit = k < kw;
+      uint16_t c = !lit ? rgb565(16, 28, 20) : k < 6 ? rgb565(255, 80, 50) : k < 12 ? rgb565(255, 200, 60) : rgb565(90, 255, 130);
+      if (lit && k == kw - 1 && fmodf(t, 0.6f) > 0.4f) c = rgb565(240, 255, 240);
+      fillRect(x0, fy - 110, x1, fy - 100, c);
+    }
+    bool sw[4] = { n >= 1, n >= 2, n >= 3, n >= 3 };   // (the breakers: up when their generator's on)
+    for (int k = 0; k < 4; k++) {
+      int bx = CC_PWR_X0 + 18 + k * 50;
+      fillRect(bx + 13, fy - 74, bx + 21, fy - 58, rgb565(200, 204, 212));
+      fillRect(bx + 11, sw[k] ? fy - 76 : fy - 62, bx + 23, sw[k] ? fy - 68 : fy - 54, sw[k] ? rgb565(90, 230, 120) : rgb565(220, 60, 50));
+    }
   }
   {                                      // the fan
     float a = t * 14.0f;
@@ -11441,7 +11519,7 @@ static void drawControlRoomAnim() {
   }
   // the status display: the countdown once there is power
   if (power) {
-    drawVectorText("QUANTUM CORE COLLAPSE IN", CONSOLE_X, 306, 1.6f, rgb565(200, 80, 60), false);
+    drawVectorText("POWER OUTAGE", CONSOLE_X, 306, 1.6f, rgb565(200, 80, 60), false);
     int sec = (int)ceilf(fmaxf(timeLeft, 0));
     char buf[24];
     snprintf(buf, sizeof(buf), "%d:%02d", sec / 60, sec % 60);
@@ -13931,6 +14009,12 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (scene != SC_NONE && !settingsOn && gameOver == END_NONE) {
     updateScene(dt);
     pressed = 0;
+    if (stage == 2 && (scene == SC_BOARD_WALK || scene == SC_FADE_OUT || scene == SC_RIDE || scene == SC_ARRIVE)) {
+      playT += dt;                           // (the quantumloop's ride: the nuclear countdown doesn't wait)
+      updateNukes(dt);
+      updateFlyers(dt);
+      updateLaunchScene(dt);
+    }
   }
 
   if ((pressed & BTN_MAP) && !termOn && scene == SC_NONE) mapOn = !mapOn;   // (the map pauses everything, the clock too)
