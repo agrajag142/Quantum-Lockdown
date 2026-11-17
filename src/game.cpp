@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "076"
+#define GAME_VERSION      "077"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -803,9 +803,13 @@ enum DecorKind : uint8_t {
   DEC_CABINET, DEC_SAFE, DEC_PLANT, DEC_RADAR, DEC_PANEL,       // from NUCLEAR MISSION's silo rooms
   DEC_DESK, DEC_COOLER, DEC_SHELF, DEC_COAT,                    // ...and its offices
   DEC_COMPUTER, DEC_CUPBOARD, DEC_SERVER,                       // new: a desk with a computer, a cupboard, a computer rack
+  DEC_SERVER2, DEC_CRYO, DEC_PANEL2, DEC_WASTE, DEC_WHEELIE,    // v077: a glass-fronted server rack, a cryogenic cabinet, a console, waste disposal, a wheelie bin
+  DEC_PRINTER, DEC_ROBOT, DEC_TV, DEC_PLANT2,                   //       a 3D printer, a cleaning robot, a TV on a stand, a snake plant
   DEC_KINDS, DEC_FIRSTAID = DEC_KINDS, DEC_GENERATOR, DEC_TERMINAL };
-static const int16_t decorW[DEC_KINDS + 3] = { 52, 62, 44, 84, 96, 104, 34, 70, 56, 104, 72, 58, 48, 96, 96 };
-static const int16_t decorH[DEC_KINDS + 3] = { 96, 68, 96, 92, 82, 98, 96, 110, 132, 108, 118, 120, 100, 112, 150 };
+static const int16_t decorW[DEC_KINDS + 3] = { 52, 62, 44, 84, 96, 104, 34, 70, 56, 104, 72, 58,
+                                               62, 70, 104, 64, 84, 80, 76, 76, 44,   48, 96, 96 };
+static const int16_t decorH[DEC_KINDS + 3] = { 96, 68, 96, 92, 82, 98, 96, 110, 132, 108, 118, 120,
+                                               124, 122, 88, 100, 98, 118, 66, 124, 102,   100, 112, 150 };
 struct Decor {
   uint8_t kind;
   int16_t x, y;                    // middle, and the top of what it stands on
@@ -1881,6 +1885,186 @@ static void drawGeneratorLive(int x, int fy, float k, bool on) {
   }
 }
 
+// ---- v077's equipment
+// A modern server rack: a smoked glass door, blade servers behind it (their lights: drawDecorAnim)
+static void paintServer2(int x, int fy) {
+  int x0 = x - 31, x1 = x + 31, top = fy - 124;
+  fillRect(x0, top, x1, fy - 1, rgb565(26, 28, 34));
+  fillRect(x0, top, x1, top + 4, rgb565(70, 74, 84));
+  fillRect(x0 + 2, fy - 6, x1 - 2, fy - 1, rgb565(16, 18, 22));
+  fillRect(x0 + 5, top + 9, x1 - 5, fy - 12, rgb565(14, 16, 22));           // behind the glass
+  for (int r = 0; r < 8; r++) {                                              // the blades
+    int y = top + 12 + r * 12;
+    fillRect(x0 + 8, y, x1 - 8, y + 9, rgb565(48, 52, 62));
+    fillRect(x0 + 8, y, x1 - 8, y, rgb565(76, 80, 92));
+    for (int k = 0; k < 5; k++) fillRect(x0 + 24 + k * 5, y + 3, x0 + 26 + k * 5, y + 6, rgb565(30, 32, 38));   // vent slots
+  }
+  float gx[4] = { (float)x0 + 5, (float)x0 + 22, (float)x0 + 12, (float)x0 + 5 }, gy[4] = { (float)top + 9, (float)top + 9, (float)fy - 60, (float)fy - 60 };
+  blendPolygonF(gx, gy, 4, 200, 220, 255, 0.10f);                            // a reflection on the glass
+  drawRectOutline(x0 + 4, top + 8, x1 - 4, fy - 11, rgb565(90, 96, 110), 2);
+  fillRect(x1 - 9, top + 50, x1 - 7, top + 72, rgb565(150, 156, 170));     // the door handle
+}
+// A cryogenic cabinet: frosted steel, a round porthole lit blue, a gauge, the warning stripe
+static void paintCryo(int x, int fy) {
+  int x0 = x - 35, x1 = x + 35, top = fy - 122;
+  fillRect(x0 + 4, fy - 6, x1 - 4, fy - 1, rgb565(50, 54, 62));
+  fillRect(x0, top + 10, x1, fy - 6, rgb565(190, 200, 210));
+  fillRect(x0, top + 10, x0 + 3, fy - 6, rgb565(226, 234, 242));
+  fillRect(x1 - 4, top + 10, x1, fy - 6, rgb565(140, 150, 162));
+  fillRect(x0 - 2, top + 2, x1 + 2, top + 12, rgb565(150, 160, 172));      // the cap, its vent
+  for (int k = 0; k < 6; k++) fillRect(x0 + 8 + k * 10, top + 5, x0 + 13 + k * 10, top + 8, rgb565(90, 98, 110));
+  fillCircle(x, top + 46, 22, rgb565(110, 120, 134));                        // the porthole
+  fillCircle(x, top + 46, 18, rgb565(40, 90, 150));
+  fillCircle(x, top + 46, 12, rgb565(90, 170, 230));
+  fillCircle(x - 6, top + 40, 4, rgb565(200, 236, 255));
+  for (int k = 0; k < 8; k++) {                                              // its bolts
+    float a = k * 0.785f;
+    fillCircle(x + (int)(cosf(a) * 20), top + 46 + (int)(sinf(a) * 20), 1, rgb565(70, 78, 90));
+  }
+  fillCircle(x - 18, top + 84, 7, rgb565(240, 240, 236));                    // a gauge
+  drawLine(x - 18, top + 84, x - 14, top + 80, rgb565(200, 40, 40), false);
+  fillRect(x - 2, top + 78, x + 26, top + 90, rgb565(30, 34, 42));           // its readout
+  drawVectorText("-196", x + 12, top + 84, 0.9f, rgb565(110, 200, 255), false);
+  hazardBand(x0 + 6, x1 - 6, fy - 22, fy - 14);
+  blendRect(x0, top + 10, x1, top + 20, 230, 240, 250, 0.35f);               // frost along the top
+  fillRect(x1 - 12, top + 34, x1 - 8, top + 60, rgb565(110, 116, 128));      // the latch
+}
+// A console: a sloped desk, a screen (a trace on it: drawDecorAnim), sliders and keys
+static void paintPanel2(int x, int fy) {
+  int x0 = x - 52, x1 = x + 52;
+  fillRect(x0 + 4, fy - 46, x1 - 4, fy - 1, rgb565(58, 64, 76));            // the base
+  fillRect(x0 + 4, fy - 46, x1 - 4, fy - 44, rgb565(96, 104, 118));
+  for (int k = 0; k < 3; k++) fillRect(x0 + 12, fy - 36 + k * 9, x1 - 12, fy - 33 + k * 9, rgb565(44, 48, 58));
+  int px[4] = { x0, x1, x1 - 8, x0 + 8 }, py[4] = { fy - 46, fy - 46, fy - 70, fy - 70 };   // the sloped deck
+  fillPolygon(px, py, 4, rgb565(84, 92, 106));
+  for (int k = 0; k < 5; k++) {                                              // sliders
+    fillRect(x0 + 14 + k * 9, fy - 66, x0 + 15 + k * 9, fy - 50, rgb565(30, 32, 38));
+    fillRect(x0 + 12 + k * 9, fy - 62 + (k * 7) % 12, x0 + 17 + k * 9, fy - 59 + (k * 7) % 12, rgb565(220, 220, 210));
+  }
+  for (int k = 0; k < 6; k++)                                                // keys
+    fillRect(x + 8 + (k % 3) * 12, fy - 66 + (k / 3) * 9, x + 16 + (k % 3) * 12, fy - 60 + (k / 3) * 9,
+             k == 2 ? rgb565(220, 70, 50) : rgb565(180, 186, 196));
+  fillRect(x - 34, fy - 88, x + 34, fy - 70, rgb565(60, 66, 78));            // the screen's housing
+  fillRect(x - 30, fy - 86, x + 30, fy - 72, rgb565(6, 20, 26));
+}
+// A waste disposal unit: a squat yellow bin, its hopper, a foot pedal, the trefoil
+static void paintWaste(int x, int fy) {
+  int x0 = x - 32, x1 = x + 32, top = fy - 100;
+  fillRect(x0 + 2, fy - 6, x1 - 2, fy - 1, rgb565(40, 42, 48));
+  fillRect(x0, top + 26, x1, fy - 6, rgb565(220, 180, 40));
+  fillRect(x0, top + 26, x0 + 3, fy - 6, rgb565(246, 214, 90));
+  fillRect(x1 - 4, top + 26, x1, fy - 6, rgb565(170, 132, 24));
+  int hx[4] = { x0 + 2, x1 - 2, x1 - 10, x0 + 10 }, hy[4] = { top + 26, top + 26, top + 4, top + 4 };   // the hopper
+  fillPolygon(hx, hy, 4, rgb565(120, 126, 138));
+  fillRect(x0 + 10, top, x1 - 10, top + 5, rgb565(160, 166, 178));
+  fillRect(x0 + 16, top + 8, x1 - 16, top + 18, rgb565(30, 32, 38));         // its mouth
+  fillRect(x0 + 6, top + 34, x1 - 6, top + 46, rgb565(30, 32, 38));
+  drawVectorText("WASTE", x, top + 40, 1.0f, rgb565(246, 214, 90), false);
+  fillCircle(x, top + 66, 11, rgb565(30, 32, 38));                           // the trefoil
+  for (int k = 0; k < 3; k++) {
+    float a = -1.5708f + k * 2.094f;
+    int bx = x + (int)(cosf(a) * 6), by = top + 66 + (int)(sinf(a) * 6);
+    fillCircle(bx, by, 4, rgb565(220, 180, 40));
+  }
+  fillCircle(x, top + 66, 2, rgb565(220, 180, 40));
+  hazardBand(x0 + 4, x1 - 4, fy - 18, fy - 10);
+  fillRect(x + 14, fy - 8, x + 28, fy - 4, rgb565(80, 84, 94));              // the pedal
+}
+// A large wheelie bin: green, its lid and handle, two big wheels
+static void paintWheelie(int x, int fy) {
+  int x0 = x - 40, x1 = x + 40, top = fy - 98;
+  int bx[4] = { x0 + 2, x1 - 2, x1 - 6, x0 + 6 }, by[4] = { top + 10, top + 10, fy - 14, fy - 14 };
+  fillPolygon(bx, by, 4, rgb565(46, 110, 60));
+  fillRect(x0 + 4, top + 10, x0 + 8, fy - 16, rgb565(70, 140, 84));
+  for (int k = 0; k < 3; k++) fillRect(x0 + 14 + k * 20, top + 24, x0 + 18 + k * 20, fy - 22, rgb565(36, 92, 48));   // its ribs
+  fillRect(x0 - 2, top, x1 + 2, top + 10, rgb565(36, 92, 48));               // the lid
+  fillRect(x0 - 2, top, x1 + 2, top + 2, rgb565(70, 140, 84));
+  fillRect(x1 - 4, top - 6, x1 + 6, top + 2, rgb565(30, 34, 40));            // the handle
+  fillRect(x - 16, top + 40, x + 16, top + 54, rgb565(230, 230, 220));       // a sticker
+  drawVectorText("NO 7", x, top + 47, 0.9f, rgb565(40, 60, 46), false);
+  blendRect(x0 + 6, fy - 40, x1 - 6, fy - 14, 40, 30, 20, 0.25f);            // muck
+  fillCircle(x0 + 14, fy - 11, 10, rgb565(24, 26, 30));                      // wheels
+  fillCircle(x1 - 14, fy - 11, 10, rgb565(24, 26, 30));
+  fillCircle(x0 + 14, fy - 11, 4, rgb565(110, 116, 126));
+  fillCircle(x1 - 14, fy - 11, 4, rgb565(110, 116, 126));
+}
+// A 3D printer on its stand: a framed enclosure, the bed, a part half printed, the spool on top
+static void paintPrinter(int x, int fy) {
+  int x0 = x - 40, x1 = x + 40, top = fy - 118;
+  fillRect(x0 + 2, fy - 44, x0 + 8, fy - 1, rgb565(60, 64, 74));            // the stand
+  fillRect(x1 - 8, fy - 44, x1 - 2, fy - 1, rgb565(60, 64, 74));
+  fillRect(x0 + 2, fy - 16, x1 - 2, fy - 13, rgb565(60, 64, 74));
+  fillRect(x0, fy - 48, x1, fy - 44, rgb565(110, 116, 128));
+  fillRect(x0 + 2, top + 18, x1 - 2, fy - 48, rgb565(30, 32, 38));          // the frame
+  fillRect(x0 + 6, top + 22, x1 - 6, fy - 58, rgb565(20, 22, 28));          // inside
+  fillRect(x0 + 2, fy - 58, x1 - 2, fy - 48, rgb565(44, 48, 58));            // its front: a screen, a knob
+  fillRect(x0 + 8, fy - 56, x0 + 30, fy - 50, rgb565(40, 120, 200));
+  fillCircle(x1 - 14, fy - 53, 3, rgb565(150, 156, 170));
+  fillRect(x0 + 12, fy - 66, x1 - 12, fy - 62, rgb565(170, 176, 188));       // the bed
+  float gx[4] = { (float)x0 + 6, (float)x0 + 20, (float)x0 + 10, (float)x0 + 6 }, gy[4] = { (float)top + 22, (float)top + 22, (float)fy - 58, (float)fy - 58 };
+  blendPolygonF(gx, gy, 4, 200, 220, 255, 0.08f);
+  fillRect(x - 12, top + 2, x + 12, top + 18, rgb565(30, 32, 38));           // the spool holder, the spool
+  fillCircle(x, top + 8, 9, rgb565(230, 120, 40));
+  fillCircle(x, top + 8, 3, rgb565(30, 32, 38));
+}
+// An industrial floor cleaning robot: a squat body, a sensor dome, brushes underneath
+static void paintRobot(int x, int fy) {
+  int x0 = x - 36, x1 = x + 36, top = fy - 66;
+  fillRect(x0 + 4, fy - 14, x1 - 4, fy - 6, rgb565(40, 42, 48));            // the skirt
+  fillRect(x0, top + 18, x1, fy - 14, rgb565(70, 120, 180));                 // the body
+  fillRect(x0, top + 18, x1, top + 21, rgb565(110, 160, 220));
+  fillRect(x1 - 5, top + 21, x1, fy - 14, rgb565(50, 90, 140));
+  hazardBand(x0 + 2, x1 - 2, fy - 22, fy - 16);
+  fillRect(x0 + 8, top + 26, x0 + 30, top + 36, rgb565(24, 28, 36));         // its little panel
+  fillRect(x0 + 10, top + 28, x0 + 20, top + 34, rgb565(80, 220, 140));
+  fillRect(x + 6, top + 26, x1 - 8, top + 30, rgb565(220, 224, 230));        // its name plate
+  drawVectorText("SCRUB-9", x + 16, top + 40, 0.8f, rgb565(230, 236, 246), false);
+  fillRect(x - 12, top + 10, x + 12, top + 18, rgb565(50, 54, 64));          // the dome's collar, the dome
+  fillCircle(x, top + 10, 9, rgb565(30, 34, 44));
+  fillCircle(x - 3, top + 7, 3, rgb565(120, 140, 170));
+  fillCircle(x0 + 6, fy - 6, 6, rgb565(24, 26, 30));                         // wheels
+  fillCircle(x1 - 6, fy - 6, 6, rgb565(24, 26, 30));
+  fillRect(x0 - 6, fy - 12, x0 + 2, fy - 8, rgb565(60, 64, 72));             // a squeegee
+}
+// A TV on a stand: an old set on a trolley (its screen: drawDecorAnim)
+static void paintTV(int x, int fy) {
+  int x0 = x - 38, x1 = x + 38;
+  fillRect(x - 4, fy - 62, x + 4, fy - 8, rgb565(70, 74, 84));               // the pole
+  fillRect(x0 + 2, fy - 10, x1 - 2, fy - 6, rgb565(70, 74, 84));             // the trolley's feet, its castors
+  fillCircle(x0 + 6, fy - 4, 3, rgb565(24, 26, 30));
+  fillCircle(x1 - 6, fy - 4, 3, rgb565(24, 26, 30));
+  fillCircle(x, fy - 4, 3, rgb565(24, 26, 30));
+  fillRect(x0 + 6, fy - 40, x1 - 6, fy - 36, rgb565(90, 96, 108));           // a shelf, a video player on it
+  fillRect(x - 24, fy - 50, x + 24, fy - 40, rgb565(30, 32, 38));
+  fillRect(x - 20, fy - 46, x - 4, fy - 44, rgb565(10, 10, 12));
+  fillCircle(x + 16, fy - 45, 1, rgb565(220, 60, 40));
+  fillRect(x0 + 4, fy - 66, x1 - 4, fy - 62, rgb565(90, 96, 108));           // the platform
+  fillRect(x0, fy - 122, x1, fy - 66, rgb565(52, 48, 44));                   // the set
+  fillRect(x0, fy - 122, x1, fy - 120, rgb565(86, 80, 72));
+  fillRect(x0 + 5, fy - 116, x1 - 18, fy - 72, rgb565(16, 18, 20));          // the screen
+  for (int k = 0; k < 2; k++) fillCircle(x1 - 10, fy - 106 + k * 12, 3, rgb565(150, 146, 136));   // the knobs
+  for (int k = 0; k < 4; k++) fillRect(x1 - 14, fy - 86 + k * 4, x1 - 6, fy - 85 + k * 4, rgb565(30, 28, 26));   // the speaker
+}
+// A snake plant in a tall grey pot: spiky leaves, banded
+static void paintPlant2(int x, int fy) {
+  int px[4] = { x - 17, x + 17, x + 13, x - 13 }, py[4] = { fy - 46, fy - 46, fy - 1, fy - 1 };
+  fillPolygon(px, py, 4, rgb565(150, 154, 160));
+  fillRect(x - 17, fy - 46, x - 13, fy - 6, rgb565(184, 188, 194));
+  fillRect(x - 19, fy - 50, x + 19, fy - 45, rgb565(170, 174, 180));
+  fillRect(x - 15, fy - 52, x + 15, fy - 50, rgb565(54, 40, 28));
+  static const int8_t lv[6][3] = { { -10, -6, 40 }, { -4, -8, 54 }, { 1, 2, 50 }, { 6, 8, 44 }, { 10, 12, 34 }, { -1, -3, 30 } };
+  for (int i = 0; i < 6; i++) {                                              // leaves: base, lean, height
+    int bx = x + lv[i][0], tx = bx + lv[i][1], ty = fy - 50 - lv[i][2];
+    int lx[4] = { bx - 6, bx + 6, tx + 1, tx - 1 }, ly[4] = { fy - 50, fy - 50, ty, ty };
+    fillPolygon(lx, ly, 4, i % 2 ? rgb565(54, 112, 58) : rgb565(70, 132, 70));
+    for (int b = 1; b < 5; b++) {                                            // the bands across it
+      int yy = fy - 50 - lv[i][2] * b / 5, xx = bx + lv[i][1] * b / 5;
+      fillRect(xx - 5 + b, yy, xx + 4 - b, yy, rgb565(150, 190, 110));
+    }
+    drawLine(bx - 6, fy - 50, tx - 1, ty, rgb565(190, 180, 80), false);     // a yellow edge
+  }
+}
+
 static void paintDecor(const Decor &d) {
   switch (d.kind) {
     case DEC_CABINET: paintCabinet(d.x, d.y); break;
@@ -1895,6 +2079,15 @@ static void paintDecor(const Decor &d) {
     case DEC_COMPUTER: paintComputerDesk(d.x, d.y); break;
     case DEC_CUPBOARD: paintCupboard(d.x, d.y); break;
     case DEC_SERVER:  paintServer(d.x, d.y); break;
+    case DEC_SERVER2: paintServer2(d.x, d.y); break;
+    case DEC_CRYO:    paintCryo(d.x, d.y); break;
+    case DEC_PANEL2:  paintPanel2(d.x, d.y); break;
+    case DEC_WASTE:   paintWaste(d.x, d.y); break;
+    case DEC_WHEELIE: paintWheelie(d.x, d.y); break;
+    case DEC_PRINTER: paintPrinter(d.x, d.y); break;
+    case DEC_ROBOT:   paintRobot(d.x, d.y); break;
+    case DEC_TV:      paintTV(d.x, d.y); break;
+    case DEC_PLANT2:  paintPlant2(d.x, d.y); break;
     case DEC_FIRSTAID: paintFirstAid(d.x, d.y, rooms[curRoom].kitUsed); break;
     case DEC_GENERATOR: paintGenerator(d.x, d.y); break;
     case DEC_TERMINAL: paintFacilityTerminal(d.x, d.y); break;
@@ -1939,6 +2132,74 @@ static void drawDecorAnim() {
         float a = clockT * (k ? 3.0f : -2.2f);
         int cx = d.x - 12 + k * 24, cy = top + 24;
         drawLineF(cx + 0.5f, cy + 0.5f, cx + 0.5f + cosf(a) * 6, cy + 0.5f + sinf(a) * 6, rgb565(150, 154, 164), 1.5f);
+      }
+    } else if (d.kind == DEC_SERVER2) {      // each blade's lights: blue, green, now and then amber
+      int x0 = d.x - 31, top = d.y - 124;
+      for (int r = 0; r < 8; r++) {
+        int y = top + 12 + r * 12;
+        for (int k = 0; k < 3; k++) {
+          int ph = (int)(clockT * (6.0f + k)) + k * 5 + r * 11 + d.seed;
+          bool on = ((ph * 2654435761u) >> 12) & 1;
+          uint16_t col = k == 0 ? rgb565(80, 170, 255) : (k == 1 ? rgb565(80, 230, 120) : rgb565(255, 190, 60));
+          if (k == 2 && ((ph * 40503u) >> 9) % 5) on = false;
+          fillRect(x0 + 10 + k * 4, y + 3, x0 + 12 + k * 4, y + 5, on ? col : rgb565(20, 22, 28));
+        }
+        if (((int)(clockT * 2) + r) % 3) fillRect(x0 + 50, y + 3, x0 + 52, y + 5, rgb565(80, 170, 255));
+      }
+    } else if (d.kind == DEC_CRYO) {         // the cold glowing in the porthole, vapour curling off the top
+      int top = d.y - 122;
+      float g = 0.18f + 0.08f * sinf(clockT * 2.0f + d.seed);
+      glowDisc((float)d.x, (float)(top + 46), 16, 140, 210, 255, g);
+      for (int k = 0; k < 3; k++) {
+        float t = fmodf(clockT * 0.5f + k / 3.0f + d.seed * 0.01f, 1.0f);
+        float vx = d.x - 20 + k * 20 + sinf(t * 6 + k) * 6, vy = top + 2 - t * 30;
+        glowDisc(vx, vy, 6 + t * 8, 220, 236, 250, 0.22f * (1 - t));
+      }
+    } else if (d.kind == DEC_PANEL2) {       // a trace running across its screen
+      int x0 = d.x - 30, y0 = d.y - 79;
+      float ph = clockT * 3.0f + d.seed;
+      for (int k = 0; k < 30; k++) {
+        float a = sinf(ph + k * 0.45f) * 4 + sinf(ph * 1.7f + k * 0.9f) * 2;
+        float b2 = sinf(ph + (k + 1) * 0.45f) * 4 + sinf(ph * 1.7f + (k + 1) * 0.9f) * 2;
+        drawLineF(x0 + k * 2.0f, y0 + a, x0 + k * 2.0f + 2, y0 + b2, rgb565(90, 230, 210), 1.0f);
+      }
+      if (fmodf(clockT + d.seed, 1.2f) < 0.6f) fillCircle(d.x + 36, d.y - 63, 2, rgb565(255, 90, 60));
+    } else if (d.kind == DEC_PRINTER) {      // the print head shuttling, the part growing
+      int x0 = d.x - 40, top = d.y - 118;
+      float t = fmodf(clockT * 0.08f + d.seed * 0.001f, 1.0f);
+      int ph = (int)(t * 26);
+      for (int k = 0; k < ph; k++) fillRect(d.x - 12 + k / 4, d.y - 67 - k, d.x + 12 - k / 4, d.y - 67 - k, rgb565(230, 120, 40));   // the part, layer by layer
+      float hx = d.x + sinf(clockT * 7.0f) * 12;
+      int hy = d.y - 72 - ph;
+      fillRect(x0 + 6, hy - 6, x0 + 74, hy - 4, rgb565(140, 146, 158));      // the gantry, the head
+      fillRect((int)hx - 5, hy - 10, (int)hx + 5, hy - 2, rgb565(200, 206, 216));
+      fillRect((int)hx - 1, hy - 2, (int)hx + 1, hy, rgb565(255, 160, 60));
+      drawLine(d.x, top + 8, (int)hx, hy - 10, rgb565(230, 120, 40), false); // the filament
+    } else if (d.kind == DEC_ROBOT) {        // its beacon turning, its brushes spinning
+      int top = d.y - 66;
+      bool on = fmodf(clockT + d.seed * 0.1f, 1.0f) < 0.5f;
+      fillCircle(d.x, top + 1, 3, on ? rgb565(255, 170, 40) : rgb565(110, 70, 20));
+      if (on) glowDisc((float)d.x, (float)(top + 1), 12, 255, 170, 40, 0.3f);
+      for (int k = 0; k < 2; k++) {
+        float a = clockT * 8.0f + k;
+        int cx = d.x - 14 + k * 28, cy = d.y - 4;
+        drawLineF(cx - cosf(a) * 7, cy - sinf(a) * 2, cx + cosf(a) * 7, cy + sinf(a) * 2, rgb565(200, 180, 90), 1.4f);
+      }
+    } else if (d.kind == DEC_TV) {           // left on: snow, and now and then a test card
+      int sx0 = d.x - 33, sy0 = d.y - 116, sx1 = d.x + 20, sy1 = d.y - 72;
+      if (fmodf(clockT + d.seed * 0.01f, 8.0f) < 2.5f) {
+        const uint16_t bars[7] = { rgb565(200, 200, 200), rgb565(200, 200, 40), rgb565(40, 200, 200), rgb565(40, 200, 40),
+                                   rgb565(200, 40, 200), rgb565(200, 40, 40), rgb565(40, 40, 200) };
+        for (int k = 0; k < 7; k++) fillRect(sx0 + (sx1 - sx0) * k / 7, sy0, sx0 + (sx1 - sx0) * (k + 1) / 7 - 1, sy1 - 10, bars[k]);
+        fillRect(sx0, sy1 - 9, sx1, sy1, rgb565(20, 20, 24));
+      } else {
+        uint32_t h = (uint32_t)(clockT * 30) * 2654435761u + d.seed;
+        for (int y = sy0; y <= sy1; y += 2)
+          for (int x = sx0; x <= sx1; x += 3) {
+            h = h * 1664525u + 1013904223u;
+            int v = (int)((h >> 24) & 255) * 3 / 4;
+            fillRect(x, y, x + 2, y + 1, rgb565(v, v, v));
+          }
       }
     } else if (d.kind == DEC_TERMINAL) {         // its screen: LOGIN with a cursor; the beacon turning
       int x = d.x, fy = d.y;

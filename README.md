@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 076: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 077: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -75,10 +75,16 @@ where the room has one.
 ## Equipment and the score
 
 Every room has 4 or 5 pieces of equipment to search, 128 in the whole complex,
-each a different kind in its room, from twelve: from NUCLEAR MISSION a filing
-cabinet, safe, plant, radar, control panel, wooden desk, water cooler,
+each a different kind in its room, from twenty-one: from NUCLEAR MISSION a
+filing cabinet, safe, plant, radar, control panel, wooden desk, water cooler,
 bookshelf and coat stand; new, a desk with a computer (its screen scrolling),
-a steel cupboard and a computer rack (its lamps winking, tapes turning).
+a steel cupboard and a computer rack (its lamps winking, tapes turning); and
+since version 077 a glass-fronted server rack (each blade's lights blinking),
+a cryogenic cabinet (its porthole glowing blue, vapour curling off the top), a
+console (a trace running across its screen), a waste disposal unit, a large
+wheelie bin, a 3D printer (its head shuttling, the part growing layer by
+layer), an industrial cleaning robot (beacon turning, brushes spinning), a TV
+on a stand (snow, now and then a test card) and a snake plant.
 
 Each column of rooms has its own wall colour (teal, maroon, olive, navy,
 purple, rust, forest green, mustard, plum - `wallColours` in `src/game.cpp`).
