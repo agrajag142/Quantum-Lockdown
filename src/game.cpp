@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "068"
+#define GAME_VERSION      "069"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -6238,6 +6238,7 @@ static void resetHazardsForEntry(bool fromLeft) {
 static void computeBonuses();
 static float s2Countdown(bool *impact);
 
+static void plasmaEnter();
 static void enterRoom(int idx, bool fromLeft) {
   mode = MODE_ROOM;
   curRoom = idx;
@@ -6258,6 +6259,7 @@ static void enterRoom(int idx, bool fromLeft) {
   elecSafeFor = ELEC_SAFE_MIN + fxRnd(0, (int)((ELEC_SAFE_MAX - ELEC_SAFE_MIN) * 100)) / 100.0f;
   darkT = 0;
   lightsOut = false;
+  plasmaEnter();                             // (stage 1's power surge, if 2 generators are on)
   int y = fromLeft ? doorYL : doorYR;
   placeAgent(fromLeft ? 36 : SCREEN_W - 36, (float)y, fromLeft ? 1 : -1);
   // the cameras: each starts its sweep at the far end of the room
@@ -10443,6 +10445,7 @@ static void updateAgent(float dt) {
             if (n >= GENERATORS) snprintf(b, sizeof(b), "ALL %d POWER GENERATORS ON   +%d MINUTES", GENERATORS, bonus / 60);
             else snprintf(b, sizeof(b), "POWER GENERATOR ON - %d OF %d   +%d MINUTES", n, GENERATORS, bonus / 60);
             showMsg(b, 3.5f);
+            if (n == 2) flyerAdd("POWER SURGE - PLASMA DISCHARGES IN THE ROOMS", false);   // (the rooms with no hazard: plasma, from now)
             break;
           }
           if (decor[i].kind == DEC_TERMINAL) {   // the facility terminal: logged into
@@ -10885,8 +10888,147 @@ static void updateDrone(float dt) {
   }
 }
 
+// ---- STAGE 1's power surge: with 2 of the 3 generators on, the rooms with no hazard get plasma discharges -
+// columns of hot plasma, ceiling to floor or floor to ceiling, on the left of the room and the right, by turns:
+// "down, down, up" or "up, down". A small ball of plasma shows first where it'll come from. Caught in one: the
+// live floor's penalty (ELECTROCUTED!: 10 health, 30 seconds, the door).
+#define PZ_WARN 1.0f                         // the ball, growing
+#define PZ_TRAVEL 0.22f                      // the column, crossing the room
+#define PZ_HOLD 0.45f                        // (then burning)
+#define PZ_FADE 0.22f
+#define PZ_GAP 0.75f                         // between one and the next
+#define PZ_PAUSE 1.9f                        // between one sequence and the next
+#define PZ_HALF 22                           // (half its width)
+static int pzPhase = 0, pzStep = 0, pzPattern = 0, pzSide = 0;   // (phase: 0 waiting, 1 the ball, 2 the column)
+static float pzT = 0;
+static int pzX[2] = { 320, 960 };
+static bool pzDown() { return pzPattern == 0 ? pzStep < 2 : pzStep == 1; }   // (0: down, down, up; 1: up, down)
+static int pzSteps() { return pzPattern == 0 ? 3 : 2; }
+static bool plasmaOn() {
+  return stage == 1 && mode == MODE_ROOM && curRoom < ROOM_COUNT && curHazard == HZ_NONE && generatorsOn() >= 2;
+}
+static void plasmaEnter() {                  // (into a room: the columns' places, a moment's grace)
+  uint16_t sd = curRoom < ROOM_COUNT ? rooms[curRoom].seed : 0;
+  pzX[0] = 270 + sd % 130;
+  pzX[1] = 1010 - (sd >> 7) % 130;
+  auto ok = [](int x) {                      // (not over a pit - its floor emitter needs a floor - nor in a lift's shaft)
+    if (x < 110 || x > SCREEN_W - 110) return false;
+    for (int i = 0; i < pitCount; i++) if (x > pits[i][0] - 40 && x < pits[i][1] + 40) return false;
+    for (int i = 0; i < liftCount; i++) if (x > lifts[i].x0 - 36 && x < lifts[i].x1 + 36) return false;
+    return true;
+  };
+  for (int c = 0; c < 2; c++) {              // the free place nearest where it'd like to be (the left one left of the right)
+    int want = pzX[c], best = -1;
+    for (int x = 110; x <= SCREEN_W - 110; x += 4) {
+      if (!ok(x)) continue;
+      if (c == 1 && x < pzX[0] + 200) continue;
+      if (best < 0 || abs(x - want) < abs(best - want)) best = x;
+    }
+    if (best >= 0) pzX[c] = best;
+  }
+  pzPhase = 0;
+  pzT = -1.2f;
+  pzStep = 0;
+  pzPattern = fxRnd(0, 2);
+  pzSide = fxRnd(0, 2);
+}
+static void plasmaSpan(float *y0, float *y1) {   // the part of the room the column fills now
+  float k = fminf(1.0f, pzT / PZ_TRAVEL), top = CEIL_Y, bot = ROOM_FLOOR_Y;
+  if (pzDown()) { *y0 = top; *y1 = top + (bot - top) * k; }
+  else { *y1 = bot; *y0 = bot - (bot - top) * k; }
+}
+static void updatePlasma(float dt) {
+  if (!plasmaOn()) return;
+  pzT += dt;
+  switch (pzPhase) {
+    case 0:
+      if (pzT >= 0) { pzPhase = 1; pzT = 0; sfxPlay(SFX_BUZZ); }
+      break;
+    case 1:
+      if (pzT >= PZ_WARN) { pzPhase = 2; pzT = 0; sfxPlay(SFX_IGNITE); sfxPlay(SFX_ZAP); }
+      break;
+    case 2: {
+      if (pzT < PZ_TRAVEL + PZ_HOLD && agState != ST_SHOCK && agState != ST_KO && agState != ST_CAUGHT && gameOver == END_NONE) {
+        float y0, y1;
+        plasmaSpan(&y0, &y1);
+        float top = agY - 140, x = (float)pzX[pzSide];
+        if (fabsf(agX - x) < PZ_HALF + 12 && agY > y0 && top < y1) {   // caught in it
+          if (agState == ST_LIFT && agLift >= 0) lifts[agLift].moving = false;
+          searchItem = -1;
+          elecSoundT = 0;
+          showMsg("CAUGHT IN THE PLASMA!", 1.6f);
+          setState(ST_SHOCK, 0.05f);
+        }
+      }
+      if (pzT >= PZ_TRAVEL + PZ_HOLD + PZ_FADE) {   // the next: the other side
+        pzSide ^= 1;
+        if (++pzStep >= pzSteps()) {
+          pzStep = 0;
+          pzPattern = fxRnd(0, 2);
+          pzPhase = 0;
+          pzT = -PZ_PAUSE;
+        } else {
+          pzPhase = 0;
+          pzT = -PZ_GAP;
+        }
+      }
+      break;
+    }
+  }
+}
+static void drawPlasma() {
+  if (!plasmaOn()) return;
+  for (int sd = 0; sd < 2; sd++) {           // the emitters: in the ceiling, in the floor
+    int x = pzX[sd];
+    fillRect(x - 22, CEIL_Y, x + 22, CEIL_Y + 12, rgb565(60, 54, 70));
+    fillRect(x - 14, CEIL_Y + 12, x + 14, CEIL_Y + 20, rgb565(90, 80, 104));
+    fillRect(x - 10, CEIL_Y + 20, x + 10, CEIL_Y + 22, rgb565(255, 120, 220));
+    fillRect(x - 24, ROOM_FLOOR_Y - 5, x + 24, ROOM_FLOOR_Y - 1, rgb565(60, 54, 70));
+    for (int g = -18; g <= 18; g += 6) fillRect(x + g - 1, ROOM_FLOOR_Y - 5, x + g + 1, ROOM_FLOOR_Y - 2, rgb565(30, 26, 36));
+    fillRect(x - 10, ROOM_FLOOR_Y - 7, x + 10, ROOM_FLOOR_Y - 5, rgb565(255, 120, 220));
+  }
+  float x = (float)pzX[pzSide];
+  bool down = pzDown();
+  float oy = down ? CEIL_Y + 30.0f : ROOM_FLOOR_Y - 16.0f;   // (where it comes from)
+  if (pzPhase == 1) {                        // the small plasma ball first: growing, crackling
+    float k = pzT / PZ_WARN, r = 4 + 12 * k;
+    glowDisc(x, oy, r * 3.0f, 255, 90, 210, 0.35f + 0.3f * k);
+    fillCircle((int)x, (int)oy, (int)r, rgb565(255, 170, 240));
+    fillCircle((int)x, (int)oy, (int)(r * 0.5f), rgb565(255, 250, 255));
+    for (int sp = 0; sp < 3; sp++) {
+      float a = frnd(0, 6.283f), l = r + frnd(4, 14);
+      drawLineF(x, oy, x + cosf(a) * l, oy + sinf(a) * l, rgb565(255, 200, 250), 1.5f);
+    }
+  } else if (pzPhase == 2) {                 // the column
+    float y0, y1;
+    plasmaSpan(&y0, &y1);
+    float fade = pzT > PZ_TRAVEL + PZ_HOLD ? 1.0f - (pzT - PZ_TRAVEL - PZ_HOLD) / PZ_FADE : 1.0f;
+    if (fade <= 0) return;
+    blendRect((int)x - PZ_HALF - 14, (int)y0, (int)x + PZ_HALF + 14, (int)y1, 255, 60, 190, 0.16f * fade);
+    blendRect((int)x - PZ_HALF, (int)y0, (int)x + PZ_HALF, (int)y1, 255, 110, 220, 0.38f * fade);
+    for (int st = 0; st < 3; st++) {         // its core, writhing
+      float px = x, py = y0;
+      uint16_t c = st == 0 ? rgb565(255, 250, 255) : rgb565(255, 160, 235);
+      for (float y = y0 + 18; y <= y1 + 0.5f; y += 18) {
+        float nx = x + sinf(y * 0.05f + clockT * 23 + st * 2.1f) * (st == 0 ? 4 : 10) + frnd(-3, 3);
+        drawLineF(px, py, nx, fminf(y, y1), c, st == 0 ? 4.0f : 2.0f);
+        px = nx;
+        py = fminf(y, y1);
+      }
+    }
+    float ey = down ? y1 : y0;               // where it strikes: a splash
+    glowDisc(x, ey, 60, 255, 120, 220, 0.5f * fade);
+    for (int sp = 0; sp < 5; sp++) {
+      float a = down ? frnd(3.4f, 6.0f) : frnd(0.3f, 2.8f), l = frnd(10, 34);
+      drawLineF(x, ey, x + cosf(a) * l, ey + sinf(a) * l, rgb565(255, 220, 250), 1.5f);
+    }
+    glowDisc(x, oy, 30, 255, 200, 250, 0.5f * fade);
+  }
+}
+
 static void updateHazards(float dt) {
   if (mode != MODE_ROOM || gameOver != END_NONE) return;
+  updatePlasma(dt);
   if (camCount > 0) updateCameras(dt);
   if (curHazard == HZ_DRONE || curHazard == HZ_CAMDRONE) updateDrone(dt);
   if (curHazard == HZ_DARK && !lightsOut) {   // a couple of flickers, then out
@@ -13753,6 +13895,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   }
   if (mode == MODE_ROOM && agState == ST_SHOCK) drawShockSparks();
   if (mode == MODE_ROOM && camCount > 0) drawCameras();
+  if (mode == MODE_ROOM && !lightsOut) drawPlasma();
   if (mode == MODE_ROOM && stage == 2 && curRoom < S2_ROOMS && (s2Kind[curRoom] == LK_CLONE || s2Kind[curRoom] == LK_QLAB2)) drawGas();
   if (mode == MODE_ROOM && stage == 2 && curRoom < S2_ROOMS && s2Kind[curRoom] == LK_HAZARD) drawHazStorage();
   if (mode == MODE_ROOM && (curHazard == HZ_DRONE || curHazard == HZ_CAMDRONE)) drawDrone();

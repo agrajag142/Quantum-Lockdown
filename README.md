@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 068: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 069: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -846,6 +846,18 @@ number:
 
 None in room 1, where he starts. The map marks the ones he has been in.
 
+- **Plasma discharges** (the power surge): once **2 of the 3 power generators**
+  are on (POWER SURGE - PLASMA DISCHARGES IN THE ROOMS), every stage 1 room
+  with no other hazard (room 1 too) gets two plasma emitters - one on the left of the room,
+  one on the right, each in the ceiling and in the floor (never over a pit or in
+  a lift's shaft). By turns, left and right, a column of **hot plasma** shoots
+  ceiling to floor or floor to ceiling, in a sequence of either **down, down,
+  up** or **up, down** (a pause between sequences, a new one at random). Each is
+  shown first: a **small ball of plasma** grows and crackles where it'll come
+  from (a second), then the column crosses the room in a moment and burns there
+  for half a second. Caught in it, on any level: **the electrified floor's
+  penalty** (CAUGHT IN THE PLASMA!, then ELECTROCUTED! - 10 health, 30 seconds
+  and back to the door; it counts against the no electrocution bonus).
 - **Electrified floor** (6 rooms, 20%; from NUCLEAR MISSION): a HIGH VOLTAGE
   sign on the wall. Every 4 to 7 seconds the lights flicker and the floor
   crackles with a buzz (the warning, 1.6 seconds), then the floor is live
