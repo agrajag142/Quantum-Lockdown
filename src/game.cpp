@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "070"
+#define GAME_VERSION      "071"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -5644,12 +5644,11 @@ static void drawEndRoomsBack(int k) {
   }
 }
 
-static void drawQComputerAnim() {
-  float t = clockT;
-  // the fans, spinning
+static void drawQcMachine(float power, float t, float spin) {   // the fans, the lights, the racks, the gas (power: 0 off .. 1 running)
+  // the fans (spin: how far round they've gone)
   for (int f = 0; f < 3; f++) {
     int cx = 527 + f * 113, cy = 160;
-    float a0 = t * 9.0f * (f == 1 ? -1 : 1) + f;
+    float a0 = spin * (f == 1 ? -1 : 1) + f;
     for (int b = 0; b < 5; b++) {
       float a = a0 + b * 1.2566f;
       drawLineF((float)cx, (float)cy, cx + cosf(a) * 32, cy + sinf(a) * 32, rgb565(120, 140, 170), 5.0f);
@@ -5657,28 +5656,31 @@ static void drawQComputerAnim() {
     fillCircle(cx, cy, 8, rgb565(160, 176, 200));
     drawCircle(cx, cy, 38, rgb565(80, 100, 130));
   }
-  // the cryostat's glow; the lights on its stages, blinking blue; the chip, pulsing
-  glowDisc(QC_X, 420, 190, 60, 150, 255, 0.10f + 0.04f * sinf(t * 1.3f));
+  if (power <= 0) return;
+  // the cryostat's glow; the lights on its stages, blinking blue (coming on from the bottom up); the chip, pulsing
+  glowDisc(QC_X, 420, 190, 60, 150, 255, (0.10f + 0.04f * sinf(t * 1.3f)) * power);
   static const int tierY[4] = { 280, 360, 440, 516 }, tierW[4] = { 170, 140, 110, 80 };
-  for (int k = 0; k < 4; k++)
+  for (int k = 0; k < 4; k++) {
+    if (power < 1.0f - k * 0.22f - 0.12f) continue;
     for (int i = 0; i < 6; i++) {
       int x = QC_X - tierW[k] / 2 + 12 + i * (tierW[k] - 24) / 5;
       bool on = ((int)(t * 4 + i * 3 + k * 5) % 7) != 0;
       if (on) { glowDisc((float)x, (float)tierY[k] + 12, 9, 80, 180, 255, 0.6f); fillCircle(x, tierY[k] + 12, 2, rgb565(180, 230, 255)); }
     }
+  }
   float pulse = 0.5f + 0.5f * sinf(t * 3.0f);
-  glowDisc(QC_X, 557, 50, 60, 170, 255, 0.35f + 0.3f * pulse);
-  fillRect(QC_X - 26, 551, QC_X + 26, 563, rgb565(60 + (int)(80 * pulse), 150 + (int)(60 * pulse), 255));
-  blendRect(540, QC_GLASS_Y0 + 6, 740, QC_GLASS_Y1, 120, 190, 255, 0.07f);   // (the glass)
+  glowDisc(QC_X, 557, 50, 60, 170, 255, (0.35f + 0.3f * pulse) * power);
+  fillRect(QC_X - 26, 551, QC_X + 26, 563, rgb565(60 + (int)(80 * pulse * power), 60 + (int)((90 + 60 * pulse) * power), 90 + (int)(165 * power)));
+  blendRect(540, QC_GLASS_Y0 + 6, 740, QC_GLASS_Y1, 120, 190, 255, 0.07f * power);   // (the glass)
   // the racks' lights
   for (int r = 0; r < 6; r++)
     for (int c = 0; c < 6; c++) {
-      bool on = ((int)(t * 3 + r * 7 + c * 11) % 5) != 0;
+      bool on = ((int)(t * 3 + r * 7 + c * 11) % 5) != 0 && r * 6 + c < power * 40;
       fillRect(306 + c * 8, ROOM_FLOOR_Y - 202 + r * 34, 310 + c * 8, ROOM_FLOOR_Y - 196 + r * 34, on ? rgb565(70, 170, 255) : rgb565(20, 40, 70));
     }
   for (int r = 0; r < 8; r++)
     for (int c = 0; c < 9; c++) {
-      bool on = ((int)(t * 5 + r * 5 + c * 13) % 6) > 1;
+      bool on = ((int)(t * 5 + r * 5 + c * 13) % 6) > 1 && r * 9 + c < power * 80;
       fillRect(974 + c * 9, ROOM_FLOOR_Y - 215 + r * 27, 979 + c * 9, ROOM_FLOOR_Y - 210 + r * 27,
                on ? ((r + c) % 4 ? rgb565(60, 160, 255) : rgb565(150, 230, 255)) : rgb565(18, 34, 60));
     }
@@ -5689,10 +5691,14 @@ static void drawQComputerAnim() {
     float u = fmodf(t * 0.07f + j * 0.137f, 1.0f);
     int side = j & 1 ? 1 : -1;
     float x = QC_X + side * (118 + 50 * u + 10 * sinf(t * 0.8f + j)), y = ROOM_FLOOR_Y - 30 - u * 470;
-    float a = 0.34f * (1 - u) * fminf(1.0f, u * 6);
+    float a = 0.34f * (1 - u) * fminf(1.0f, u * 6) * power;
     glowDisc(x, y, 22 + 44 * u, 220, 240, 255, a);
     glowDisc(x + side * 6, y - 8, 12 + 24 * u, 240, 250, 255, a * 0.8f);
   }
+}
+static void drawQComputerAnim() {
+  float t = clockT;
+  drawQcMachine(1.0f, t, t * 9.0f);
   // the sites' status
   drawVectorText("SITE STATUS", 230, 172, 2.0f, rgb565(120, 200, 255), true);
   fillRect(84, 188, 376, 189, rgb565(40, 90, 140));
@@ -13475,14 +13481,163 @@ static void drawTitleEffects() {
     }
 }
 
+// ---- the title's first scene: DR. VOSS starts his quantum computer and it hacks the five nuclear sites. His
+// room (as in stage 2), dark; he walks in to the console; the machine powers up (the fans spinning up, its lights
+// coming on from the bottom, the cooling gas); the monitor boots and breaks into each site in turn, the SITE
+// STATUS screen going SECURE, BREACHING..., HACKED; then LAUNCH CONTROL ACQUIRED, and him turning to us.
+#define VS_SECONDS 26.0f
+#define VS_POWER_AT 6.0f                     // (he starts it)
+#define VS_HACK_AT 11.0f                     // (the first site; then one every 2.4 seconds)
+#define VS_HACK_EACH 2.4f
+static bool vsOn = false;
+static float vsT = 0, vsSpin = 0;
+static void paintVossRoom() {                // the quantum computer room, into roomBg (as stage 2 paints it)
+  gfxTarget = roomBg;
+  gfxClipAll();
+  pxRect(0, 0, FB_W - 1, FB_H - 1, 0);
+  fillRect(0, HUD_H, SCREEN_W - 1, CEIL_Y - 1, rgb565(214, 218, 224));
+  labStripe(0, SCREEN_W - 1, CEIL_Y, CEIL_Y + 12);
+  labDuctBand(0, SCREEN_W - 1, CEIL_Y + 16, CEIL_Y + 58);
+  armoryWall();
+  paintTestRoom();
+  labFloor(0, SCREEN_W - 1, ROOM_FLOOR_Y, PLAY_Y1);
+  paintLabSide(false, ROOM_FLOOR_Y, true);
+  paintLabSide(true, ROOM_FLOOR_Y, true);
+  gfxTarget = g_frame;
+}
+static void startVossScene() {
+  vsOn = true;
+  vsT = 0;
+  vsSpin = 0;
+  paintVossRoom();
+}
+static float vsPower() { return clampv((vsT - VS_POWER_AT) / 3.5f, 0.0f, 1.0f); }
+static void updateVossScene(float dt) {
+  vsT += dt;
+  vsSpin += dt * 9.0f * vsPower();           // (the fans spinning up)
+  if (vsT >= VS_SECONDS) vsOn = false;
+}
+static int vsSiteState(int i) {              // 0 secure, 1 breaching, 2 hacked
+  float t0 = VS_HACK_AT + i * VS_HACK_EACH;
+  return vsT < t0 ? 0 : vsT < t0 + VS_HACK_EACH * 0.75f ? 1 : 2;
+}
+static void drawVossScene() {
+  memcpy(g_frame, roomBg, sizeof(roomBg));
+  float t = vsT, pw = vsPower();
+  drawQcMachine(pw, t, vsSpin);
+  // DR. VOSS: in at the left door, across to the console, working it, then turning to us
+  AgentPose p;
+  float x, walkEnd = 4.2f;
+  int dir = 1;
+  if (t < 0.6f) { x = -40; p = PERSON_IDLE; }
+  else if (t < walkEnd) { x = -40 + (230 - -40) * (t - 0.6f) / (walkEnd - 0.6f); personWalk(p, t * 1.4f); }
+  else if (t < VS_HACK_AT + 5 * VS_HACK_EACH + 0.6f) {   // at the console
+    x = 230;
+    p = PERSON_IDLE;
+    p.armN = 70 + 12 * sinf(t * 8); p.elbowN = 50; p.armF = 60 + 10 * sinf(t * 8 + 1.5f); p.elbowF = 56;
+    p.torso = 8;
+    p.head = 10;
+    dir = -1;
+  } else {                                   // done: he turns to us, shaking with laughter
+    x = 230;
+    p = PERSON_IDLE;
+    p.head = -10 + 4 * sinf(t * 18);
+    p.torso = -4 + 2 * sinf(t * 18);
+    p.armN = -30; p.elbowN = 80; p.armF = -20; p.elbowF = 90;
+    dir = 1;
+  }
+  if (x > -30) drawPersonU(p, x, ROOM_FLOOR_Y, dir, AGENT_SCALE, PK_PROFESSOR);
+  // the screens: dark, then booting
+  char b[64];
+  if (pw > 0.3f) {                           // SITE STATUS (left)
+    drawVectorText("SITE STATUS", 230, 172, 2.0f, rgb565(120, 200, 255), true);
+    fillRect(84, 188, 376, 189, rgb565(40, 90, 140));
+    for (int i = 0; i < NUKE_SITES; i++) {
+      int y = 214 + i * 38, st = vsSiteState(i);
+      drawTextLeft(siteName[i], 86, (float)y, 1.25f, rgb565(190, 210, 235), false);
+      const char *w = st == 0 ? "SECURE" : st == 1 ? "BREACHING..." : "HACKED";
+      uint16_t c = st == 0 ? rgb565(90, 240, 130) : st == 1 ? rgb565(255, 190, 60) : rgb565(255, 70, 50);
+      if (st == 1 && fmodf(t, 0.5f) > 0.32f) continue;
+      drawTextLeft(w, 376 - vectorTextWidth(w, 1.5f), (float)y + 14, 1.5f, c, true);
+    }
+  }
+  if (pw > 0.15f) {                          // the quantum computer's monitor (right)
+    drawTextLeft("Q-CORE  1024 QUBITS", 892, 166, 1.3f, rgb565(100, 170, 230), false);
+    fillRect(890, 180, 1200, 181, rgb565(40, 90, 140));
+    if (t < VS_HACK_AT) {                    // booting
+      static const char *const boot[5] = { "POWER ON", "CRYO COOLING  0.010 K", "QUBITS ENTANGLED", "ERROR CORRECTION OK", "BREACH ROUTINES LOADED" };
+      for (int k = 0; k < 5; k++) {
+        float at = VS_POWER_AT + 0.4f + k * 0.85f;
+        if (t < at) break;
+        drawTextLeft(boot[k], 894, 204.0f + k * 24, 1.35f, rgb565(140, 220, 255), false);
+        if (t - at > 0.5f) drawTextLeft("OK", 1170, 204.0f + k * 24, 1.35f, rgb565(90, 240, 130), true);
+      }
+    } else {
+      int cur = (int)((t - VS_HACK_AT) / VS_HACK_EACH);
+      if (cur < NUKE_SITES) {                // breaking into one site
+        float k = fmodf(t - VS_HACK_AT, VS_HACK_EACH) / (VS_HACK_EACH * 0.75f);
+        snprintf(b, sizeof(b), "TARGET %d/5", cur + 1);
+        drawTextLeft(b, 894, 206, 1.5f, rgb565(255, 190, 60), true);
+        drawTextLeft(siteName[cur], 894, 232, 1.4f, rgb565(240, 244, 250), true);
+        for (int l = 0; l < 3; l++) {        // codes racing by
+          char hx[40];
+          int v = (int)(t * 37 + l * 911 + cur * 77);
+          snprintf(hx, sizeof(hx), "%04X %04X %04X %04X", (v * 2654) & 0xFFFF, (v * 40503) & 0xFFFF, (v * 9973) & 0xFFFF, (v * 7919) & 0xFFFF);
+          drawTextLeft(hx, 894, 262.0f + l * 18, 1.2f, rgb565(70, 150, 210), false);
+        }
+        fillRect(894, 330, 1196, 344, rgb565(20, 40, 70));
+        fillRect(894, 330, 894 + (int)(302 * fminf(1.0f, k)), 344, k >= 1 ? rgb565(255, 70, 50) : rgb565(80, 180, 255));
+        if (k >= 1) drawVectorText("ACCESS GRANTED", 1045, 364, 1.8f, rgb565(255, 90, 70), true);
+      } else if (fmodf(t, 0.8f) < 0.55f) {   // all of them
+        drawVectorTextW("LAUNCH CONTROL", 1045, 226, 2.8f, rgb565(255, 70, 50), 2.0f);
+        drawVectorTextW("ACQUIRED", 1045, 266, 2.8f, rgb565(255, 70, 50), 2.0f);
+        drawVectorText("5 OF 5 SITES HACKED", 1045, 310, 1.6f, rgb565(255, 190, 60), false);
+      }
+    }
+  }
+  // the dark, lifting as it powers up; the fades in and out
+  float dark = 0.62f * (1 - pw);
+  if (dark > 0) blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, dark);
+  float fade = fminf(1.0f, t / 1.0f) * fminf(1.0f, (VS_SECONDS - t) / 1.0f);
+  if (fade < 1) blendRect(0, 0, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 1 - fade);
+  // the captions
+  static const struct { float t0, t1; const char *w; } cap[] = {
+    { 1.0f, 5.5f, "DEEP BENEATH THE FACILITY..." },
+    { 6.0f, 10.5f, "DR. VOSS AWAKENS HIS QUANTUM COMPUTER" },
+    { 11.5f, 17.5f, "NO SECURITY ON EARTH CAN STOP IT" },
+    { 18.5f, 23.0f, "ONE BY ONE, THE NUCLEAR SITES FALL" },
+    { 23.0f, 25.5f, "THE COUNTDOWN HAS BEGUN" },
+  };
+  for (const auto &c : cap)
+    if (t >= c.t0 && t < c.t1) {
+      float a = fminf(1.0f, fminf(t - c.t0, c.t1 - t) / 0.4f);
+      float w = vectorTextWidth(c.w, 3.0f);
+      blendRect((int)(SCREEN_W / 2 - w / 2 - 20), 606, (int)(SCREEN_W / 2 + w / 2 + 20), 646, 0, 0, 0, 0.6f * a);
+      drawVectorText(c.w, SCREEN_W / 2, 626, 3.0f, rgb565((int)(240 * a), (int)(236 * a), (int)(220 * a)), true);
+    }
+}
+
 // The title's background: NUCLEAR MISSION's launch, over and over (a random site); every sixth, a landing (a random city)
 static int titleLaunches = 0;
+static int titleSeq = 0;                     // (0: Dr. Voss, 1..5: launches, 6: a landing)
 #define TS_CROP_Y 170                        // (the part of the scene's square shown: 720 wide, 405 high, filling the screen)
 static void updateTitleScene(float dt) {
   sfxMute = true;
+  if (vsOn) {
+    updateVossScene(dt);
+    sfxMute = false;
+    return;
+  }
   if (!launchOn) {
     launchQueued = 0;
-    if (titleLaunches % 6 == 5) {
+    int item = titleSeq;
+    titleSeq = (titleSeq + 1) % 7;
+    if (item == 0) {
+      startVossScene();
+      sfxMute = false;
+      return;
+    }
+    if (item == 6) {
       int c = fxRnd(0, N_CITIES);
       landCity[0] = c;
       landDeaths[0] = cities[c].lo + (uint32_t)fxRnd(0, 1000) * ((cities[c].hi - cities[c].lo) / 1000);
@@ -13543,6 +13698,14 @@ static void drawScaledScene(int cropY, uint32_t bright) {
 static void drawTitle() {
   gfxTarget = g_frame;
   gfxClipAll();
+  if (vsOn) {                                // Dr. Voss's scene: the room full screen; the name small along the top
+    drawVossScene();
+    gfxClipAll();
+    blendRect(0, 0, SCREEN_W - 1, HUD_H + 4, 0, 0, 0, 0.85f);
+    drawVectorTextW("QUANTUM LOCKDOWN", SCREEN_W / 2, 22, 3.6f, rgb565(255, 190, 70), 2.4f);
+    if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 694, 2.6f, rgb565(240, 240, 245), true);
+    return;
+  }
   drawTitleScene();                          // NUCLEAR MISSION's launch (and now and then a landing) behind it all
   gfxClipAll();
   // the name, in big vector letters with a glow behind (now and then reality glitches: it splits red and cyan)
@@ -13635,6 +13798,8 @@ static void goToTitle() {
   launchOn = false;                          // (the title's own launches, from the first)
   launchQueued = 0;
   titleLaunches = 0;
+  titleSeq = 0;                              // (Dr. Voss's scene first)
+  vsOn = false;
   tuneWanted.store(3, std::memory_order_relaxed);   // (the title's tune, from the top)
   titleFromStart.store(true);
 }
