@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 073: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 074: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -887,7 +887,12 @@ None in room 1, where he starts. The map marks the ones he has been in.
   goes amber while it is on him, red when it catches him: an alarm,
   "CAUGHT ON CAMERA! -30 SECONDS", 30 seconds off the clock, hands up, and back
   at the door he came in by. Each camera starts its sweep at the far end, and
-  gives him a moment after he comes in.
+  gives him a moment after he comes in. A lift ride can't be stopped part way,
+  so each camera is hung where every ride in the room (each run between two
+  stops, up and down) has at least a second's gap in its sweep to set off in
+  and get through unseen (worked out once at start up, `cameraXCalc`) -
+  never just beside a lift pointing across it (THE STEPS used to be
+  impossible).
   **With all 3 power generators on**, a camera that catches him also floods
   the room with **gas** ("CAUGHT ON CAMERA! GAS! -30 SECONDS"): it pours from
   vents in the ceiling and fills the room top down while his hands are up,

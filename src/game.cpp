@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "073"
+#define GAME_VERSION      "074"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -2616,18 +2616,83 @@ static void placeDecor(const RoomInfo &ri, const WideRoom &t) {
 }
 
 // Where a room's security cameras hang (top left / top right corners)
+#define CAM_Y (CEIL_Y + 40)
 static const WideRoom &roomTemplate(int idx);
-static float cameraX(const RoomInfo &ri, bool right) {   // in from the corner, clear of any lift shaft
-  const WideRoom &t = roomTemplate((int)(&ri - rooms));
-  const int tryAt[3] = { 150, 300, 110 };
-  for (int k = 0; k < 3; k++) {
-    int x = right ? SCREEN_W - tryAt[k] : tryAt[k];
+// Can every lift ride in the room be timed past a camera hung at x? A ride
+// can't be stopped part way, so for each run between two stops (up and down)
+// there must be a long enough window of moments to set off in and not be
+// caught on the way. Returns the shortest such window, in seconds
+static float camLiftSlack(const WideRoom &t, float x, float period) {
+  float mid = x < SCREEN_W / 2 ? CAM_MID_DEG : -CAM_MID_DEG;
+  float worst = 99;
+  const int N = 120;                                   // moments in the sweep to set off at
+  const float dt = 1.0f / 30;
+  for (int i = 0; i < t.liftCount; i++) {
+    const TLift &tl = t.lifts[i];
+    for (int s = 0; s + 1 < tl.n; s++)
+      for (int dir = 0; dir < 2; dir++) {
+        float y0 = dir ? tl.stops[s + 1] : tl.stops[s], y1 = dir ? tl.stops[s] : tl.stops[s + 1];
+        float ride = fabsf(y1 - y0) / LIFT_SPEED;
+        float bestWin = 0;
+        for (int a = 0; a < 3; a++) {                  // where on the pad he stands
+          float px = a == 0 ? tl.x0 + 16.0f : a == 1 ? (tl.x0 + tl.x1) * 0.5f : tl.x1 - 16.0f;
+          bool ok[N];
+          for (int k = 0; k < N; k++) {
+            float seen = 0;
+            ok[k] = true;
+            for (float tt = 0; tt <= ride + 0.25f; tt += dt) {   // (and stepping off)
+              float fy = y0 + (y1 - y0) * fminf(tt / fmaxf(ride, 0.01f), 1.0f);
+              float ang = mid + (mid > 0 ? 1 : -1) * CAM_SWING_DEG * sinf(TWO_PI * (k * period / N + tt) / period);
+              bool in = false;
+              for (int h = 0; h < 3 && !in; h++) {
+                float dy = fy - 8 - h * 42 - CAM_Y, dx = px - x;
+                if (dy > 0 && fabsf(atan2f(dx, dy) * 57.29578f - ang) <= CAM_HALF_DEG) in = true;
+              }
+              seen = in ? seen + dt : 0;
+              if (seen >= CAM_REACT) { ok[k] = false; break; }
+            }
+          }
+          int run = 0, best = 0;
+          for (int k = 0; k < 2 * N; k++) { run = ok[k % N] ? run + 1 : 0; if (run > best) best = run; }
+          if (best > N) best = N;
+          bestWin = fmaxf(bestWin, best * period / N);
+        }
+        worst = fminf(worst, bestWin);
+      }
+  }
+  return worst;
+}
+static float cameraXFor(const WideRoom &t, bool right);
+static float cameraX(const RoomInfo &ri, bool right) {   // in from the corner, clear of any lift shaft, and every lift ride timeable
+  return cameraXFor(roomTemplate((int)(&ri - rooms)), right);
+}
+static float cameraXCalc(const WideRoom &t, bool right);
+static float cameraXFor(const WideRoom &t, bool right) {
+  static struct { const WideRoom *t; bool right; float x; } memo[64];   // (worked out once - see warmCameras)
+  static int memoN = 0;
+  for (int m = 0; m < memoN; m++) if (memo[m].t == &t && memo[m].right == right) return memo[m].x;
+  float x = cameraXCalc(t, right);
+  if (memoN < 64) memo[memoN++] = { &t, right, x };
+  return x;
+}
+static void warmCameras() {                    // (at start up: the stage 1 rooms' camera spots, so no room stutters as he comes in)
+  for (int i = 0; i < WIDE_ROOM_COUNT; i++)
+    for (int r = 0; r < 2; r++) cameraXFor(wideRooms[i], r);
+}
+static float cameraXCalc(const WideRoom &t, bool right) {
+  float bestX = right ? SCREEN_W - 150.0f : 150.0f, bestSlack = -99;
+  for (int k = 0; k <= 26; k++) {
+    int in = k == 0 ? 150 : k == 1 ? 300 : 90 + (k - 2) * 20;   // (the old spots first)
+    int x = right ? SCREEN_W - in : in;
     bool clear = true;
     for (int i = 0; i < t.liftCount; i++)
       if (x > t.lifts[i].x0 - 44 && x < t.lifts[i].x1 + 44) clear = false;
-    if (clear) return (float)x;
+    if (!clear) continue;
+    float slack = camLiftSlack(t, (float)x, CAM_PERIOD);
+    if (slack >= 1.0f) return (float)x;           // (a second's window to set off in, at least)
+    if (slack > bestSlack) { bestSlack = slack; bestX = (float)x; }
   }
-  return right ? SCREEN_W - 150.0f : 150.0f;
+  return bestX;
 }
 static int roomCameras(const RoomInfo &ri, float *xs) {
   if (ri.hazard == HZ_CAMERA2) {
@@ -2641,7 +2706,7 @@ static int roomCameras(const RoomInfo &ri, float *xs) {
   }
   return 0;
 }
-#define CAM_Y (CEIL_Y + 40)
+
 
 // ---- the walls' ornaments: where they go
 // Kept clear: the platforms, the lift shafts, the equipment (and the space
@@ -13899,6 +13964,7 @@ void gameInit(uint32_t seed) {
   loadSettings();
   layoutSeed = seed;
   paintShaftPicture();
+  warmCameras();
   onTitle = true;
 }
 
