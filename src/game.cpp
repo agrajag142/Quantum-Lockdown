@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "071"
+#define GAME_VERSION      "072"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -13495,14 +13495,17 @@ static void paintVossRoom() {                // the quantum computer room, into 
   gfxTarget = roomBg;
   gfxClipAll();
   pxRect(0, 0, FB_W - 1, FB_H - 1, 0);
-  fillRect(0, HUD_H, SCREEN_W - 1, CEIL_Y - 1, rgb565(214, 218, 224));
-  labStripe(0, SCREEN_W - 1, CEIL_Y, CEIL_Y + 12);
-  labDuctBand(0, SCREEN_W - 1, CEIL_Y + 16, CEIL_Y + 58);
-  armoryWall();
+  armoryWall();                              // (no ceiling, no side walls or doors: the room open to the edges of the screen)
+  for (int y = 0; y < CEIL_Y + 61; y += 4) { // the wall, on up to the top, darkening
+    int v = 12 + 28 * y / (CEIL_Y + 61);
+    fillRect(0, y, SCREEN_W - 1, y + 3, rgb565(v, v + 4, v + 14));
+  }
+  for (int x = 0; x < SCREEN_W; x += 160) {
+    fillRect(x, 0, x + 1, CEIL_Y + 60, rgb565(14, 16, 22));
+    fillRect(x + 2, 0, x + 2, CEIL_Y + 60, rgb565(40, 46, 58));
+  }
   paintTestRoom();
   labFloor(0, SCREEN_W - 1, ROOM_FLOOR_Y, PLAY_Y1);
-  paintLabSide(false, ROOM_FLOOR_Y, true);
-  paintLabSide(true, ROOM_FLOOR_Y, true);
   gfxTarget = g_frame;
 }
 static void startVossScene() {
@@ -13612,8 +13615,8 @@ static void drawVossScene() {
     if (t >= c.t0 && t < c.t1) {
       float a = fminf(1.0f, fminf(t - c.t0, c.t1 - t) / 0.4f);
       float w = vectorTextWidth(c.w, 3.0f);
-      blendRect((int)(SCREEN_W / 2 - w / 2 - 20), 606, (int)(SCREEN_W / 2 + w / 2 + 20), 646, 0, 0, 0, 0.6f * a);
-      drawVectorText(c.w, SCREEN_W / 2, 626, 3.0f, rgb565((int)(240 * a), (int)(236 * a), (int)(220 * a)), true);
+      blendRect((int)(SCREEN_W / 2 - w / 2 - 20), 632, (int)(SCREEN_W / 2 + w / 2 + 20), 672, 0, 0, 0, 0.6f * a);
+      drawVectorText(c.w, SCREEN_W / 2, 652, 3.0f, rgb565((int)(240 * a), (int)(236 * a), (int)(220 * a)), true);
     }
 }
 
@@ -13698,15 +13701,8 @@ static void drawScaledScene(int cropY, uint32_t bright) {
 static void drawTitle() {
   gfxTarget = g_frame;
   gfxClipAll();
-  if (vsOn) {                                // Dr. Voss's scene: the room full screen; the name small along the top
-    drawVossScene();
-    gfxClipAll();
-    blendRect(0, 0, SCREEN_W - 1, HUD_H + 4, 0, 0, 0, 0.85f);
-    drawVectorTextW("QUANTUM LOCKDOWN", SCREEN_W / 2, 22, 3.6f, rgb565(255, 190, 70), 2.4f);
-    if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 694, 2.6f, rgb565(240, 240, 245), true);
-    return;
-  }
-  drawTitleScene();                          // NUCLEAR MISSION's launch (and now and then a landing) behind it all
+  if (vsOn) drawVossScene();                 // Dr. Voss's scene first (the name and PRESS X TO START over it, as on the others)
+  else drawTitleScene();                     // NUCLEAR MISSION's launch (and now and then a landing) behind it all
   gfxClipAll();
   // the name, in big vector letters with a glow behind (now and then reality glitches: it splits red and cyan)
   const char *w1 = "QUANTUM", *w2 = "LOCKDOWN";
@@ -13727,11 +13723,13 @@ static void drawTitle() {
   }
   drawVectorTextW(w1, SCREEN_W / 2, ty1, ts, main, 3.4f);
   drawVectorTextW(w2, SCREEN_W / 2, ty2, ts, main, 3.4f);
-  // the panel: the mission objectives, then the high scores, 15 seconds each (on a dark band, over the scene)
-  blendRect(150, TPANEL_Y0 - 14, SCREEN_W - 151, TPANEL_Y0 + 336, 0, 0, 0, 0.55f);
-  float cyc = fmodf(titleT, TITLE_CYCLE);
-  if (cyc < TITLE_STORY) drawTitleObjectives(cyc);
-  else drawTitleScores(cyc - TITLE_STORY);
+  // the panel: the mission objectives, then the high scores, 15 seconds each (on a dark band, over the scene; not over Dr. Voss's)
+  if (!vsOn) {
+    blendRect(150, TPANEL_Y0 - 14, SCREEN_W - 151, TPANEL_Y0 + 336, 0, 0, 0, 0.55f);
+    float cyc = fmodf(titleT, TITLE_CYCLE);
+    if (cyc < TITLE_STORY) drawTitleObjectives(cyc);
+    else drawTitleScores(cyc - TITLE_STORY);
+  }
   if (fmodf(clockT, 1.0f) < 0.65f) drawVectorText("PRESS X TO START", SCREEN_W / 2, 594, 4.0f, rgb565(240, 240, 245), true);
   if (tuneProblem[0][0]) drawVectorText(tuneProblem[0], SCREEN_W / 2, 636, 1.8f, rgb565(220, 120, 90), false);
   if (tuneProblem[1][0]) drawVectorText(tuneProblem[1], SCREEN_W / 2, 654, 1.8f, rgb565(220, 120, 90), false);

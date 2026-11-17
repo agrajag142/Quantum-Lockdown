@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 071: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 072: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -913,7 +913,8 @@ run it after adding or changing a layout.
 ## The title screen, the briefing
 
 **The title's opening: DR. VOSS** (26 seconds, before the launches). His
-quantum computer room, as in stage 2, full screen and dark; he walks in at the
+quantum computer room, as in stage 2 but open to the edges of the screen (no
+ceiling, no side walls or doors; the floor kept), full screen and dark; he walks in at the
 left door to the control console and works it; the machine **powers up** - the
 fans spinning up, the cryostat's blue lights coming on tier by tier from the
 bottom, the racks lighting, the cooling gas rising, the dark lifting. The
@@ -924,8 +925,9 @@ GRANTED) while the SITE STATUS screen turns each from SECURE to BREACHING...
 to HACKED; then LAUNCH CONTROL ACQUIRED - 5 OF 5 SITES HACKED, and he turns to
 us, shaking with laughter. Captions along the bottom: DEEP BENEATH THE
 FACILITY... / DR. VOSS AWAKENS HIS QUANTUM COMPUTER / NO SECURITY ON EARTH CAN
-STOP IT / ONE BY ONE, THE NUCLEAR SITES FALL / THE COUNTDOWN HAS BEGUN. The
-name sits small along the top meanwhile, PRESS X TO START at the bottom. Then
+STOP IT / ONE BY ONE, THE NUCLEAR SITES FALL / THE COUNTDOWN HAS BEGUN (under
+PRESS X TO START). The name and PRESS X TO START are over it just as over the
+launches (no objectives or high scores panel during it). Then
 the launches (below), and round again: Dr. Voss, 5 launches, a landing.
 
 The title sits at the top (title.mod playing), and now and then the name
