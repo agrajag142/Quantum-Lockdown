@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 078: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 079: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -418,7 +418,9 @@ body was found. Then, beside him:
 
 1. **Square**: search him - his **level 1 access card** (ACCESS CARD LEVEL 1
    FOUND) and his overalls: you're disguised as maintenance (blue overalls,
-   hi-vis band, cap).
+   hi-vis band, cap) - until you find the **level 4 access card**: once its
+   panel has gone you're back in your own kit (I WON'T BE NEEDING THIS
+   DISGUISE ANYMORE; the panel's DISGUISE says NONE).
 2. **Square** again: the bin - you lift him over your shoulder, carry him to
    the bin, lid up, tip him in, lid down. The top bar shows the mission's
    countdown again.

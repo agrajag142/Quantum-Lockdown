@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "078"
+#define GAME_VERSION      "079"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -280,6 +280,7 @@ static uint8_t s2Kind[S2_ROOMS], s2Lvl[S2_ROOMS];   // what it is, the access le
 static bool s2Aid[S2_LIFTS][S2_LEVELS];      // each left walkway's first aid cabinet: used
 static int s2Card = 0;                       // his access card's level (0: none)
 static bool s2Disguised = false;             // in the maintenance man's overalls
+static bool s2Undisguise = false;            // the level 4 card found in them: out of them once its panel has gone
 static bool s2AllAccess = false;             // (the settings, for testing: every door opens)
 static float s2BumpT = 0;                    // (ACCESS LEVEL n REQUIRED: not over and over)
 enum WorkerState : uint8_t { WK_WAIT, WK_SPOT, WK_RUN, WK_COWER, WK_FALL, WK_DOWN, WK_STRIPPED, WK_BINNED };
@@ -747,7 +748,7 @@ static void layOutStage2() {
   wkT = 0;
   bodyT = -1;
   s2Card = 0;
-  s2Disguised = false;
+  s2Disguised = s2Undisguise = false;
   s2Act = 0;
   bodyCarried = false;
   susp = 0;
@@ -9714,6 +9715,7 @@ static void foundCard(int level) {          // (-1: the knife, -2: the pistol, -
   panelVest = level == -3;
   panelCode = level == -6;
   if (level > s2Card) s2Card = level;
+  if (level == 4 && s2Disguised) s2Undisguise = true;   // (no need for the overalls now: see gameFrame)
   cardShown = level;
   cardShowT = CARD_SHOW;
   sfxPlay(SFX_FOUND);
@@ -14703,7 +14705,7 @@ static void newGame() {
   s2Act = 0;
   bodyT = -1;
   s2Card = 0;
-  s2Disguised = bodyCarried = false;
+  s2Disguised = s2Undisguise = bodyCarried = false;
   for (int i = 0; i < MAX_POPS; i++) popT[i] = 0;
   msgT = 0;
 }
@@ -14902,6 +14904,11 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (docShowT > 0) docShowT -= dt;
     if (passShowT > 0) passShowT -= dt;
     if (cardShowT > 0) cardShowT -= dt;
+    if (s2Undisguise && cardShowT <= 0 && stage == 2) {   // the level 4 card: off with the overalls, back in his own kit
+      s2Undisguise = s2Disguised = false;
+      showMsg("I WON'T BE NEEDING THIS DISGUISE ANYMORE", 4.0f);
+      sfxPlay(SFX_CLICK);
+    }
     if (shotFlashT > 0) shotFlashT -= dt;
     if (gunFlashT > 0) gunFlashT -= dt;
     updateMyShots(dt);
