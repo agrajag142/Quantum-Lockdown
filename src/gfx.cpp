@@ -234,6 +234,34 @@ void blendRect(int x0, int y0, int x1, int y1, int r, int g, int b, float a) {
 }
 
 // A soft light added over what is there: a (0..1) in the middle, nothing at radius r
+// A soft disc of haze: the picture behind it tinted toward (cr, cg, cb), most in its middle (gas, smoke)
+void fogDisc(float cx, float cy, float r, int cr, int cg, int cb, float a) {
+  float pcx = cx * UNIT_K, pcy = cy * UNIT_K, pr = r * UNIT_K;
+  if (pr < 1 || a <= 0) return;
+  int y0 = edgeLo(pcy - pr), y1 = edgeLo(pcy + pr) - 1;
+  if (y0 < clipY0) y0 = clipY0;
+  if (y1 > clipY1) y1 = clipY1;
+  float inv = 1.0f / (pr * pr);
+  for (int y = y0; y <= y1; y++) {
+    float dy = y + 0.5f - pcy, h = pr * pr - dy * dy;
+    if (h <= 0) continue;
+    float dx = sqrtf(h);
+    int x0 = edgeLo(pcx - dx), x1 = edgeLo(pcx + dx) - 1;
+    if (x0 < 0) x0 = 0;
+    if (x1 >= FB_W) x1 = FB_W - 1;
+    uint32_t *row = gfxTarget + (size_t)y * FB_W;
+    for (int x = x0; x <= x1; x++) {
+      float ex = x + 0.5f - pcx;
+      float k = 1.0f - (ex * ex + dy * dy) * inv;
+      if (k <= 0) continue;
+      int m = (int)(k * a * 256);
+      uint32_t p = row[x];
+      int pr8 = p & 255, pg8 = (p >> 8) & 255, pb8 = (p >> 16) & 255;
+      row[x] = rgba(pr8 + (((cr - pr8) * m) >> 8), pg8 + (((cg - pg8) * m) >> 8), pb8 + (((cb - pb8) * m) >> 8));
+    }
+  }
+}
+
 void glowDisc(float cx, float cy, float r, int cr, int cg, int cb, float a) {
   float pcx = cx * UNIT_K, pcy = cy * UNIT_K, pr = r * UNIT_K;
   if (pr < 1 || a <= 0) return;

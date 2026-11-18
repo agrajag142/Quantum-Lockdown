@@ -90,6 +90,18 @@ static const PersonLook PL_NURSE = {     // a nurse: light blue scrubs
 static const PersonLook PL_PATIENT = {   // a patient: a hospital gown, bare legs
   agentRgb(196, 218, 232), agentRgb(150, 172, 188), agentRgb(176, 200, 216), agentRgb(214, 170, 138), agentRgb(164, 128, 102),
   agentRgb(214, 170, 138), agentRgb(164, 128, 102), agentRgb(214, 170, 138), agentRgb(164, 128, 102), agentRgb(80, 60, 40) };
+// The ward's other patients (personVariant 1-4): each looks a little different
+static const PersonLook PL_PATIENTS[4] = {
+  { agentRgb(210, 222, 196), agentRgb(164, 176, 150), agentRgb(188, 200, 174), agentRgb(140, 96, 70), agentRgb(104, 70, 52),       // green gown, dark skin, a head bandage
+    agentRgb(140, 96, 70), agentRgb(104, 70, 52), agentRgb(140, 96, 70), agentRgb(104, 70, 52), agentRgb(24, 20, 18) },
+  { agentRgb(226, 206, 222), agentRgb(180, 160, 176), agentRgb(204, 184, 200), agentRgb(236, 200, 176), agentRgb(186, 152, 130),   // pink gown, fair skin, grey hair
+    agentRgb(236, 200, 176), agentRgb(186, 152, 130), agentRgb(236, 200, 176), agentRgb(186, 152, 130), agentRgb(196, 196, 200) },
+  { agentRgb(196, 218, 232), agentRgb(150, 172, 188), agentRgb(176, 200, 216), agentRgb(190, 146, 108), agentRgb(146, 108, 80),   // blue gown, red hair, an oxygen mask
+    agentRgb(190, 146, 108), agentRgb(146, 108, 80), agentRgb(190, 146, 108), agentRgb(146, 108, 80), agentRgb(170, 70, 30) },
+  { agentRgb(236, 228, 200), agentRgb(190, 182, 156), agentRgb(214, 206, 180), agentRgb(204, 160, 124), agentRgb(156, 120, 92),    // cream gown, bald, an eye patch
+    agentRgb(204, 160, 124), agentRgb(156, 120, 92), agentRgb(204, 160, 124), agentRgb(156, 120, 92), agentRgb(204, 160, 124) },
+};
+inline int personVariant = 0;   // (one for the whole program: set before drawing a patient: 1-4 picks one of PL_PATIENTS, and its touch)
 
 static const PersonLook PL_SUBJECT = {   // a test subject: an orange jumpsuit, white sneakers
   agentRgb(236, 120, 40), agentRgb(176, 84, 26), agentRgb(210, 100, 32), agentRgb(236, 120, 40), agentRgb(176, 84, 26),
@@ -157,7 +169,7 @@ static void personDraw(const AgentPose &p, float x, float floorY, int facing, fl
                         (kind == PK_SCIENTIST) ? PL_SCIENTIST : (kind == PK_STRIPPED) ? PL_STRIPPED :
                         (kind == PK_DISGUISE) ? PL_DISGUISE : (kind == PK_RADSUIT) ? PL_RADSUIT : (kind == PK_SECURITY) ? PL_SECURITY :
                         (kind == PK_SCI_DIM) ? PL_SCI_DIM : (kind == PK_SENIOR) ? PL_SENIOR : (kind == PK_ADVANCED) ? PL_ADVANCED :
-                        (kind == PK_CHEF) ? PL_CHEF : (kind == PK_MAINT) ? PL_MAINT : (kind == PK_MAINT_UNDIES) ? PL_MAINT_UNDIES : (kind == PK_CLEANER) ? PL_CLEANER : (kind == PK_NURSE) ? PL_NURSE : (kind == PK_PATIENT) ? PL_PATIENT : (kind == PK_OFFICE) ? PL_OFFICE : (kind == PK_SUBJECT) ? PL_SUBJECT : (kind == PK_CHAR) ? PL_CHAR : (kind == PK_PROFESSOR) ? PL_PROFESSOR : PL_COMMANDER;
+                        (kind == PK_CHEF) ? PL_CHEF : (kind == PK_MAINT) ? PL_MAINT : (kind == PK_MAINT_UNDIES) ? PL_MAINT_UNDIES : (kind == PK_CLEANER) ? PL_CLEANER : (kind == PK_NURSE) ? PL_NURSE : (kind == PK_PATIENT) ? (personVariant > 0 ? PL_PATIENTS[(personVariant - 1) % 4] : PL_PATIENT) : (kind == PK_OFFICE) ? PL_OFFICE : (kind == PK_SUBJECT) ? PL_SUBJECT : (kind == PK_CHAR) ? PL_CHAR : (kind == PK_PROFESSOR) ? PL_PROFESSOR : PL_COMMANDER;
   bool coat = (kind == PK_SCIENTIST || kind == PK_DISGUISE || kind == PK_SCI_DIM || kind == PK_SENIOR || kind == PK_ADVANCED || kind == PK_PROFESSOR);
   AgentJoints j;
   agentSolve(p, j);
@@ -330,6 +342,24 @@ static void personDraw(const AgentPose &p, float x, float floorY, int facing, fl
       { 8.0f, -6.0f }, { 3.0f, -9.4f }, { -4.0f, -9.0f }, { -8.0f, -5.0f }, { -4.0f, -3.0f }, { 4.0f, -2.0f },
     };
     agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, HAIR, 6, L.hair);
+    if (kind == PK_PATIENT && personVariant == 1) {   // a bandage round the head
+      static const float BAND[][2] = { { 3.0f, -9.4f }, { 6.5f, -9.0f }, { 6.5f, 9.0f }, { 3.0f, 9.4f } };
+      agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, BAND, 4, agentRgb(244, 244, 238));
+      static const float SPOT[][2] = { { 4.0f, 2.0f }, { 5.6f, 2.0f }, { 5.6f, 4.0f }, { 4.0f, 4.0f } };
+      agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, SPOT, 4, agentRgb(190, 60, 50));
+    }
+    if (kind == PK_PATIENT && personVariant == 3) {   // an oxygen mask over nose and mouth, its strap
+      static const float MASK[][2] = { { -1.0f, 5.0f }, { 3.0f, 5.0f }, { 3.4f, 10.0f }, { -1.4f, 10.0f } };
+      agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, MASK, 4, agentRgb(150, 220, 200));
+      static const float STRAP[][2] = { { 0.6f, -8.0f }, { 1.6f, -8.0f }, { 1.6f, 5.0f }, { 0.6f, 5.0f } };
+      agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, STRAP, 4, agentRgb(60, 140, 120));
+    }
+    if (kind == PK_PATIENT && personVariant == 4) {   // a patch over an eye
+      static const float PATCH[][2] = { { 0.6f, 4.0f }, { 4.4f, 4.0f }, { 4.4f, 8.0f }, { 0.6f, 8.0f } };
+      agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, PATCH, 4, agentRgb(30, 30, 34));
+      static const float TIE[][2] = { { 2.0f, -9.0f }, { 3.0f, -9.0f }, { 3.0f, 4.0f }, { 2.0f, 4.0f } };
+      agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, TIE, 4, agentRgb(30, 30, 34));
+    }
     static const float EYE[][2] = { { 2.6f, 5.0f }, { 2.6f, 6.6f }, { 1.0f, 6.6f }, { 1.0f, 5.0f } };
     if (kind == PK_PROFESSOR) {   // wild white hair, sticking out all round
       static const float WILD[][2] = {   // (u: up the head, v: across, + the face side)

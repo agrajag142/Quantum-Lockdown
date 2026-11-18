@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 077: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 078: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -445,29 +445,51 @@ wall. **Two cleaners** (teal tunics, mops) walk their paths: one on the floor,
 one on the middle level - both walking away from you as you come in.
 
 **The medical bay**: two levels (lift pad on the left). Downstairs: visitors'
-seats, the NURSE STATION (its front is drawn over the nurse, who walks a short
-path behind it), and behind it a bed with an unconscious patient, a
-ventilator and a heart monitor. Upstairs, the ward: four beds, each with an
-unconscious patient under a blanket, a heart monitor (its trace sweeping) and
-a drip, and the medicine cabinet. The doctor (white coat) walks the ward.
+seats under an eye chart and a WASH YOUR HANDS poster, the NURSE STATION (its
+front is drawn over the nurse, who walks a short path behind it), a
+defibrillator in its green AED box, and behind it a bed with an unconscious
+patient (an anatomy chart over him), a ventilator and a heart monitor.
+Upstairs, the ward (a QUIET PLEASE sign, a clock): four beds, each with an
+unconscious patient under a blanket, a monitor and a drip, and the medicine
+cabinet. The doctor (white coat) walks the ward. The patients each look
+different - gowns, skin, hair, a head bandage, an oxygen mask, an eye patch,
+and their blankets - and so do their monitors: a racing heart with its alarm
+flashing, a slow one with its breathing trace, blood pressure, oxygen.
 One of the five patients, at random, has the **level 2 access card** (search
 him: ACCESS CARD LEVEL 2 FOUND).
 
 **The store room**: three levels (the lift at the back, on the right), packed
 with variety - tall cupboards, grey double-door cabinets, lockers, racks of
 boxes, tins, sacks and jars, crates, a shrink-wrapped pallet, a wooden
-cupboard, stacks of boxes. Nobody in it: 16 things to search.
-**The robot** (Impossible Mission's, a dumb one): squat - a dome head with a
-red visor, its eye sweeping, an antenna, two prongs, on a track - and short
-enough to **somersault over**. Each game it's on one of the three levels (the
-floor, the middle or the top), rolling left and right along it, pausing to
-turn at each end. It only looks the way it's facing: if you're on its level,
-in front of it and within its reach (70, and a little more), it stops, its
-prongs crackle (0.35 seconds) and an **electric arc** jumps out to its reach.
-Caught by it - or touching it - is the live floor's penalty: ZAPPED BY THE
-ROBOT!, the jolt, then ELECTROCUTED! (10 health, and 30 seconds off the
-nuclear countdown), and you wake at the door. Then it rests 1.5 seconds
-before it can fire again. It can't be destroyed.
+cupboard, stacks of boxes - drawn solid: their tops and sides seen going
+back, shaded fronts, bevelled doors, shiny handles, shadows on the wall
+(`solidBlock`, `bevelPanel`; the other lab rooms' cupboards, boxes and racks
+too). Nobody in it: 16 things to search.
+
+**The robots**: one on each of its three levels, each a type picked at
+random each game. All are squat - a dome head with a visor, its eye sweeping,
+an antenna with a light, on a track - short enough to **somersault over**,
+roll left and right along their level, pausing to turn at each end, only
+look the way they're facing, and can't be destroyed.
+- **The zapper** (Impossible Mission's, a dumb one: grey, red light, two
+  prongs): if you're on its level, in front of it and within its reach (70,
+  and a little more), it stops, its prongs crackle (0.35 seconds) and an
+  **electric arc** jumps out to its reach. Caught by it - or touching it - is
+  the live floor's penalty: ZAPPED BY THE ROBOT!, the jolt, then
+  ELECTROCUTED! (10 health, and 30 seconds off the nuclear countdown), and
+  you wake at the door. Then it rests 1.5 seconds.
+- **The charger** (rust-brown, orange light, a striped ram on its front): no
+  arc, but it sees you **half a screen** away (640) if it's facing you. Then
+  it stops, its light flashing (0.35 seconds), and charges at you flat out
+  (270, nearly four times its pace). Time your approach, and **somersault
+  over it** as it comes: rammed is the same jolt (RAMMED BY THE ROBOT!). Past
+  you, it slows back to its pace.
+- **The gasser** (green, green light, a gas tank on its back, a nozzle), a
+  fifth quicker than the others: if you're on its level, in front of it and
+  within 250, it stops, hisses (0.45 seconds) and **sprays green gas** - a
+  cloud that rolls out, spreads and hangs for over 3 seconds before it thins,
+  then it rests about 3 seconds. Standing in the gas drains health steadily
+  (CHOKING ON THE ROBOT'S GAS!): from full, about **4 seconds** to none.
 
 **Lift B's rooms** (access level 2): its five rooms, at random levels, are the
 clone lab, the super soldier lab, the server room, QUANTUM LAB 1 and QUANTUM
@@ -985,6 +1007,9 @@ pauses the game and the clock:
   opens (the panel's ACCESS CARD says ALL)
 - **RESET HIGH SCORES** (X twice): the table back to its defaults (saved)
 - **QUIT TO TITLE** (X twice): drops the game there and then, no score
+- **QUIT GAME** (X twice): closes Quantum Lockdown, back to the PS5's home
+  screen (`gameQuitRequested`; the platform calls
+  `sceSystemServiceLoadExec("exit")`)
 - **RESUME** (or Triangle again)
 
 ## Controls

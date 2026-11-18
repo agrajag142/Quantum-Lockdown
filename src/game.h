@@ -24,6 +24,7 @@ void gameFrame(float dt, uint32_t held, uint32_t pressed);
 // its sound thread for stereo 16-bit samples at 48 kHz.
 void gameSetTune(int which, signed char *data, long len);
 void gameAudio(short *out, int frames);
+bool gameQuitRequested();  // settings' QUIT GAME, confirmed: the platform ends the program
 const char *gameDebug();   // (the PC test build: where he is)
 void gameDebugPos(float *x, float *y, int *state);
 void gameDebugRoom(int tpl, bool topL, bool topR, int hazard = 0);   // (the PC test build: straight into a layout; hazard 1 electric, 2 dark)

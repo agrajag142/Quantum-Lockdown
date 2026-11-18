@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "077"
+#define GAME_VERSION      "078"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -358,10 +358,17 @@ static bool simOn = false;                   // at the CODE ROOM's terminal, pla
 static int simState = 0, simRound = 0, simPos = 0, simLit = -1, simCurX = 3, simCurY = 2;
 static int simSeq[8];
 static float simT = 0, simLitT = 0;
-// ---- the STORE ROOM's robot (Impossible Mission's, a dumb one): it rolls left and right along one of the room's
-// three levels (chosen each game), and zaps him with an arc if he's in front of it within its reach - the live
-// floor's penalty. Short enough to somersault over; it can't be destroyed.
-static int s2RobotLevel = 0;
+// ---- the STORE ROOM's robots, one on each of its three levels, each a type picked each game:
+//  ROBT_ZAP    Impossible Mission's, a dumb one: rolls left and right, and zaps him with an arc if he's in
+//              front of it within its reach (the live floor's penalty).
+//  ROBT_CHARGE its cousin with an orange light: no arc, but facing him within half a screen it locks on and
+//              charges - ramming him is the same jolt. Somersault over it as it comes.
+//  ROBT_GAS    green light, a fifth quicker: in front of it within its range it stops, hisses and sprays a
+//              cloud of green gas that hangs, then thins. Standing in it drains health: full to none in
+//              about 4 seconds.
+// All short enough to somersault over; none can be destroyed.
+enum : uint8_t { ROBT_ZAP, ROBT_CHARGE, ROBT_GAS, ROBT_TYPES };
+static uint8_t s2RobotType[3] = { 0, 0, 0 };  // (each level's, picked each game)
 #define ROB_HALF 30                          // (half its width)
 #define ROB_REACH 70.0f                      // its arc's reach, from its prongs
 #define ROB_MARGIN 14.0f                     // (and a little more)
@@ -370,9 +377,29 @@ static int s2RobotLevel = 0;
 #define ROB_ARC 0.28f
 #define ROB_COOL 1.5f
 #define ROB_TURN 0.6f                        // (a pause at each end)
-static bool robOn = false;
-static float robX, robY, robX0, robX1, robWarnT = -1, robArcT = 0, robCool = 0, robTurnT = 0, robRoll = 0;
-static int robDir = 1;
+#define ROB_SIGHT 640.0f                     // the charger: how far it sees him (half the screen)
+#define ROB_LOCK 0.35f                       //   locking on (its light flashing), then...
+#define ROB_CHARGE_SPEED 270.0f              //   ...flat out at him
+#define ROB_ACCEL 700.0f
+#define ROB_GAS_RANGE 250.0f                 // the gasser: how near he must be (its cloud reaches about that far)
+#define ROB_GAS_WARN 0.45f                   //   its hiss, then the spray
+#define ROB_GAS_SPRAY 0.9f
+#define ROB_GAS_COOL 3.2f
+#define GAS_PUFFS 48
+#define GAS_LIFE 3.4f                        // a puff of it: how long it hangs
+#define GAS_DRAIN (HEALTH_MAX / 4.0f)        // health a second, in it (full to none in 4 seconds)
+struct Robot {
+  uint8_t type;
+  float x, y, x0, x1, speed;
+  float warnT, arcT, cool, turnT, roll, lockT, sprayT;
+  int dir;
+  bool charging;
+};
+static Robot robots[3];
+static int robCount = 0;
+struct GasPuff { float x, y, vx, vy, t; bool on; };
+static GasPuff gasPuffs[GAS_PUFFS];
+static float gasDose = 0, gasCoughT = 0;
 static void paintArmory2();
 static void arenaEnter(bool fromLeft);
 static int s2HazCard = 0;                    // (hazardous storage: which of its 6 things has the level 4 card)
@@ -705,7 +732,7 @@ static void layOutStage2() {
   for (int k = 0; k < 2; k++) { s2NpcScale[s2Room[4][0]][k] = 2; s2NpcScale[s2Room[4][1]][k] = 2; }   // (their soldiers, twice the size)
   s2NpcScale[s2Room[5][0]][0] = 2;
   s2DestructCard = 1 + rnd(4);
-  s2RobotLevel = rnd(3);                     // (the store room's robot: on the floor, the middle or the top)
+  for (int k = 0; k < 3; k++) s2RobotType[k] = (uint8_t)rnd(ROBT_TYPES);   // (the store room's robots: each level's type)
   s2NukeCode = false;
   bossDeadT = -1;
   congratsT = 0;
@@ -974,6 +1001,8 @@ static bool settingsOn = false;        // the settings menu (Triangle): the game
 static int settingsSel = 0;
 static bool quitConfirm = false;       // QUIT TO TITLE pressed once: X again to quit
 static bool hiResetConfirm = false;    // RESET HIGH SCORES pressed once: X again
+static bool quitGameConfirm = false;   // QUIT GAME pressed once: X again
+static bool quitGameNow = false;       // ...and then the platform ends the program (gameQuitRequested)
 static float hiResetDoneT = 0;
 static bool briefingOn = false;        // STAGE 1's briefing, after the opening: X to start
 static float briefingT = 0;
@@ -3759,22 +3788,84 @@ static void paintSink(int x0, int x1, int fy) {
   for (int x = x1 - 64; x < x1 - 14; x += 10) fillRect(x, top - 52, x + 5, top - 4, rgb565(246, 246, 242));
 }
 
+// ---- solid looking stores: a front face shaded top to bottom, its top and right side seen in
+// perspective (going back up and to the right), a soft shadow on the wall behind
+static inline int cl8(int v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+static void solidBlock(int x0, int y0, int x1, int y1, int r, int g, int b, int d, bool shade = true) {
+  if (shade) {
+    blendRect(x1 + 1, y0 - d + 6, x1 + d + 6, y1 - 1, 0, 0, 0, 0.10f);            // its shadow on the wall
+    blendRect(x0 + 4, y0 - d - 2, x1 + d + 4, y0 - d, 0, 0, 0, 0.05f);
+  }
+  float sx[4] = { (float)x1, (float)x1 + d, (float)x1 + d, (float)x1 }, sy[4] = { (float)y0, (float)y0 - d, (float)y1 - d, (float)y1 };
+  fillPolygonF(sx, sy, 4, rgb565(cl8(r * 62 / 100), cl8(g * 62 / 100), cl8(b * 62 / 100)));   // the right side, in shade
+  float tx[4] = { (float)x0, (float)x0 + d, (float)x1 + d, (float)x1 }, ty[4] = { (float)y0, (float)y0 - d, (float)y0 - d, (float)y0 };
+  fillPolygonF(tx, ty, 4, rgb565(cl8(r + 34), cl8(g + 32), cl8(b + 28)));          // the top, catching the light
+  fillRect(x0, y0, x1, y1, rgb565(r, g, b));                                        // the front
+  int h = y1 - y0;
+  if (h > 6) {
+    blendRect(x0, y0, x1, y0 + h / 4, 255, 255, 255, 0.07f);                        // lit at the top, darker down
+    blendRect(x0, y1 - h / 3, x1, y1, 0, 0, 0, 0.08f);
+    blendRect(x0, y1 - h / 7, x1, y1, 0, 0, 0, 0.08f);
+  }
+  fillRect(x0, y0, x0 + 1, y1, rgb565(cl8(r + 26), cl8(g + 24), cl8(b + 22)));    // a lit left edge
+  fillRect(x1, y0, x1, y1, rgb565(cl8(r * 70 / 100), cl8(g * 70 / 100), cl8(b * 70 / 100)));
+}
+static void bevelPanel(int x0, int y0, int x1, int y1, int r, int g, int b) {      // a door or drawer front: lit top-left, shaded bottom-right
+  fillRect(x0, y0, x1, y1, rgb565(cl8(r + 8), cl8(g + 8), cl8(b + 8)));
+  fillRect(x0, y0, x1, y0, rgb565(cl8(r + 40), cl8(g + 40), cl8(b + 40)));
+  fillRect(x0, y0, x0, y1, rgb565(cl8(r + 30), cl8(g + 30), cl8(b + 30)));
+  fillRect(x0, y1, x1, y1, rgb565(cl8(r - 40), cl8(g - 40), cl8(b - 40)));
+  fillRect(x1, y0, x1, y1, rgb565(cl8(r - 34), cl8(g - 34), cl8(b - 34)));
+}
+static void metalHandle(int x0, int y0, int x1, int y1) {                           // a bar handle, with its shine
+  fillRect(x0 + 1, y0 + 1, x1 + 1, y1 + 1, rgb565(50, 54, 62));
+  fillRect(x0, y0, x1, y1, rgb565(176, 182, 192));
+  fillRect(x0, y0, x0, y1, rgb565(236, 240, 246));
+}
+
 static void paintBox(int x0, int y1, int w, int h, int tone) {                 // a cardboard box standing on y1
   int r = 176 - tone * 14, g = 128 - tone * 10, b = 74 - tone * 6;
-  fillRect(x0, y1 - h, x0 + w, y1 - 1, rgb565(r, g, b));
-  fillRect(x0, y1 - h, x0 + w, y1 - h + 2, rgb565(r + 30, g + 26, b + 20));
-  fillRect(x0 + w / 2 - 4, y1 - h, x0 + w / 2 + 4, y1 - h / 2, rgb565(r + 40, g + 36, b + 34));   // the tape
-  if (w > 40) fillRect(x0 + 6, y1 - h / 2 + 4, x0 + 26, y1 - h / 2 + 14, rgb565(240, 240, 232));    // a label
+  int d = w > 50 ? 7 : 5;
+  solidBlock(x0, y1 - h, x0 + w, y1 - 1, r, g, b, d);
+  int tx = x0 + w / 2;                                                       // the tape: down the front, back across the top
+  fillRect(tx - 4, y1 - h, tx + 4, y1 - h / 2, rgb565(cl8(r + 40), cl8(g + 36), cl8(b + 34)));
+  fillRect(tx - 4, y1 - h / 2, tx + 4, y1 - h / 2 + 1, rgb565(cl8(r - 20), cl8(g - 20), cl8(b - 16)));
+  float qx[4] = { (float)tx - 4, (float)tx - 4 + d, (float)tx + 4 + d, (float)tx + 4 }, qy[4] = { (float)y1 - h, (float)y1 - h - d, (float)y1 - h - d, (float)y1 - h };
+  fillPolygonF(qx, qy, 4, rgb565(cl8(r + 60), cl8(g + 54), cl8(b + 48)));
+  fillRect(x0 + 2, y1 - h + 3, x0 + w - 2, y1 - h + 3, rgb565(cl8(r - 26), cl8(g - 24), cl8(b - 20)));   // the flaps' fold
+  if (w > 40) {
+    fillRect(x0 + 6, y1 - h / 2 + 4, x0 + 26, y1 - h / 2 + 14, rgb565(240, 240, 232));    // a label, printed on
+    for (int k = 0; k < 3; k++) fillRect(x0 + 8, y1 - h / 2 + 6 + k * 3, x0 + 14 + (k * 7) % 11, y1 - h / 2 + 6 + k * 3, rgb565(120, 120, 120));
+    if (h > 44) {                                                           // "this way up"
+      int ax = x0 + w - 14, ay = y1 - 16;
+      fillRect(ax - 1, ay - 8, ax, ay, rgb565(cl8(r - 60), cl8(g - 56), cl8(b - 46)));
+      fillRect(ax + 4, ay - 8, ax + 5, ay, rgb565(cl8(r - 60), cl8(g - 56), cl8(b - 46)));
+    }
+  }
 }
 
 static void paintRack(int x0, int x1, int fy, int seed) {                     // shelving on the deck, full of stores
   uint16_t post = rgb565(150, 156, 166);
   int top = fy - 186;
+  blendRect(x0 + 5, top, x1 - 5, fy - 1, 20, 26, 40, 0.10f);                 // the shadowy space between its shelves
+  float bx[4] = { (float)x0 + 8, (float)x1 + 8, (float)x1 + 8, (float)x0 + 8 }, by[4] = { (float)top - 8, (float)top - 8, (float)fy - 9, (float)fy - 9 };
+  blendPolygonF(bx, by, 4, 20, 26, 40, 0.06f);
+  fillRect(x1 + 3, top - 8, x1 + 6, fy - 9, rgb565(120, 126, 136));          // its back posts
   fillRect(x0, top, x0 + 5, fy - 1, post);
+  fillRect(x0, top, x0 + 1, fy - 1, rgb565(200, 206, 216));
   fillRect(x1 - 5, top, x1, fy - 1, post);
+  fillRect(x1 - 5, top, x1 - 4, fy - 1, rgb565(200, 206, 216));
+  for (int y = top + 8; y < fy - 4; y += 12) {                                // their punched holes
+    fillRect(x0 + 2, y, x0 + 3, y + 2, rgb565(90, 96, 106));
+    fillRect(x1 - 3, y, x1 - 2, y + 2, rgb565(90, 96, 106));
+  }
   for (int k = 0; k < 3; k++) {
     int sy = fy - 6 - k * 62;
+    float sx[4] = { (float)x0, (float)x0 + 8, (float)x1 + 8, (float)x1 }, syy[4] = { (float)sy, (float)sy - 8, (float)sy - 8, (float)sy };
+    fillPolygonF(sx, syy, 4, rgb565(196, 202, 212));                         // the shelf's top, going back
     fillRect(x0, sy, x1, sy + 4, rgb565(176, 182, 192));
+    fillRect(x0, sy + 4, x1, sy + 4, rgb565(120, 126, 136));
+    blendRect(x0 + 6, sy + 5, x1 - 6, sy + 9, 0, 0, 0, 0.12f);                 // the shadow it casts
     int x = x0 + 10, n = 0;
     while (x < x1 - 30) {
       int what = (seed + k * 3 + n * 7) % 5, w;
@@ -3784,11 +3875,18 @@ static void paintRack(int x0, int x1, int fy, int seed) {                     //
         for (int c = 0; c < 3; c++) {
           fillRect(x + c * 13, sy - 22, x + c * 13 + 11, sy - 1, rgb565(170, 176, 186));
           fillRect(x + c * 13, sy - 16, x + c * 13 + 11, sy - 8, (c + k) % 2 ? rgb565(200, 50, 40) : rgb565(240, 190, 50));
+          fillRect(x + c * 13 + 2, sy - 22, x + c * 13 + 3, sy - 1, rgb565(240, 244, 250));   // its shine
+          fillRect(x + c * 13 + 9, sy - 22, x + c * 13 + 11, sy - 1, rgb565(110, 116, 126));  // its round side, in shade
+          fillRect(x + c * 13, sy - 24, x + c * 13 + 11, sy - 22, rgb565(200, 206, 214));     // the lid's rim
         }
       } else if (what == 3) {                                               // a sack
         w = 46;
         int sx[6] = { x + 4, x + 42, x + 46, x + 40, x + 6, x }, syy[6] = { sy - 50, sy - 50, sy - 20, sy - 1, sy - 1, sy - 20 };
         fillPolygon(sx, syy, 6, rgb565(222, 210, 176));
+        int hx[4] = { x + 30, x + 42, x + 46, x + 38 }, hy[4] = { sy - 50, sy - 50, sy - 20, sy - 2 };
+        fillPolygon(hx, hy, 4, rgb565(196, 182, 146));                        // its rounded side, in shade
+        fillRect(x + 8, sy - 44, x + 10, sy - 30, rgb565(240, 232, 206));
+        fillRect(x + 14, sy - 52, x + 32, sy - 49, rgb565(190, 176, 140));   // tied at the top
         drawVectorText(n % 2 ? "RICE" : "FLOUR", x + 23, sy - 26, 1.1f, rgb565(120, 96, 60), false);
       } else {                                                              // jars
         w = 36;
@@ -3796,6 +3894,7 @@ static void paintRack(int x0, int x1, int fy, int seed) {                     //
           fillRect(x + c * 12, sy - 26, x + c * 12 + 10, sy - 1, rgb565(200, 220, 226));
           fillRect(x + c * 12 + 1, sy - 18, x + c * 12 + 9, sy - 2, (c % 2) ? rgb565(200, 90, 40) : rgb565(120, 160, 60));
           fillRect(x + c * 12, sy - 30, x + c * 12 + 10, sy - 26, rgb565(140, 100, 60));
+          fillRect(x + c * 12 + 2, sy - 24, x + c * 12 + 3, sy - 4, rgb565(250, 252, 255));   // the glass's glint
         }
       }
       x += w + 10;
@@ -3848,10 +3947,13 @@ static void paintCrates(int x0, int w, int fy, int seed) {                    //
   for (int k = 0; k < 3; k++) {
     int bx = x0 + (k == 2 ? cw / 2 : k * (cw + 4)), by = fy - (k == 2 ? 40 : 0);
     if (k == 2 && seed % 2) continue;
-    fillRect(bx, by - 40, bx + cw, by - 1, rgb565(176, 136, 86));
-    drawRectOutline(bx, by - 40, bx + cw, by - 1, rgb565(120, 88, 50), 2);
-    drawLine(bx + 2, by - 38, bx + cw - 2, by - 3, rgb565(130, 96, 56), true);
+    solidBlock(bx, by - 40, bx + cw, by - 1, 176, 136, 86, 6);
+    for (int y = by - 34; y < by - 2; y += 9) fillRect(bx + 2, y, bx + cw - 2, y, rgb565(150, 112, 66));   // its planks
+    drawRectOutline(bx, by - 40, bx + cw, by - 1, rgb565(120, 88, 50), 3);
+    drawLine(bx + 3, by - 37, bx + cw - 3, by - 4, rgb565(120, 88, 50), true);   // the brace
     fillRect(bx, by - 22, bx + cw, by - 19, rgb565(130, 96, 56));
+    for (int c = 0; c < 4; c++) fillCircle(c < 2 ? bx + 4 : bx + cw - 4, c % 2 ? by - 5 : by - 36, 1, rgb565(80, 70, 60));   // nails
+    if (k == 0) drawVectorText("FRAGILE", bx + cw / 2.0f, by - 28, 0.8f, rgb565(170, 60, 40), false);
   }
 }
 
@@ -3932,15 +4034,22 @@ static void paintTrolley(int x0, int fy) {                                     /
 
 static void paintCupboardTall(int cx, int fy) {
   int x0 = cx - 44, x1 = cx + 44, top = fy - 170;
-  fillRect(x0, top, x1, fy - 1, rgb565(170, 178, 190));
-  fillRect(x0, top, x1, top + 3, rgb565(210, 216, 226));
-  fillRect(cx - 1, top + 6, cx + 1, fy - 6, rgb565(120, 128, 140));
-  fillRect(cx - 10, top + 70, cx - 6, top + 100, rgb565(90, 96, 106));
-  fillRect(cx + 6, top + 70, cx + 10, top + 100, rgb565(90, 96, 106));
+  solidBlock(x0, top, x1, fy - 6, 170, 178, 190, 9);
+  fillRect(x0 + 3, fy - 6, x0 + 10, fy - 1, rgb565(80, 86, 96));             // its feet
+  fillRect(x1 - 10, fy - 6, x1 - 3, fy - 1, rgb565(80, 86, 96));
+  bevelPanel(x0 + 4, top + 6, cx - 2, fy - 12, 168, 176, 188);                // the doors
+  bevelPanel(cx + 2, top + 6, x1 - 4, fy - 12, 168, 176, 188);
+  metalHandle(cx - 10, top + 70, cx - 7, top + 100);
+  metalHandle(cx + 7, top + 70, cx + 10, top + 100);
   for (int y = top + 14; y < top + 34; y += 5) {                              // vents
-    fillRect(x0 + 10, y, cx - 10, y + 1, rgb565(130, 138, 150));
-    fillRect(cx + 10, y, x1 - 10, y + 1, rgb565(130, 138, 150));
+    fillRect(x0 + 10, y, cx - 10, y + 1, rgb565(110, 118, 130));
+    fillRect(x0 + 10, y + 2, cx - 10, y + 2, rgb565(200, 206, 216));
+    fillRect(cx + 10, y, x1 - 10, y + 1, rgb565(110, 118, 130));
+    fillRect(cx + 10, y + 2, x1 - 10, y + 2, rgb565(200, 206, 216));
   }
+  fillRect(cx + 12, top + 46, cx + 34, top + 58, rgb565(240, 236, 220));      // a label
+  fillRect(cx + 14, top + 49, cx + 28, top + 50, rgb565(120, 120, 120));
+  fillRect(cx - 4, top + 108, cx + 4, top + 114, rgb565(200, 170, 60));       // its lock
 }
 
 static void paintOfficeDesk(int x0, int x1, int fy) {
@@ -4090,6 +4199,79 @@ static void paintSeats(int cx, int fy) {                                       /
   }
 }
 
+// The medical bay's walls: an eye chart and a hand-washing poster over the seats, an anatomy chart over the
+// patient downstairs, the defibrillator by the nurse station; upstairs a QUIET PLEASE sign and the clock
+static void paintPoster(int x0, int y0, int x1, int y1, int r, int g, int b) {   // a sheet pinned to the wall, its shadow
+  blendRect(x0 + 3, y0 + 4, x1 + 3, y1 + 4, 0, 0, 0, 0.12f);
+  fillRect(x0, y0, x1, y1, rgb565(r, g, b));
+  fillRect(x0, y0, x1, y0, rgb565(cl8(r + 20), cl8(g + 20), cl8(b + 20)));
+  fillRect(x0, y1, x1, y1, rgb565(cl8(r - 40), cl8(g - 40), cl8(b - 40)));
+  fillCircle(x0 + 4, y0 + 4, 1, rgb565(200, 50, 40));
+  fillCircle(x1 - 4, y0 + 4, 1, rgb565(200, 50, 40));
+}
+static void paintMedWall() {
+  const int fy = ROOM_FLOOR_Y;
+  // the eye chart
+  paintPoster(244, fy - 214, 314, fy - 100, 250, 250, 246);
+  static const char *rows[6] = { "E", "FP", "TOZ", "LPED", "PECFD", "EDFCZP" };
+  for (int r = 0; r < 6; r++) drawVectorText(rows[r], 279.0f, fy - 198.0f + r * 16 - (r < 2 ? 0 : 0), 2.4f - r * 0.36f, rgb565(20, 20, 24), false);
+  fillRect(250, fy - 116, 308, fy - 115, rgb565(200, 60, 50));
+  // WASH YOUR HANDS
+  paintPoster(330, fy - 206, 420, fy - 112, 200, 230, 246);
+  drawVectorText("WASH", 375.0f, fy - 194.0f, 1.3f, rgb565(30, 80, 150), false);
+  drawVectorText("YOUR HANDS", 375.0f, fy - 180.0f, 1.0f, rgb565(30, 80, 150), false);
+  for (int k = 0; k < 2; k++) {                                              // two hands under a tap's drops
+    int hx = 360 + k * 30, hy = fy - 140;
+    fillCircle(hx, hy, 9, rgb565(230, 186, 150));
+    for (int f = 0; f < 4; f++) fillRect(hx - 7 + f * 4, hy - 17, hx - 5 + f * 4, hy - 7, rgb565(230, 186, 150));
+  }
+  fillRect(370, fy - 172, 380, fy - 166, rgb565(150, 156, 166));
+  for (int k = 0; k < 3; k++) fillCircle(375, fy - 162 + k * 5, 1, rgb565(60, 140, 220));
+  drawVectorText("20 SECONDS", 375.0f, fy - 120.0f, 0.8f, rgb565(30, 80, 150), false);
+  // the defibrillator, in its green box
+  int ax = 820, ay = fy - 168;
+  blendRect(ax - 22 + 3, ay + 4, ax + 22 + 3, ay + 64, 0, 0, 0, 0.12f);
+  fillRect(ax - 22, ay, ax + 22, ay + 60, rgb565(30, 150, 80));
+  fillRect(ax - 22, ay, ax + 22, ay + 2, rgb565(80, 200, 120));
+  fillRect(ax - 16, ay + 18, ax + 16, ay + 54, rgb565(200, 230, 210));
+  fillRect(ax - 10, ay + 26, ax + 10, ay + 46, rgb565(240, 196, 40));        // the unit inside
+  drawLine(ax - 4, ay + 30, ax + 2, ay + 36, rgb565(200, 40, 30), false);
+  drawLine(ax + 2, ay + 36, ax - 2, ay + 40, rgb565(200, 40, 30), false);
+  drawVectorText("AED", (float)ax, ay + 9.0f, 1.1f, rgb565(240, 250, 240), false);
+  // the anatomy chart: a skeleton
+  int sx = 950, sy = fy - 226;
+  paintPoster(sx - 46, sy, sx + 46, sy + 118, 244, 236, 214);
+  uint16_t bone = rgb565(110, 100, 86);
+  fillCircle(sx, sy + 18, 8, bone);
+  fillCircle(sx, sy + 18, 5, rgb565(244, 236, 214));
+  fillRect(sx - 3, sy + 17, sx - 1, sy + 19, bone);
+  fillRect(sx + 1, sy + 17, sx + 3, sy + 19, bone);
+  fillRect(sx - 1, sy + 26, sx + 1, sy + 66, bone);                          // the spine
+  for (int k = 0; k < 4; k++) fillRect(sx - 12 + k, sy + 34 + k * 6, sx + 12 - k, sy + 35 + k * 6, bone);   // ribs
+  drawLine(sx - 2, sy + 30, sx - 22, sy + 58, bone, true);                   // arms
+  drawLine(sx + 2, sy + 30, sx + 22, sy + 58, bone, true);
+  fillRect(sx - 10, sy + 66, sx + 10, sy + 70, bone);                        // the pelvis
+  drawLine(sx - 6, sy + 70, sx - 10, sy + 108, bone, true);                  // legs
+  drawLine(sx + 6, sy + 70, sx + 10, sy + 108, bone, true);
+  drawVectorText("ANATOMY", (float)sx + 30, sy + 10.0f, 0.7f, rgb565(110, 100, 86), false);
+  // upstairs: QUIET PLEASE, and the clock
+  paintPoster(220, 116, 380, 162, 30, 60, 120);
+  drawVectorText("QUIET PLEASE", 300.0f, 132.0f, 1.4f, rgb565(240, 244, 250), false);
+  drawVectorText("PATIENTS RESTING", 300.0f, 150.0f, 0.9f, rgb565(170, 190, 230), false);
+  int cx = 1040, cy = 150;
+  blendRect(cx - 24 + 3, cy - 24 + 4, cx + 24 + 3, cy + 24 + 4, 0, 0, 0, 0.0f);
+  fillCircle(cx + 2, cy + 3, 25, rgb565(196, 200, 208));
+  fillCircle(cx, cy, 25, rgb565(60, 64, 72));
+  fillCircle(cx, cy, 21, rgb565(250, 250, 252));
+  for (int k = 0; k < 12; k++) {
+    float a = k * TWO_PI / 12;
+    fillCircle(cx + (int)(sinf(a) * 17), cy - (int)(cosf(a) * 17), k % 3 ? 1 : 2, rgb565(40, 44, 52));
+  }
+  drawLineF((float)cx, (float)cy, cx + 8.0f, cy - 6.0f, rgb565(30, 32, 38), 2.4f);   // ten past two, and some
+  drawLineF((float)cx, (float)cy, cx + 3.0f, cy - 16.0f, rgb565(30, 32, 38), 1.6f);
+  fillCircle(cx, cy, 2, rgb565(200, 40, 30));
+}
+
 static void paintMedical() {
   // downstairs: the seats, the back of the nurse station (its front is drawn over the nurse), a patient and his machines
   paintSeats(320, ROOM_FLOOR_Y);
@@ -4106,6 +4288,7 @@ static void paintMedical() {
     paintBed(340 + k * 220, MED_DECK_Y);
   }
   paintMedCabinet(1180, MED_DECK_Y);
+  paintMedWall();
   drawVectorText("MEDICAL BAY", 760, 140, 5.0f, rgb565(60, 72, 96), true);
   fillCircle(560, 140, 26, rgb565(250, 250, 252));
   fillRect(553, 124, 567, 156, rgb565(220, 40, 40));
@@ -4132,11 +4315,15 @@ static void paintGunRack(int cx, int fy) {
 static void paintSecurityLockers(int x, int fy) {                               // NUCLEAR MISSION's lockers
   for (int k = 0; k < 2; k++) {
     int x0 = x + k * 42;
-    fillRect(x0, fy - 150, x0 + 40, fy - 1, rgb565(120, 128, 140));
-    fillRect(x0, fy - 150, x0 + 40, fy - 147, rgb565(160, 168, 180));
-    for (int v = 0; v < 4; v++) fillRect(x0 + 8, fy - 136 + v * 6, x0 + 32, fy - 134 + v * 6, rgb565(70, 76, 88));
-    fillRect(x0 + 32, fy - 90, x0 + 35, fy - 70, rgb565(200, 204, 210));
+    solidBlock(x0, fy - 150, x0 + 40, fy - 1, 120, 128, 140, k == 1 ? 8 : 0, k == 1);
+    bevelPanel(x0 + 3, fy - 144, x0 + 37, fy - 6, 118, 126, 138);
+    for (int v = 0; v < 4; v++) {
+      fillRect(x0 + 8, fy - 136 + v * 6, x0 + 32, fy - 134 + v * 6, rgb565(60, 66, 78));
+      fillRect(x0 + 8, fy - 133 + v * 6, x0 + 32, fy - 133 + v * 6, rgb565(170, 178, 190));
+    }
+    metalHandle(x0 + 31, fy - 90, x0 + 33, fy - 70);
     fillRect(x0 + 6, fy - 60, x0 + 18, fy - 54, rgb565(240, 240, 236));
+    fillCircle(x0 + 32, fy - 64, 2, rgb565(60, 60, 64));                       // the padlock hole
   }
 }
 
@@ -4172,22 +4359,35 @@ static void paintSecurityRoom() {
 // ---- the store room: three levels of boxes, cupboards, cabinets, racks (nobody in it)
 static void paintMetalCabinet(int cx, int fy, int h) {                         // a grey double-door cabinet
   int x0 = cx - 50, x1 = cx + 50, top = fy - h;
-  fillRect(x0, top, x1, fy - 1, rgb565(130, 140, 150));
-  fillRect(x0, top, x1, top + 3, rgb565(170, 180, 190));
-  fillRect(cx - 1, top + 6, cx + 1, fy - 8, rgb565(90, 98, 108));
-  fillRect(cx - 9, top + h / 2 - 12, cx - 5, top + h / 2 + 12, rgb565(210, 214, 220));
-  fillRect(cx + 5, top + h / 2 - 12, cx + 9, top + h / 2 + 12, rgb565(210, 214, 220));
+  solidBlock(x0, top, x1, fy - 8, 130, 140, 150, 9);
+  bevelPanel(x0 + 4, top + 6, cx - 2, fy - 12, 128, 138, 148);
+  bevelPanel(cx + 2, top + 6, x1 - 4, fy - 12, 128, 138, 148);
+  metalHandle(cx - 9, top + h / 2 - 12, cx - 6, top + h / 2 + 12);
+  metalHandle(cx + 6, top + h / 2 - 12, cx + 9, top + h / 2 + 12);
   fillRect(x0 + 10, top + 12, x0 + 40, top + 22, rgb565(240, 240, 232));      // a label
-  fillRect(x0, fy - 8, x1, fy - 1, rgb565(80, 86, 96));
+  fillRect(x0 + 13, top + 15, x0 + 34, top + 16, rgb565(120, 120, 120));
+  fillRect(x0 + 13, top + 18, x0 + 28, top + 19, rgb565(120, 120, 120));
+  fillRect(x0, fy - 8, x1, fy - 1, rgb565(70, 76, 86));                       // its plinth
+  fillRect(x0, fy - 8, x1, fy - 8, rgb565(110, 116, 126));
+  hazardBand(x0 + 8, x0 + 40, fy - 30, fy - 24);                              // a strip on the door
 }
 
 static void paintSmallCupboard(int cx, int fy, uint16_t c) {                   // a squat wooden cupboard
   int x0 = cx - 45, x1 = cx + 45, top = fy - 110;
-  fillRect(x0, top, x1, fy - 1, c);
-  fillRect(x0, top, x1, top + 6, rgb565(200, 160, 110));
-  fillRect(cx - 1, top + 10, cx + 1, fy - 6, rgb565(90, 60, 36));
+  int r = (c >> 11) * 255 / 31, g = ((c >> 5) & 63) * 255 / 63, b = (c & 31) * 255 / 31;
+  solidBlock(x0, top + 6, x1, fy - 1, r, g, b, 8);
+  fillRect(x0 - 3, top, x1 + 3, top + 6, rgb565(200, 160, 110));             // its top, overhanging
+  fillRect(x0 - 3, top, x1 + 3, top, rgb565(230, 196, 150));
+  bevelPanel(x0 + 6, top + 14, cx - 3, fy - 8, r, g, b);
+  bevelPanel(cx + 3, top + 14, x1 - 6, fy - 8, r, g, b);
+  for (int k = 0; k < 2; k++) {                                              // the wood's grain
+    fillRect(x0 + 12, top + 34 + k * 26, cx - 10, top + 34 + k * 26, rgb565(cl8(r - 22), cl8(g - 18), cl8(b - 12)));
+    fillRect(cx + 10, top + 46 + k * 22, x1 - 12, top + 46 + k * 22, rgb565(cl8(r - 22), cl8(g - 18), cl8(b - 12)));
+  }
   fillCircle(cx - 8, top + 50, 3, rgb565(220, 200, 120));
   fillCircle(cx + 8, top + 50, 3, rgb565(220, 200, 120));
+  fillCircle(cx - 9, top + 49, 1, rgb565(255, 244, 200));
+  fillCircle(cx + 7, top + 49, 1, rgb565(255, 244, 200));
 }
 
 static void paintPallet(int x0, int w, int fy) {                               // a pallet stacked with boxes, shrink-wrapped
@@ -4197,6 +4397,12 @@ static void paintPallet(int x0, int w, int fy) {                               /
   paintBox(x0 + w / 2, fy - 10, w / 2 - 4, 46, 1);
   paintBox(x0 + 14, fy - 56, w - 28, 40, 2);
   blendRect(x0 + 2, fy - 98, x0 + w - 2, fy - 10, 220, 230, 240, 0.18f);
+  for (int k = 0; k < 4; k++) {                                              // the shrink-wrap's shine
+    float lx = x0 + 10.0f + k * (w - 20) / 4.0f;
+    float qx[4] = { lx, lx + 6, lx + 14, lx + 8 }, qy[4] = { (float)fy - 96, (float)fy - 96, (float)fy - 12, (float)fy - 12 };
+    blendPolygonF(qx, qy, 4, 255, 255, 255, 0.16f);
+  }
+  fillRect(x0, fy - 10, x0 + w, fy - 10, rgb565(200, 160, 110));
 }
 
 static void paintStore() {
@@ -6226,24 +6432,64 @@ static void drawLabRoomBack() {
     return;
   }
   if (k == LK_MEDICAL) {
-    auto ecg = [](int x0, int y0, int w, int h, float ph) {    // a heart trace sweeping across a screen
+    // the monitors: each patient's own - a heart trace and its rate, and one more thing each
+    auto trace = [](int x0, int y0, int w, int h, float ph, int kind, uint16_t c) {   // kind 0 heart, 1 pulse, 2 breathing
       float prevY = 0;
       for (int i = 0; i <= w; i += 2) {
-        float u = fmodf(i / (float)w + ph, 1.0f), v = fmodf(u * 3.0f, 1.0f);
-        float y = (v > 0.45f && v < 0.5f) ? -h * 0.45f : (v > 0.5f && v < 0.55f) ? h * 0.3f : 0.0f;
-        if (i) drawLine(x0 + i - 2, y0 + (int)prevY, x0 + i, y0 + (int)y, rgb565(80, 240, 120), false);
+        float u = fmodf(i / (float)w + ph, 1.0f), v = fmodf(u * 3.0f, 1.0f), y;
+        if (kind == 0) y = (v > 0.45f && v < 0.5f) ? -h * 0.45f : (v > 0.5f && v < 0.55f) ? h * 0.3f : (v > 0.7f && v < 0.8f) ? -h * 0.08f : 0.0f;
+        else if (kind == 1) y = -h * 0.4f * expf(-v * 4.0f) * (v < 0.1f ? v * 10 : 1.0f) + h * 0.15f;
+        else y = -h * 0.3f * sinf(u * TWO_PI * 1.5f);
+        if (i) drawLine(x0 + i - 2, y0 + (int)prevY, x0 + i, y0 + (int)y, c, false);
         prevY = y;
       }
+      int sweep = x0 + (int)(fmodf(ph * 0.999f, 1.0f) * 0) ;
+      (void)sweep;
     };
-    ecg(1112, ROOM_FLOOR_Y - 132, 56, 30, clockT * 0.5f);
-    for (int b = 0; b < 4; b++) ecg(340 + b * 220 - 150, MED_DECK_Y - 167, 56, 26, clockT * 0.5f + b * 0.27f);
+    struct MonLook { float rate; int hr; uint8_t extra; };   // extra: 0 pulse, 1 breathing, 2 blood pressure, 3 alarm
+    static const MonLook look[5] = { { 0.5f, 72, 0 }, { 0.85f, 118, 3 }, { 0.36f, 54, 1 }, { 0.5f, 81, 0 }, { 0.62f, 96, 2 } };
+    for (int b = 0; b < 5; b++) {
+      int x0 = b == 0 ? 1110 : 340 + (b - 1) * 220 - 150, y0 = b == 0 ? ROOM_FLOOR_Y - 156 : MED_DECK_Y - 186;
+      int w = 60, h = b == 0 ? 48 : 38;
+      const MonLook &L = look[b];
+      float ph = clockT * L.rate + b * 0.27f;
+      bool alarm = L.extra == 3 && fmodf(clockT, 1.0f) < 0.5f;
+      if (alarm) fillRect(x0, y0, x0 + w, y0 + h, rgb565(60, 10, 10));
+      trace(x0 + 2, y0 + h / 3, 40, h / 2, ph, 0, rgb565(80, 240, 120));
+      char t[12];
+      snprintf(t, sizeof(t), "%d", L.hr);
+      drawVectorText(t, x0 + 52.0f, y0 + 8.0f, 0.95f, L.extra == 3 ? rgb565(255, 90, 70) : rgb565(80, 240, 120), false);
+      if ((int)(ph * 3) % 2 == 0 && fmodf(ph * 3, 1.0f) < 0.15f) fillCircle(x0 + 52, y0 + 17, 2, rgb565(255, 80, 80));   // the beat
+      if (L.extra == 0 || L.extra == 3) {
+        trace(x0 + 2, y0 + h - 7, 40, h / 3, ph, 1, rgb565(90, 200, 255));
+        drawVectorText(b == 3 ? "94" : "98", x0 + 52.0f, y0 + h - 9.0f, 0.85f, rgb565(90, 200, 255), false);
+      } else if (L.extra == 1) {
+        trace(x0 + 2, y0 + h - 7, 40, h / 3, clockT * 0.12f, 2, rgb565(255, 220, 80));
+        drawVectorText("12", x0 + 52.0f, y0 + h - 9.0f, 0.85f, rgb565(255, 220, 80), false);
+      } else {
+        drawVectorText("128/84", x0 + 22.0f, y0 + h - 8.0f, 0.8f, rgb565(240, 120, 220), false);
+      }
+    }
     // the patients, unconscious in their beds, under their blankets
     for (int b = 0; b < 5; b++) {
       int cx = b == 0 ? 960 : 340 + (b - 1) * 220, fy = b == 0 ? ROOM_FLOOR_Y : MED_DECK_Y;
       AgentPose p = PERSON_LIE;
+      personVariant = b;                       // (each one a little different: the downstairs patient as he was)
       drawPersonU(p, cx - 6, fy - 48, 1, AGENT_SCALE, PK_PATIENT);
-      fillRect(cx - 40, fy - 62, cx + 86, fy - 46, rgb565(150, 190, 220));
-      fillRect(cx - 40, fy - 62, cx + 86, fy - 59, rgb565(190, 220, 240));
+      personVariant = 0;
+      static const uint8_t blanket[5][3] = { { 150, 190, 220 }, { 120, 170, 130 }, { 210, 160, 190 }, { 150, 190, 220 }, { 220, 196, 140 } };
+      int br = blanket[b][0], bg = blanket[b][1], bb = blanket[b][2];
+      int bx1 = cx + (b == 2 ? 70 : 86);                                       // (one has kicked it down a little)
+      fillRect(cx - 40, fy - 62, bx1, fy - 46, rgb565(br, bg, bb));
+      fillRect(cx - 40, fy - 62, bx1, fy - 59, rgb565(cl8(br + 40), cl8(bg + 30), cl8(bb + 20)));
+      for (int f = 0; f < 3; f++) fillRect(cx - 30 + f * 38, fy - 58, cx - 18 + f * 38, fy - 57, rgb565(br * 4 / 5, bg * 4 / 5, bb * 4 / 5));   // its folds
+      if (b == 1 || b == 3) {                  // a check pattern / a stripe
+        for (int x = cx - 34; x < bx1 - 4; x += 14) fillRect(x, fy - 59, x + 1, fy - 47, rgb565(br * 4 / 5, bg * 4 / 5, bb * 4 / 5));
+      }
+      if (b == 4) fillRect(cx - 40, fy - 54, bx1, fy - 52, rgb565(170, 60, 50));
+      if (b == 3) {                            // his oxygen line, to the wall
+        drawLine(cx - 70, fy - 56, cx - 110, fy - 120, rgb565(150, 220, 200), false);
+      }
     }
   } else if (k == LK_SECURITY) {
     for (int r = 0; r < 3; r++)
@@ -6766,16 +7012,24 @@ static void enterRoom(int idx, bool fromLeft) {
   s2Recog = false;
   for (int k = 0; k < 4; k++) gShots[k].on = false;
   simOn = false;
-  robOn = stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_STORE;
-  if (robOn) {                               // the robot: its level, its run, starting at the far end from him
+  robCount = 0;
+  for (int k = 0; k < GAS_PUFFS; k++) gasPuffs[k].on = false;
+  gasDose = 0;
+  if (stage == 2 && idx < S2_ROOMS && s2Kind[idx] == LK_STORE) {   // the robots: one a level, the floor's at the far end from him
     static const float ys[3] = { ROOM_FLOOR_Y, STORE_MID_Y, STORE_TOP_Y };
-    robY = ys[s2RobotLevel];
-    robX0 = s2RobotLevel == 0 ? 220.0f : 60.0f;
-    robX1 = s2RobotLevel == 0 ? 1000.0f : 1020.0f;
-    robX = fromLeft ? robX1 : robX0;
-    robDir = fromLeft ? -1 : 1;
-    robWarnT = -1;
-    robArcT = robCool = robTurnT = 0;
+    for (int k = 0; k < 3; k++) {
+      Robot &r = robots[robCount++];
+      r.type = s2RobotType[k];
+      r.y = ys[k];
+      r.x0 = k == 0 ? 220.0f : 60.0f;
+      r.x1 = k == 0 ? 1000.0f : 1020.0f;
+      if (k == 0) { r.x = fromLeft ? r.x1 : r.x0; r.dir = fromLeft ? -1 : 1; }
+      else { r.x = r.x0 + (r.x1 - r.x0) * (k == 1 ? 0.3f : 0.65f); r.dir = k == 1 ? 1 : -1; }
+      r.speed = r.type == ROBT_GAS ? ROB_SPEED * 1.2f : ROB_SPEED;
+      r.warnT = r.lockT = -1;
+      r.arcT = r.cool = r.turnT = r.roll = r.sprayT = 0;
+      r.charging = false;
+    }
   }
   auto addNpc = [&](uint8_t kind, float y, float a, float b, float start) {
     Npc &n = npcs[npcCount++];
@@ -10541,110 +10795,247 @@ static int atGuardBody() {
 }
 
 // Each frame of play in stage 2
-static bool robSees() {                      // him: on its level, in front of it, within its reach (and a little)
-  if (fabsf(agY - robY) > 4 || agState == ST_JUMP || agState == ST_KO || agState == ST_CAUGHT || agState == ST_SHOCK) return false;
-  float d = (agX - robX) * robDir;
+static bool robLevel(const Robot &r) {      // him: on its level, on his feet
+  return fabsf(agY - r.y) <= 4 && agState != ST_JUMP && agState != ST_KO && agState != ST_CAUGHT && agState != ST_SHOCK;
+}
+static bool robSees(const Robot &r) {        // him: on its level, in front of it, within its arc's reach (and a little)
+  if (!robLevel(r)) return false;
+  float d = (agX - r.x) * r.dir;
   return d > 0 && d < ROB_HALF + ROB_REACH + ROB_MARGIN + 18;
 }
-static void robZap() {                       // got him: the live floor's jolt (then 10 health, 30 seconds, the door)
+static void robZap(const char *msg) {        // got him: the live floor's jolt (then 10 health, 30 seconds, the door)
   sfxPlay(SFX_ZAP);
-  showMsg("ZAPPED BY THE ROBOT!", 1.6f);
+  showMsg(msg, 1.6f);
   setState(ST_SHOCK, 0.05f);
 }
-static void updateRobot(float dt) {
-  if (!robOn || gameOver != END_NONE) return;
-  if (robArcT > 0) robArcT -= dt;
-  if (robCool > 0) robCool -= dt;
-  if (robWarnT >= 0) {                       // crackling: then the arc
-    robWarnT += dt;
-    if (robWarnT >= ROB_WARN) {
-      robWarnT = -1;
-      robArcT = ROB_ARC;
-      robCool = ROB_COOL;
-      sfxPlay(SFX_ZAP);
-      if (robSees()) robZap();
-    }
+static void gasEmit(const Robot &r) {        // a puff from its nozzle
+  for (int k = 0; k < GAS_PUFFS; k++) {
+    GasPuff &p = gasPuffs[k];
+    if (p.on) continue;
+    p.on = true;
+    p.x = r.x + r.dir * 34.0f;
+    p.y = r.y - 30 + frnd(-4, 4);
+    p.vx = r.dir * frnd(220, 330);
+    p.vy = frnd(-24, 10);
+    p.t = 0;
     return;
-  }
-  if (robArcT > 0 && robSees()) { robArcT = 0; robZap(); return; }   // (walked into the arc)
-  if (robCool <= 0 && robSees()) {           // in front of it: stop, crackle
-    robWarnT = 0;
-    sfxPlay(SFX_BUZZ);
-    return;
-  }
-  bool touching = fabsf(agY - robY) <= 4 && fabsf(agX - robX) < ROB_HALF + 14 && agState != ST_JUMP && agState != ST_KO &&
-                  agState != ST_CAUGHT && agState != ST_SHOCK;
-  if (touching && robCool <= 0) { robCool = ROB_COOL; robArcT = ROB_ARC; robZap(); return; }   // (touching it)
-  if (robTurnT > 0) {                        // turning round at the end of its run
-    robTurnT -= dt;
-    if (robTurnT <= 0) robDir = -robDir;
-    return;
-  }
-  robX += robDir * ROB_SPEED * dt;
-  robRoll += ROB_SPEED * dt;
-  if ((robDir > 0 && robX >= robX1) || (robDir < 0 && robX <= robX0)) {
-    robX = clampv(robX, robX0, robX1);
-    robTurnT = ROB_TURN;
   }
 }
-static void drawRobot() {
-  if (!robOn) return;
-  float x = robX, y = robY;
-  int d = robDir;
+static float gasPuffR(const GasPuff &p) { return 12 + 40 * fminf(1.0f, p.t / 1.0f); }
+static float gasPuffA(const GasPuff &p) {   // how thick it is: thinning over its last second and a half
+  float k = (GAS_LIFE - p.t) / 1.5f;
+  return k >= 1 ? 1.0f : (k <= 0 ? 0.0f : k);
+}
+static void updateRobGas(float dt) {
+  bool in = false;
+  for (int k = 0; k < GAS_PUFFS; k++) {
+    GasPuff &p = gasPuffs[k];
+    if (!p.on) continue;
+    p.t += dt;
+    if (p.t >= GAS_LIFE) { p.on = false; continue; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    float drag = expf(-1.6f * dt);           // (it slows, spreads and drifts)
+    p.vx *= drag;
+    p.vy = p.vy * drag - 4 * dt;
+    float r = gasPuffR(p) * 0.8f;
+    float dx = agX - p.x, dy = (agY - 50) - p.y;
+    if (gasPuffA(p) > 0.35f && fabsf(dx) < r + 10 && fabsf(dy) < r + 40) in = true;
+  }
+  if (in && agState != ST_KO && agState != ST_CAUGHT && gameOver == END_NONE) {
+    gasDose += GAS_DRAIN * dt;
+    while (gasDose >= 1) { gasDose -= 1; hurt(1); }
+    if ((gasCoughT -= dt) <= 0) {
+      gasCoughT = 0.9f;
+      sfxPlay(SFX_HIT);
+      showMsg("CHOKING ON THE ROBOT'S GAS!", 1.0f);
+    }
+  } else gasCoughT = 0;
+}
+static void updateRobot(Robot &r, float dt) {
+  if (r.arcT > 0) r.arcT -= dt;
+  if (r.cool > 0) r.cool -= dt;
+  if (r.type == ROBT_ZAP) {
+    if (r.warnT >= 0) {                      // crackling: then the arc
+      r.warnT += dt;
+      if (r.warnT >= ROB_WARN) {
+        r.warnT = -1;
+        r.arcT = ROB_ARC;
+        r.cool = ROB_COOL;
+        sfxPlay(SFX_ZAP);
+        if (robSees(r)) robZap("ZAPPED BY THE ROBOT!");
+      }
+      return;
+    }
+    if (r.arcT > 0 && robSees(r)) { r.arcT = 0; robZap("ZAPPED BY THE ROBOT!"); return; }   // (walked into the arc)
+    if (r.cool <= 0 && robSees(r)) {         // in front of it: stop, crackle
+      r.warnT = 0;
+      sfxPlay(SFX_BUZZ);
+      return;
+    }
+  } else if (r.type == ROBT_GAS) {
+    if (r.warnT >= 0) {                      // hissing: then the spray
+      r.warnT += dt;
+      if (r.warnT >= ROB_GAS_WARN) { r.warnT = -1; r.sprayT = ROB_GAS_SPRAY; sfxPlay(SFX_HISS); }
+      return;
+    }
+    if (r.sprayT > 0) {                      // spraying: a puff every few frames
+      float before = r.sprayT;
+      r.sprayT -= dt;
+      if ((int)(before * 22) != (int)(r.sprayT * 22)) gasEmit(r);
+      if (r.sprayT <= 0) r.cool = ROB_GAS_COOL;
+      return;
+    }
+    float d = (agX - r.x) * r.dir;
+    if (r.cool <= 0 && fabsf(agY - r.y) <= 4 && agState != ST_KO && agState != ST_CAUGHT && d > 0 && d < ROB_GAS_RANGE) {
+      r.warnT = 0;                           // in front of it, near: stop, hiss
+      sfxPlay(SFX_BUZZ);
+      return;
+    }
+  } else {                                   // the charger
+    float d = (agX - r.x) * r.dir;
+    bool ahead = fabsf(agY - r.y) <= 4 && agState != ST_KO && agState != ST_CAUGHT && agState != ST_SHOCK && d > 0 && d < ROB_SIGHT;
+    if (r.lockT >= 0) {                      // locking on: still, its light flashing
+      r.lockT += dt;
+      if (r.lockT >= ROB_LOCK) { r.lockT = -1; r.charging = true; sfxPlay(SFX_WARN); }
+      return;
+    }
+    if (!r.charging && ahead && r.turnT <= 0 && r.cool <= 0) { r.lockT = 0; sfxPlay(SFX_BUZZ); return; }
+    if (r.charging && !ahead && d < 0) r.charging = false;   // (gone past him, or he's over it)
+    float want = r.charging ? ROB_CHARGE_SPEED : ROB_SPEED;
+    r.speed = r.speed < want ? fminf(want, r.speed + ROB_ACCEL * dt) : fmaxf(want, r.speed - ROB_ACCEL * 0.6f * dt);
+  }
+  bool touching = robLevel(r) && fabsf(agX - r.x) < ROB_HALF + 14;
+  if (touching && r.cool <= 0 && r.type != ROBT_GAS) {   // (touching it, or rammed)
+    r.cool = ROB_COOL;
+    r.charging = false;
+    if (r.type == ROBT_ZAP) r.arcT = ROB_ARC;
+    robZap(r.type == ROBT_CHARGE ? "RAMMED BY THE ROBOT!" : "ZAPPED BY THE ROBOT!");
+    return;
+  }
+  if (r.turnT > 0) {                         // turning round at the end of its run
+    r.turnT -= dt;
+    if (r.turnT <= 0) r.dir = -r.dir;
+    return;
+  }
+  float v = r.type == ROBT_GAS ? ROB_SPEED * 1.2f : (r.type == ROBT_CHARGE ? r.speed : ROB_SPEED);
+  r.x += r.dir * v * dt;
+  r.roll += v * dt;
+  if ((r.dir > 0 && r.x >= r.x1) || (r.dir < 0 && r.x <= r.x0)) {
+    r.x = clampv(r.x, r.x0, r.x1);
+    r.turnT = ROB_TURN;
+    r.charging = false;
+    r.speed = ROB_SPEED;
+  }
+}
+static void updateRobots(float dt) {
+  if (robCount == 0 || gameOver != END_NONE) return;
+  for (int k = 0; k < robCount; k++) updateRobot(robots[k], dt);
+  updateRobGas(dt);
+}
+static void drawRobGas() {
+  for (int k = 0; k < GAS_PUFFS; k++) {
+    const GasPuff &p = gasPuffs[k];
+    if (!p.on) continue;
+    float a = gasPuffA(p), r = gasPuffR(p);
+    float wob = sinf(clockT * 2.3f + k) * 4;
+    fogDisc(p.x + wob, p.y, r * 1.25f, 90, 190, 50, 0.30f * a);
+    fogDisc(p.x - wob * 0.6f, p.y - r * 0.2f, r * 0.8f, 140, 220, 90, 0.30f * a);
+  }
+}
+static void drawRobot(const Robot &r) {
+  float x = r.x, y = r.y;
+  int d = r.dir;
   uint16_t dark = rgb565(40, 44, 52), metal = rgb565(96, 102, 116), light = rgb565(150, 156, 170);
+  if (r.type == ROBT_CHARGE) { metal = rgb565(116, 92, 70); light = rgb565(176, 150, 120); }
+  if (r.type == ROBT_GAS) { metal = rgb565(78, 104, 82); light = rgb565(138, 170, 140); }
   // the base: a track on three wheels
   fillRect((int)x - ROB_HALF, (int)y - 16, (int)x + ROB_HALF, (int)y - 1, dark);
   fillCircle((int)x - ROB_HALF, (int)y - 8, 8, dark);
   fillCircle((int)x + ROB_HALF, (int)y - 8, 8, dark);
   for (int w = -1; w <= 1; w++) {
-    float wx = x + w * 22, a = robRoll / 7.0f * d;
+    float wx = x + w * 22, a = r.roll / 7.0f * d;
     fillCircle((int)wx, (int)y - 8, 6, rgb565(70, 74, 84));
     drawLineF(wx - cosf(a) * 5, y - 8 - sinf(a) * 5, wx + cosf(a) * 5, y - 8 + sinf(a) * 5, light, 1.5f);
   }
-  // the antenna, its light blinking; the dome head; the body
+  // the antenna and its light (red: the zapper; orange: the charger; green: the gasser)
   drawLineF(x - d * 6.0f, y - 56, x - d * 10.0f, y - 74, light, 2.0f);
-  fillCircle((int)(x - d * 10), (int)y - 75, 3, (int)(clockT * 3) & 1 ? rgb565(255, 60, 40) : rgb565(110, 30, 24));
+  bool blink = (int)(clockT * 3) & 1;
+  if (r.type == ROBT_CHARGE && (r.lockT >= 0 || r.charging)) blink = (int)(clockT * 14) & 1;
+  if (r.type == ROBT_GAS && (r.warnT >= 0 || r.sprayT > 0)) blink = (int)(clockT * 10) & 1;
+  int lr = r.type == ROBT_GAS ? 60 : 255, lg = r.type == ROBT_ZAP ? 60 : (r.type == ROBT_CHARGE ? 150 : 255), lb = r.type == ROBT_GAS ? 70 : (r.type == ROBT_CHARGE ? 30 : 40);
+  fillCircle((int)(x - d * 10), (int)y - 75, 3, blink ? rgb565(lr, lg, lb) : rgb565(lr * 2 / 5, lg * 2 / 5, lb * 2 / 5));
+  if (blink && r.type != ROBT_ZAP) glowDisc(x - d * 10.0f, y - 75, 12, lr, lg, lb, 0.45f);
   fillCircle((int)x, (int)y - 38, 20, light);
   fillCircle((int)x - 6, (int)y - 46, 6, rgb565(200, 206, 218));
   fillRect((int)x - 24, (int)y - 38, (int)x + 24, (int)y - 16, metal);
   fillRect((int)x - 24, (int)y - 38, (int)x + 24, (int)y - 35, light);
   for (int g = 0; g < 4; g++) fillRect((int)x - 16 + g * 8, (int)y - 30, (int)x - 12 + g * 8, (int)y - 21, dark);
-  // the visor: a red slit, its eye sweeping across
+  // the visor: a slit, its eye sweeping across (locked on: dead ahead)
   int vx0 = (int)x + (d > 0 ? -4 : -16), vx1 = vx0 + 20;
   fillRect(vx0, (int)y - 50, vx1, (int)y - 44, rgb565(60, 10, 10));
-  float ex = x + d * 6 + sinf(clockT * 4) * 6;
-  glowDisc(ex, y - 47, 8, 255, 40, 30, 0.6f);
+  bool locked = (r.type == ROBT_CHARGE && (r.lockT >= 0 || r.charging)) || (r.type == ROBT_GAS && (r.warnT >= 0 || r.sprayT > 0));
+  float ex = x + d * 6 + (locked ? d * 6.0f : sinf(clockT * 4) * 6);
+  glowDisc(ex, y - 47, locked ? 12.0f : 8.0f, 255, 40, 30, 0.6f);
   fillRect((int)ex - 2, (int)y - 49, (int)ex + 2, (int)y - 45, rgb565(255, 90, 70));
-  // the prongs
-  for (int pr = 0; pr < 2; pr++) {
-    float py = y - 32 + pr * 9;
-    drawLineF(x + d * 24.0f, py, x + d * 36.0f, py, rgb565(180, 186, 196), 3.0f);
-    fillCircle((int)(x + d * 37), (int)py, 2, rgb565(220, 230, 255));
-  }
-  float tipX = x + d * 38.0f, tipY = y - 27;
-  if (robWarnT >= 0) {                       // crackling
-    float k = robWarnT / ROB_WARN;
-    glowDisc(tipX, tipY, 10 + 14 * k, 140, 200, 255, 0.5f + 0.4f * fxRnd(0, 2));
-    for (int sp = 0; sp < 3; sp++)
-      drawLineF(tipX, tipY, tipX + frnd(-12, 12), tipY + frnd(-12, 12), rgb565(220, 240, 255), 1.5f);
-  }
-  if (robArcT > 0) {                         // the arc: two jagged strands out to its reach
-    for (int strand = 0; strand < 2; strand++) {
-      float px = tipX, py = tipY;
-      for (int sg = 1; sg <= 8; sg++) {
-        float nx = tipX + d * ROB_REACH * sg / 8.0f, ny = tipY + (sg < 8 ? frnd(-11, 11) : frnd(-4, 4));
-        drawLineF(px, py, nx, ny, strand ? rgb565(160, 210, 255) : rgb565(240, 250, 255), strand ? 3.0f : 1.6f);
-        px = nx;
-        py = ny;
-      }
+  if (r.type == ROBT_ZAP) {
+    for (int pr = 0; pr < 2; pr++) {         // the prongs
+      float py = y - 32 + pr * 9;
+      drawLineF(x + d * 24.0f, py, x + d * 36.0f, py, rgb565(180, 186, 196), 3.0f);
+      fillCircle((int)(x + d * 37), (int)py, 2, rgb565(220, 230, 255));
     }
-    glowDisc(tipX + d * ROB_REACH * 0.5f, tipY, ROB_REACH * 0.7f, 120, 190, 255, 0.35f);
+    float tipX = x + d * 38.0f, tipY = y - 27;
+    if (r.warnT >= 0) {                      // crackling
+      float k = r.warnT / ROB_WARN;
+      glowDisc(tipX, tipY, 10 + 14 * k, 140, 200, 255, 0.5f + 0.4f * fxRnd(0, 2));
+      for (int sp = 0; sp < 3; sp++)
+        drawLineF(tipX, tipY, tipX + frnd(-12, 12), tipY + frnd(-12, 12), rgb565(220, 240, 255), 1.5f);
+    }
+    if (r.arcT > 0) {                        // the arc: two jagged strands out to its reach
+      for (int strand = 0; strand < 2; strand++) {
+        float px = tipX, py = tipY;
+        for (int sg = 1; sg <= 8; sg++) {
+          float nx = tipX + d * ROB_REACH * sg / 8.0f, ny = tipY + (sg < 8 ? frnd(-11, 11) : frnd(-4, 4));
+          drawLineF(px, py, nx, ny, strand ? rgb565(160, 210, 255) : rgb565(240, 250, 255), strand ? 3.0f : 1.6f);
+          px = nx;
+          py = ny;
+        }
+      }
+      glowDisc(tipX + d * ROB_REACH * 0.5f, tipY, ROB_REACH * 0.7f, 120, 190, 255, 0.35f);
+    }
+  } else if (r.type == ROBT_CHARGE) {        // a ram: a striped plough on its front
+    int fx = (int)(x + d * 26);
+    int px[4] = { fx, fx + d * 14, fx + d * 14, fx }, py[4] = { (int)y - 40, (int)y - 30, (int)y - 6, (int)y - 2 };
+    fillPolygon(px, py, 4, rgb565(70, 72, 80));
+    for (int k = 0; k < 3; k++) {
+      int sx = fx + d * (3 + k * 4);
+      drawLineF((float)sx, y - 34 + k * 2.0f, (float)sx + d * 3.0f, y - 8, rgb565(230, 180, 40), 2.0f);
+    }
+    if (r.charging) {                        // speed lines behind it, dust kicked up
+      for (int k = 0; k < 4; k++) {
+        float ly = y - 12 - k * 11, lx = x - d * (36 + k * 6);
+        drawLineF(lx, ly, lx - d * (22 + 10 * fxRnd(0, 1)), ly, rgb565(200, 204, 214), 1.4f);
+      }
+      glowDisc(x - d * 34.0f, y - 4, 16, 170, 150, 120, 0.35f);
+    }
+  } else {                                   // the gasser: a tank on its back, a nozzle
+    fillRect((int)(x - d * 30) - 7, (int)y - 64, (int)(x - d * 30) + 7, (int)y - 30, rgb565(70, 150, 60));
+    fillRect((int)(x - d * 30) - 7, (int)y - 64, (int)(x - d * 30) + 7, (int)y - 60, rgb565(120, 200, 100));
+    drawVectorText("G", x - d * 30.0f, y - 46, 0.9f, rgb565(20, 50, 20), false);
+    drawLineF(x - d * 30.0f, y - 30, x + d * 20.0f, y - 28, rgb565(40, 44, 52), 2.5f);   // its hose
+    fillRect((int)(x + d * 24) - 4, (int)y - 34, (int)(x + d * 24) + 4, (int)y - 26, rgb565(150, 156, 170));
+    fillRect((int)(x + d * 30) - 4, (int)y - 33, (int)(x + d * 30) + 4, (int)y - 27, rgb565(110, 116, 128));
+    if (r.warnT >= 0) glowDisc(x + d * 34.0f, y - 30, 8 + 10 * r.warnT / ROB_GAS_WARN, 140, 240, 100, 0.5f);
   }
+}
+static void drawRobots() {
+  for (int k = 0; k < robCount; k++) drawRobot(robots[k]);
+  drawRobGas();
 }
 
 static void updateStage2(float dt) {
   if (s2BumpT > 0) s2BumpT -= dt;
-  if (mode == MODE_ROOM) updateRobot(dt);
+  if (mode == MODE_ROOM) updateRobots(dt);
   if (congratsT > 0 && !termOn) congratsT -= dt;
   if (bossDeadT >= 0 && gameOver == END_NONE && (bossDeadT += dt) > 2.5f) endGame(END_WIN);   // THE PROFESSOR down: the end
   if (simState == SIM_WON) simT += dt;
@@ -13744,7 +14135,7 @@ static void drawEntry() {
 
 // ============================================================ the settings (Triangle), STAGE 1's briefing
 #define SETTINGS_FILE QL_DATA_DIR "/settings.bin"
-#define SETTINGS_ITEMS 7
+#define SETTINGS_ITEMS 8
 static void loadSettings() {
   FILE *f = fopen(SETTINGS_FILE, "rb");
   if (!f) return;
@@ -13790,8 +14181,8 @@ static void jumpToStage2() {
 }
 
 static void updateSettings() {
-  if (pressed & BTN_UP) { settingsSel = (settingsSel + SETTINGS_ITEMS - 1) % SETTINGS_ITEMS; quitConfirm = hiResetConfirm = false; sfxPlay(SFX_KEY); }
-  if (pressed & BTN_DOWN) { settingsSel = (settingsSel + 1) % SETTINGS_ITEMS; quitConfirm = hiResetConfirm = false; sfxPlay(SFX_KEY); }
+  if (pressed & BTN_UP) { settingsSel = (settingsSel + SETTINGS_ITEMS - 1) % SETTINGS_ITEMS; quitConfirm = hiResetConfirm = quitGameConfirm = false; sfxPlay(SFX_KEY); }
+  if (pressed & BTN_DOWN) { settingsSel = (settingsSel + 1) % SETTINGS_ITEMS; quitConfirm = hiResetConfirm = quitGameConfirm = false; sfxPlay(SFX_KEY); }
   bool go = (pressed & (BTN_JUMP | BTN_USE)) != 0;
   bool side = (pressed & (BTN_LEFT | BTN_RIGHT)) != 0;
   if (settingsSel <= 1 && (go || side)) {          // the music: on / off
@@ -13812,7 +14203,11 @@ static void updateSettings() {
     if (quitConfirm) quitToTitle();
     else quitConfirm = true;
     sfxPlay(SFX_CLICK);
-  } else if (settingsSel == 6 && go) {             // RESUME
+  } else if (settingsSel == 6 && go) {             // QUIT GAME: X twice, and back to the PS5's home screen
+    if (quitGameConfirm) quitGameNow = true;
+    else quitGameConfirm = true;
+    sfxPlay(SFX_CLICK);
+  } else if (settingsSel == 7 && go) {             // RESUME
     settingsOn = false;
     sfxPlay(SFX_CLICK);
   }
@@ -13822,27 +14217,28 @@ static void drawSettings() {
   gfxClipAll();
   if (hiResetDoneT > 0) hiResetDoneT -= 1.0f / 60;
   blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 2, 4, 8, 0.72f);
-  int x0 = 330, y0 = 100, x1 = 950, y1 = 640;
+  int x0 = 330, y0 = 72, x1 = 950, y1 = 668;
   fillRect(x0, y0, x1, y1, rgb565(12, 16, 26));
   drawRectOutline(x0, y0, x1, y1, rgb565(90, 220, 255), 3);
   drawVectorText("SETTINGS", SCREEN_W / 2, y0 + 40, 4.4f, rgb565(90, 220, 255), true);
   drawVectorText("GAME PAUSED", SCREEN_W / 2, y0 + 82, 2.2f, rgb565(255, 190, 70), false);
   for (int i = 0; i < SETTINGS_ITEMS; i++) {
-    int y = y0 + 136 + i * 52;
+    int y = y0 + 132 + i * 52;
     int item = i;
     bool sel = i == settingsSel;
     if (sel) fillRect(x0 + 24, y - 22, x1 - 24, y + 22, rgb565(36, 60, 90));
     uint16_t c = sel ? rgb565(255, 230, 120) : rgb565(220, 226, 236);
     const char *label = i == 0 ? "STAGE MUSIC" : i == 1 ? "ELEVATOR MUSIC" : i == 2 ? "JUMP TO STAGE 2" : i == 3 ? "ALL ACCESS (TEST)" :
                         i == 4 ? (hiResetDoneT > 0 ? "HIGH SCORES RESET" : hiResetConfirm ? "X AGAIN TO RESET" : "RESET HIGH SCORES") :
-                        i == 5 ? (quitConfirm ? "X AGAIN TO QUIT" : "QUIT TO TITLE") : "RESUME";
+                        i == 5 ? (quitConfirm ? "X AGAIN TO QUIT" : "QUIT TO TITLE") :
+                        i == 6 ? (quitGameConfirm ? "X AGAIN TO QUIT GAME" : "QUIT GAME") : "RESUME";
     if (item <= 1 || item == 3) {
       bool on = item == 3 ? s2AllAccess : musicOn[i == 0 ? 1 : 0].load();
       drawVectorText(label, x0 + 50 + vectorTextWidth(label, 3.0f) / 2, y, 3.0f, c, true);
       const char *v = on ? "ON" : "OFF";
       drawVectorText(v, x1 - 60 - vectorTextWidth(v, 3.0f) / 2, y, 3.0f, on ? rgb565(100, 240, 140) : rgb565(255, 90, 70), true);
     } else {
-      drawVectorText(label, SCREEN_W / 2, y, 3.0f, (i == 5 && quitConfirm) || (i == 4 && hiResetConfirm) ? rgb565(255, 90, 70) : i == 4 && hiResetDoneT > 0 ? rgb565(100, 240, 140) : c, true);
+      drawVectorText(label, SCREEN_W / 2, y, 3.0f, (i == 5 && quitConfirm) || (i == 6 && quitGameConfirm) || (i == 4 && hiResetConfirm) ? rgb565(255, 90, 70) : i == 4 && hiResetDoneT > 0 ? rgb565(100, 240, 140) : c, true);
     }
   }
   drawVectorText("UP / DOWN: CHOOSE    X: CHANGE    TRIANGLE: BACK", SCREEN_W / 2, y1 - 26, 1.8f, rgb565(150, 158, 176), false);
@@ -14409,6 +14805,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if ((pressed & BTN_NEW) && !mapOn && gameOver == END_NONE) {
     settingsOn = !settingsOn;
     settingsSel = 0;
+    quitGameConfirm = false;
     quitConfirm = false;
     pressed &= ~BTN_NEW;
   }
@@ -14554,7 +14951,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (curRoom == CONTROL_ROOM) drawControlRoomAnim();
     if (stage == 2 && curRoom < S2_ROOMS) {
       drawLabRoomBack();
-      drawRobot();
+      drawRobots();
       drawNpcs();
       drawLabRoomFront();
     }
@@ -14699,6 +15096,8 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
 }
 
 // For the PC test build: where he is and what he is doing
+bool gameQuitRequested() { return quitGameNow; }
+
 const char *gameDebug() {
   static char b[200];
   static const char *st[] = { "IDLE", "RUN", "JUMP", "USE", "FALL", "LAND", "LIFT", "KO", "SHOCK", "CAUGHT" };

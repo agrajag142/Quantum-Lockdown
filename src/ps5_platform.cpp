@@ -29,6 +29,7 @@ int sceKernelMapDirectMemory(void **address, size_t length, int protection, int 
 int sceKernelSendNotificationRequest(uint32_t device, void *request, size_t size, int blocking);
 int sceKernelUsleep(uint32_t microseconds);
 int sceSystemServiceHideSplashScreen();
+int sceSystemServiceLoadExec(const char *path, char *const argv[]);
 int sceVideoOutOpen(int32_t user_id, int32_t bus_type, int32_t index, const void *param);
 int sceVideoOutSetFlipRate(int32_t handle, int32_t rate);
 int sceVideoOutSubmitFlip(int32_t handle, int32_t buffer_index, uint32_t flip_mode, int64_t flip_argument);
@@ -294,6 +295,10 @@ int main() {
     uint32_t b = gameButtons();
     gameFrame(dt, b, b & ~prev);
     prev = b;
+    if (gameQuitRequested()) {                  // QUIT GAME: back to the home screen
+      sceSystemServiceLoadExec("exit", nullptr);
+      return 0;
+    }
     int back = shown ^ 1;
     copyFrame(scanout[back]);
     flushRange(scanout[back], kUsedBytes);
