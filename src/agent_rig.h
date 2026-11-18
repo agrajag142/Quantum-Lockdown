@@ -48,6 +48,14 @@ static constexpr uint16_t agentRgb(int r, int g, int b) {
 #define AG_SKIN        agentRgb(196, 150, 118)   // round the eyes
 #define AG_GOGGLE      agentRgb(64, 66, 72)      // night vision goggles
 #define AG_LENS        agentRgb(90, 255, 140)
+#define AG_SUIT_HI     agentRgb(100, 108, 128)   // light along the front of the suit
+#define AG_VEST        agentRgb(66, 72, 62)      // the plate carrier over it
+#define AG_VEST_DK     agentRgb(46, 50, 44)      //   its webbing rows, its back
+#define AG_VEST_HI     agentRgb(92, 100, 86)
+#define AG_RADIO       agentRgb(24, 26, 30)
+#define AG_PATCH       agentRgb(150, 64, 52)     // the shoulder patch
+#define AG_SOLE        agentRgb(12, 12, 14)
+#define AG_LACE        agentRgb(74, 74, 80)
 
 // ---------- Pose ----------
 // All angles in degrees. Facing right; the sketch mirrors for facing left.
@@ -280,6 +288,7 @@ static void agentDraw(const AgentPose &p, float x, float floorY, int facing, flo
     agDir(j.footA[1], fx, fy);
     agShape(xf, fillPoly, j.ankX[1], j.ankY[1], fx, fy, AG_BOOT_PTS, AG_BOOT_N, AG_BOOT_FAR);
   }
+  agBand(xf, fillPoly, j.kneeX[1], j.kneeY[1], j.ankX[1], j.ankY[1], 4.0f, 3.4f, 0.80f, 1.0f, AG_BOOT_FAR);
 
   // ---- body ----
   // satchel on the back (u = up the torso, v = forward)
@@ -292,6 +301,12 @@ static void agentDraw(const AgentPose &p, float x, float floorY, int facing, flo
     { 20.0f, -13.6f }, { 26.6f, -13.6f }, { 26.6f, -6.0f }, { 20.0f, -6.0f },
   };
   agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, PACK_FLAP, 4, AG_PACK_DARK);
+  static const float PACK_STRAP[][2] = { { 14.0f, -14.2f }, { 15.6f, -14.2f }, { 15.6f, -5.6f }, { 14.0f, -5.6f } };
+  agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, PACK_STRAP, 4, AG_STRAP);
+  static const float PACK_CLIP[][2] = { { 13.6f, -13.0f }, { 16.0f, -13.0f }, { 16.0f, -11.2f }, { 13.6f, -11.2f } };
+  agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, PACK_CLIP, 4, AG_BUCKLE);
+  static const float PACK_HI[][2] = { { 25.0f, -13.6f }, { 26.6f, -13.6f }, { 26.6f, -6.0f }, { 25.0f, -6.0f } };
+  agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, PACK_HI, 4, AG_POUCH);
 
   // torso
   static const float TORSO[][2] = {
@@ -305,6 +320,30 @@ static void agentDraw(const AgentPose &p, float x, float floorY, int facing, flo
     { 2.0f, -6.6f }, { 16.0f, -7.0f }, { 26.0f, -6.5f }, { 30.5f, -4.6f }, { 26.0f, -3.2f }, { 14.0f, -3.6f }, { 2.0f, -3.4f },
   };
   agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, TORSO_BACK, 7, AG_SUIT_SHADE);
+  // the plate carrier: over the chest and back, its webbing rows, a radio on the chest, the collar
+  static const float VEST[][2] = {
+    { 8.0f, -7.0f }, { 28.5f, -6.8f }, { 30.0f, -4.0f }, { 30.0f, 7.0f }, { 27.0f, 8.0f }, { 8.0f, 7.6f },
+  };
+  agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, VEST, 6, AG_VEST);
+  static const float VEST_BACK[][2] = { { 8.0f, -7.0f }, { 28.5f, -6.8f }, { 28.5f, -4.2f }, { 8.0f, -4.4f } };
+  agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, VEST_BACK, 4, AG_VEST_DK);
+  static const float VEST_EDGE[][2] = { { 9.0f, 6.4f }, { 28.0f, 6.6f }, { 27.0f, 8.0f }, { 9.0f, 7.6f } };
+  agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, VEST_EDGE, 4, AG_VEST_HI);
+  for (int r = 0; r < 3; r++) {
+    float u = 11.0f + r * 4.2f;
+    const float ROW[][2] = { { u, 0.5f }, { u + 1.3f, 0.5f }, { u + 1.3f, 7.5f }, { u, 7.5f } };
+    agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, ROW, 4, AG_VEST_DK);
+  }
+  static const float RADIO[][2] = { { 21.5f, 4.4f }, { 27.0f, 4.4f }, { 27.0f, 8.8f }, { 21.5f, 8.8f } };
+  agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, RADIO, 4, AG_RADIO);
+  static const float ANTENNA[][2] = { { 27.0f, 7.4f }, { 31.6f, 7.8f }, { 31.6f, 8.5f }, { 27.0f, 8.2f } };
+  agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, ANTENNA, 4, AG_RADIO);
+  static const float RADIO_LED[][2] = { { 25.4f, 7.2f }, { 26.4f, 7.2f }, { 26.4f, 8.2f }, { 25.4f, 8.2f } };
+  agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, RADIO_LED, 4, AG_LENS);
+  static const float FRONT_HI[][2] = { { 1.0f, 5.2f }, { 8.0f, 5.4f }, { 8.0f, 6.6f }, { 1.0f, 6.4f } };   // (below the vest: the suit's lit front)
+  agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, FRONT_HI, 4, AG_SUIT_HI);
+  static const float COLLAR[][2] = { { 29.5f, -5.0f }, { 33.6f, -3.6f }, { 33.6f, 3.0f }, { 29.5f, 5.0f } };
+  agShape(xf, fillPoly, 0, 0, j.tdx, j.tdy, COLLAR, 4, AG_SUIT_SHADE);
   // harness strap: from the back of the shoulder down across the chest
   static const float HARNESS[][2] = {
     { 30.0f, -6.0f }, { 32.6f, -3.0f }, { 12.0f, 7.0f }, { 8.5f, 6.4f },
@@ -335,7 +374,16 @@ static void agentDraw(const AgentPose &p, float x, float floorY, int facing, flo
     float fx, fy;
     agDir(j.footA[0], fx, fy);
     agShape(xf, fillPoly, j.ankX[0], j.ankY[0], fx, fy, AG_BOOT_PTS, AG_BOOT_N, AG_BOOT);
+    static const float SOLE[][2] = { { -4.6f, 3.2f }, { 10.6f, 3.2f }, { 10.0f, 4.6f }, { -4.5f, 4.6f } };
+    agShape(xf, fillPoly, j.ankX[0], j.ankY[0], fx, fy, SOLE, 4, AG_SOLE);
+    for (int k = 0; k < 3; k++) {                 // its laces
+      float u = 1.2f + k * 2.2f;
+      const float LACE[][2] = { { u, -2.6f + k * 0.7f }, { u + 1.0f, -2.6f + k * 0.7f }, { u + 1.0f, -1.6f + k * 0.7f }, { u, -1.6f + k * 0.7f } };
+      agShape(xf, fillPoly, j.ankX[0], j.ankY[0], fx, fy, LACE, 4, AG_LACE);
+    }
   }
+  agBand(xf, fillPoly, j.kneeX[0], j.kneeY[0], j.ankX[0], j.ankY[0], 4.2f, 3.5f, 0.80f, 1.0f, AG_BOOT);   // the boot's top, up the shin
+  agBand(xf, fillPoly, j.kneeX[0], j.kneeY[0], j.ankX[0], j.ankY[0], 2.0f, 1.6f, 0.0f, 0.12f, AG_SUIT_HI);   // the knee pad's shine
 
   // ---- head: balaclava, eye slit, night vision goggles ----
   {
@@ -373,12 +421,24 @@ static void agentDraw(const AgentPose &p, float x, float floorY, int facing, flo
       { 4.0f, 12.2f }, { 3.8f, 14.6f }, { 1.2f, 14.6f }, { 1.0f, 12.2f },
     };
     agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, LENS, 4, AG_LENS);
+    static const float LENS_GLINT[][2] = { { 4.0f, 12.6f }, { 3.9f, 13.6f }, { 3.0f, 13.6f }, { 3.1f, 12.6f } };
+    agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, LENS_GLINT, 4, agentRgb(220, 255, 230));
+    static const float EARPIECE[][2] = { { 1.6f, -3.6f }, { 1.6f, 0.4f }, { -2.6f, 0.4f }, { -2.6f, -3.6f } };
+    agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, EARPIECE, 4, AG_RADIO);
+    static const float MIC[][2] = { { -1.6f, -0.4f }, { -4.8f, 6.6f }, { -5.8f, 6.4f }, { -2.6f, -0.8f } };   // the throat mic's boom
+    agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, MIC, 4, AG_RADIO);
+    static const float MIC_TIP[][2] = { { -4.4f, 6.0f }, { -4.4f, 8.6f }, { -6.6f, 8.6f }, { -6.6f, 6.0f } };
+    agShape(xf, fillPoly, j.headX, j.headY, j.hdx, j.hdy, MIC_TIP, 4, AG_GOGGLE);
   }
 
   // ---- near arm, last (in front of the body) ----
   agCapsule(xf, fillPoly, j.shX, j.shY, j.elbX[0], j.elbY[0], 3.8f, 3.2f, AG_SUIT);
   agCapsule(xf, fillPoly, j.elbX[0], j.elbY[0], j.wrX[0], j.wrY[0], 3.2f, 2.8f, AG_SUIT);
   agBand(xf, fillPoly, j.elbX[0], j.elbY[0], j.wrX[0], j.wrY[0], 3.2f, 2.8f, 0.70f, 0.86f, AG_STRAP);
+  agBand(xf, fillPoly, j.shX, j.shY, j.elbX[0], j.elbY[0], 4.4f, 3.8f, -0.08f, 0.26f, AG_VEST);      // the shoulder's armour
+  agBand(xf, fillPoly, j.shX, j.shY, j.elbX[0], j.elbY[0], 2.2f, 2.0f, 0.32f, 0.50f, AG_PATCH);     // a patch on the sleeve
+  agBand(xf, fillPoly, j.shX, j.shY, j.elbX[0], j.elbY[0], 3.8f, 3.2f, 0.90f, 1.04f, AG_PAD);       // the elbow pad
+  agBand(xf, fillPoly, j.elbX[0], j.elbY[0], j.wrX[0], j.wrY[0], 3.2f, 2.8f, -0.02f, 0.12f, AG_PAD);
   {
     int hx, hy;
     float dx = j.wrX[0] - j.elbX[0], dy = j.wrY[0] - j.elbY[0];

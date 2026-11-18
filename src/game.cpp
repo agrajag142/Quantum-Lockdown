@@ -41,7 +41,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "079"
+#define GAME_VERSION      "080"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -13922,15 +13922,83 @@ static void drawStage2Brief() {
 }
 
 // On board: a seat by the window, the tunnel rushing past
+// The ride's route, above the cabin: a cut through the ground - the abandoned facility on the left, Dr.
+// Voss's on the right, each a building over its basement, the QUANTUMLOOP tunnel between their basements,
+// and the train in it, from one to the other over the ride
+static void drawRideRoute(float t, int y1) {
+  const int y0 = HUD_H, gy = 92;                                         // (the ground's surface)
+  fillRect(0, y0, SCREEN_W - 1, gy, rgb565(70, 74, 84));                 // the sky: grey, overcast
+  for (int k = 0; k < 6; k++) blendRect(0, y0 + k * 8, SCREEN_W - 1, y0 + k * 8 + 8, 255, 255, 255, 0.02f * (6 - k));
+  fillRect(0, gy, SCREEN_W - 1, y1, rgb565(96, 90, 80));                 // the ground, in its layers
+  fillRect(0, gy, SCREEN_W - 1, gy + 3, rgb565(90, 110, 70));
+  for (int k = 0; k < 3; k++) fillRect(0, gy + 20 + k * 22, SCREEN_W - 1, gy + 21 + k * 22, rgb565(84, 78, 70));
+  for (int i = 0; i < 60; i++) {                                         // stones in it
+    uint32_t h = (uint32_t)(i + 3) * 2654435761u;
+    fillRect((int)(h % SCREEN_W), gy + 6 + (int)((h >> 12) % (y1 - gy - 10)), (int)(h % SCREEN_W) + 3, gy + 8 + (int)((h >> 12) % (y1 - gy - 10)), rgb565(110, 104, 94));
+  }
+  // the facilities: a building, its basement under it
+  struct Fac { int x0, x1, bx0, bx1; bool lit; const char *name; };
+  const Fac fac[2] = { { 60, 270, 90, 240, false, "ABANDONED FACILITY" }, { 1010, 1220, 1040, 1190, true, "DR. VOSS'S FACILITY" } };
+  const int ty = y1 - 34;                                                // (the tunnel's floor)
+  for (int f = 0; f < 2; f++) {
+    const Fac &F = fac[f];
+    uint16_t wall = F.lit ? rgb565(150, 160, 180) : rgb565(104, 104, 104);
+    fillRect(F.x0, gy - 36, F.x1, gy, wall);                             // the building
+    fillRect(F.x0 - 4, gy - 40, F.x1 + 4, gy - 36, F.lit ? rgb565(190, 200, 220) : rgb565(80, 80, 80));
+    for (int w = 0; w < 8; w++)
+      for (int r = 0; r < 2; r++) {
+        int wx = F.x0 + 12 + w * ((F.x1 - F.x0 - 24) / 8), wyy = gy - 30 + r * 14;
+        bool on = F.lit ? ((w * 7 + r * 3) % 5 != 0) : ((w * 5 + r) % 7 == 0);
+        fillRect(wx, wyy, wx + 12, wyy + 8, on ? (F.lit ? rgb565(255, 220, 120) : rgb565(120, 110, 80)) : rgb565(40, 44, 52));
+      }
+    if (!F.lit) {                                                        // derelict: a broken roof line
+      fillRect(F.x0 + 60, gy - 40, F.x0 + 90, gy - 34, rgb565(70, 74, 84));
+      drawLine(F.x0 + 60, gy - 34, F.x0 + 74, gy - 28, rgb565(70, 74, 84), false);
+    } else {
+      fillRect(F.x1 - 40, gy - 58, F.x1 - 36, gy - 40, rgb565(150, 160, 180));   // its mast, its light
+      if (fmodf(clockT, 1.0f) < 0.5f) fillCircle(F.x1 - 38, gy - 60, 3, rgb565(255, 60, 40));
+    }
+    fillRect(F.bx0, gy, F.bx1, ty + 8, rgb565(54, 58, 66));             // the basement, its floors
+    drawRectOutline(F.bx0, gy, F.bx1, ty + 8, F.lit ? rgb565(120, 150, 200) : rgb565(90, 90, 90), 2);
+    for (int k = 1; k < 3; k++) fillRect(F.bx0 + 2, gy + k * (ty + 8 - gy) / 3, F.bx1 - 2, gy + k * (ty + 8 - gy) / 3 + 1, rgb565(90, 96, 108));
+    fillRect((F.bx0 + F.bx1) / 2 - 6, gy - 8, (F.bx0 + F.bx1) / 2 + 6, ty + 6, rgb565(30, 34, 40));   // the lift shaft down
+    float lx = f == 0 ? (float)F.x1 + 10 : (float)F.x0 - 10;
+    drawVectorText(F.name, lx + (f == 0 ? vectorTextWidth(F.name, 1.3f) / 2 : -vectorTextWidth(F.name, 1.3f) / 2), gy - 22.0f, 1.3f,
+                   F.lit ? rgb565(255, 210, 120) : rgb565(200, 200, 200), false);
+  }
+  // the tunnel between the basements, its lights, how far he's come
+  const int tx0 = fac[0].bx1, tx1 = fac[1].bx0;
+  fillRect(tx0, ty - 12, tx1, ty + 8, rgb565(26, 28, 34));
+  fillRect(tx0, ty - 12, tx1, ty - 11, rgb565(70, 76, 88));
+  fillRect(tx0, ty + 7, tx1, ty + 8, rgb565(70, 76, 88));
+  float u = fminf(1.0f, fmaxf(0.0f, t / RIDE_SECONDS));
+  float e = u * u * (3 - 2 * u);                                         // (away gently, up to speed, then slowing in)
+  float trX = fac[0].bx0 + 40 + (fac[1].bx1 - 40 - (fac[0].bx0 + 40)) * e;
+  fillRect(tx0, ty + 3, (int)trX, ty + 4, rgb565(90, 200, 255));          // the line behind it, lit
+  for (int x = tx0 + 20; x < tx1; x += 40) fillRect(x, ty - 9, x + 6, ty - 8, x < trX ? rgb565(90, 200, 255) : rgb565(80, 84, 96));
+  int cx = (int)trX;                                                     // the train: a capsule, its windows
+  fillRect(cx - 26, ty - 7, cx + 26, ty + 3, rgb565(230, 236, 246));
+  fillCircle(cx + 26, ty - 2, 5, rgb565(230, 236, 246));
+  fillCircle(cx - 26, ty - 2, 5, rgb565(230, 236, 246));
+  for (int w = 0; w < 5; w++) fillRect(cx - 22 + w * 9, ty - 5, cx - 17 + w * 9, ty - 2, rgb565(60, 140, 220));
+  fillRect(cx - 30, ty + 1, cx + 30, ty + 2, rgb565(90, 200, 255));
+  if (u > 0.05f && u < 0.95f) glowDisc((float)cx + 30, ty - 2.0f, 14, 140, 210, 255, 0.4f);   // its headlight
+  char b[24];
+  snprintf(b, sizeof(b), "%d%%", (int)(e * 100 + 0.5f));
+  drawVectorText(b, (float)cx, ty - 22.0f, 1.1f, rgb565(140, 220, 255), false);
+}
+
 static void drawRide(float t) {
   gfxClip(HUD_H, PLAY_Y1);
+  const int roofY = 196;                                                 // (the cabin's roof: the route map above it)
   fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(176, 180, 188));    // the cabin wall
-  for (int x = 0; x < SCREEN_W; x += 160) fillRect(x, 150, x + 2, 640, rgb565(150, 154, 162));
-  fillRect(0, HUD_H, SCREEN_W - 1, 150, rgb565(56, 60, 70));              // its ceiling, lit along it
-  fillRect(0, 138, SCREEN_W - 1, 146, rgb565(230, 238, 248));
-  glowDisc(SCREEN_W / 2, 150, 700, 200, 220, 255, 0.10f);
+  for (int x = 0; x < SCREEN_W; x += 160) fillRect(x, roofY, x + 2, 640, rgb565(150, 154, 162));
+  drawRideRoute(t, roofY - 16);
+  fillRect(0, roofY - 16, SCREEN_W - 1, roofY, rgb565(56, 60, 70));     // its ceiling, lit along it
+  fillRect(0, roofY - 8, SCREEN_W - 1, roofY - 3, rgb565(230, 238, 248));
+  glowDisc(SCREEN_W / 2, roofY, 700, 200, 220, 255, 0.10f);
   // the window band: the tunnel outside
-  const int wy0 = 196, wy1 = 404;
+  const int wy0 = 248, wy1 = 440;
   fillRect(40, wy0 - 12, SCREEN_W - 41, wy1 + 12, rgb565(40, 44, 52));
   fillRect(52, wy0, SCREEN_W - 53, wy1, rgb565(6, 8, 12));
   gfxClip(wy0, wy1);
@@ -13960,11 +14028,11 @@ static void drawRide(float t) {
   for (int k = 1; k < 4; k++) fillRect(k * 320 - 10, wy0 - 12, k * 320 + 10, wy1 + 12, rgb565(150, 154, 162));   // the frames
   blendRect(52, wy0, SCREEN_W - 53, wy0 + 40, 255, 255, 255, 0.05f);    // the glass
   // the display: where it is going, how long
-  fillRect(440, 156, 840, 186, rgb565(10, 14, 24));
+  fillRect(440, roofY + 6, 840, roofY + 36, rgb565(10, 14, 24));
   char b[48];
   int left = (int)ceilf(fmaxf(0.0f, RIDE_SECONDS - t));
   snprintf(b, sizeof(b), "QUANTUMLOOP   STAGE 2   ARRIVING %d:%02d", left / 60, left % 60);
-  drawVectorText(b, SCREEN_W / 2, 171, 1.6f, rgb565(255, 190, 70), true);
+  drawVectorText(b, SCREEN_W / 2, roofY + 21, 1.6f, rgb565(255, 190, 70), true);
   // the seats (a little nearer than the rest: drawn larger), him on one, his head well over its back
   const float RIDE_SCALE = 1.9f;
   const int seatTop = 640 - (int)(22.0f * RIDE_SCALE) - 2;              // the cushion: at his hip

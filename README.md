@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 079: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 080: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -29,7 +29,11 @@ it draws the whole 1920x1080 picture itself.
   (`fillRect`, `fillPolygon`, `fillCircle`, `drawLine`, `drawVectorText`,
   `hazardBand`...), so painters can be copied from the sketch as they are. The
   agent is drawn at full resolution.
-- `agent_rig.h` and `people.h` are NUCLEAR MISSION's, unchanged.
+- `agent_rig.h` and `people.h` are NUCLEAR MISSION's. The agent has more
+  detail since version 080: an olive plate carrier with webbing rows, a
+  radio on the chest (its light), shoulder armour with a patch, elbow pads,
+  boots up the shin with soles and laces, an earpiece and mic, a glint on
+  the goggles, a strap and clip on the satchel.
 
 ## The complex
 
@@ -351,7 +355,12 @@ Going in ends stage 1:
    happen during the ride): he walks in, fade to black, then the
    cabin: him on a seat, the tunnel rushing past the windows, the display
    counting down to arrival, a deep rumble - about 20 seconds
-   (`RIDE_SECONDS`). Fade to black again.
+   (`RIDE_SECONDS`). Above the cabin's roof, the route (`drawRideRoute`): a
+   cut through the ground, the derelict ABANDONED FACILITY on the left and
+   DR. VOSS'S FACILITY (lit, its mast blinking) on the right, each a
+   building over its basement, the QUANTUMLOOP tunnel between their
+   basements, and the train gliding along it from one to the other over the
+   ride (how far, in per cent; the line behind it lit). Fade to black again.
 5. **The arrival station**: the same, its board saying ARRIVED STAGE 2 and
    QUANTUM LAB with an arrow. He steps out, the doors close: head left, into
    lift A at its lowest stop (LEVEL Q).
@@ -1075,7 +1084,7 @@ checked on the PC before it goes on the console.
 | `src/gfx.cpp`, `gfx.h` | drawing: the 1920x1080 picture, unit-space calls as in the sketch, vector letters |
 | `src/ps5_platform.cpp` | the PS5 side: the TV picture, the DualSense, the sound, the loop |
 | `src/micromod.c`, `.h` | the MOD player (Martin Cameron's Micromod, as in NUCLEAR MISSION); `micromod2.c`, `micromod3.c`, `micromod4.c` more copies of it (one a tune) |
-| `src/agent_rig.h`, `people.h` | NUCLEAR MISSION's agent and people, unchanged |
+| `src/agent_rig.h`, `people.h` | NUCLEAR MISSION's agent (more detail, version 080) and people |
 | `sim/` | the PC test build, the room layout checker and the icon maker (not compiled into the app) |
 | `sce_sys/` | `param.json` (PPSA99903) and the home-screen icon (`icon0.png`: made by `sim/icon_layers.cpp` and `sim/make_icon.py` - the agent running under the quantum core's orbits, a missile rising over a burning city, QUANTUM LOCKDOWN in glowing letters) |
 | `assets/` | files copied into the app: put `elevator.mod` here |
