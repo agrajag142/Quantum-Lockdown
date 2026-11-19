@@ -27,6 +27,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 #include "people.h"            // (the kinds of people: stage 2's chef and maintenance man)
+#include "voss_diary.h"        // (Dr. Voss's diary: stage 1's OMNIS terminals)
 #pragma GCC diagnostic pop
 #include "scream_sound.h"
 #include "pain_sounds.h"
@@ -41,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "080"
+#define GAME_VERSION      "081"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -941,6 +942,13 @@ static float nothingShowT = 0, nothingX = 0, nothingY = 0;
 // The opening: out of the air-conditioning duct onto the catwalk (as NUCLEAR MISSION's lab)
 static float introT = -1;              // >= 0: the opening is playing (seconds)
 static int ventShaft = -1, ventFloor = -1, ventX = 0;   // where the duct is
+// Dr. Voss's diary: an OMNIS terminal on one catwalk of each shaft, by its door (shaft A holds entry 1 ... J entry 10).
+// No power (its lamp flashing red) it does nothing; once a generator is on (green) it opens on the entry. 500 points a first read.
+#define DIARY_SCORE 500
+static int8_t diaryFloor[SHAFTS], diaryRight[SHAFTS];
+static bool diaryRead[SHAFTS];
+static int diaryShaft = -1;                // (the one being read)
+static int diaryX(int s) { return diaryRight[s] ? SCREEN_W - 104 : 104; }
 static bool ventOpen = false;          // its grille has come out (it lies on the catwalk)
 
 // Health, the clock, the end
@@ -6747,6 +6755,33 @@ static bool sideDoor(int side) { return roomOff(curShaft, carFloor, side == 1) >
 
 // The shaft: walls on both sides, and a catwalk out to each door - only at
 // the floors where there is one. The car stays put on screen; all this scrolls.
+// The OMNIS diary terminal on a catwalk: a pedestal, its screen, its lamp (red flashing: no power; green: on)
+static int generatorsOn();
+static bool atDiary();
+static void useDiary();
+static void drawDiaryTerm(int fy, int sh) {
+  int x = diaryX(sh);
+  bool on = generatorsOn() > 0;
+  blendRect(x - 26, fy - 6, x + 34, fy - 1, 0, 0, 0, 0.25f);                  // its shadow
+  fillRect(x - 10, fy - 54, x + 10, fy - 1, rgb565(60, 64, 74));               // the pedestal
+  fillRect(x - 10, fy - 54, x - 8, fy - 1, rgb565(96, 102, 116));
+  fillRect(x - 22, fy - 6, x + 22, fy - 1, rgb565(70, 74, 84));
+  int hx[4] = { x - 30, x + 30, x + 26, x - 26 }, hy[4] = { fy - 98, fy - 98, fy - 52, fy - 52 };   // the head, tilted to him
+  fillPolygon(hx, hy, 4, rgb565(84, 90, 104));
+  fillRect(x - 30, fy - 98, x + 30, fy - 96, rgb565(140, 148, 164));
+  fillRect(x - 24, fy - 92, x + 24, fy - 60, on ? rgb565(4, 22, 12) : rgb565(10, 12, 14));   // the screen
+  if (on) {
+    for (int r = 0; r < 4; r++) fillRect(x - 20, fy - 88 + r * 7, x - 20 + 12 + (r * 13 + sh * 7) % 28, fy - 87 + r * 7, rgb565(60, 200, 110));
+    if (diaryRead[sh]) fillRect(x + 12, fy - 70, x + 18, fy - 66, rgb565(255, 200, 80));
+    glowDisc((float)x, fy - 76.0f, 40, 60, 200, 110, 0.12f);
+  }
+  drawVectorText("OMNIS", (float)x, fy - 105.0f, 1.1f, rgb565(170, 180, 200), false);
+  bool lit = on || fmodf(clockT, 0.8f) < 0.4f;                                 // the lamp
+  int lr = on ? 60 : 255, lg = on ? 240 : 40, lb = on ? 110 : 30;
+  fillCircle(x + 22, fy - 56, 3, lit ? rgb565(lr, lg, lb) : rgb565(70, 20, 16));
+  if (lit) glowDisc(x + 22.0f, fy - 56.0f, 12, lr, lg, lb, 0.5f);
+}
+
 static void drawShaftScene() {
   if (stage == 2) {                    // the QUANTUM LAB's lift areas
     drawLabShaft();
@@ -6821,6 +6856,7 @@ static void drawShaftScene() {
       int r0 = side ? x0 : 40, r1 = side ? x1 - 40 : x1;
       drawLine(r0, fy - 44, r1, fy - 44, rail, true);
       for (int x = r0 + 20; x < r1; x += 40) drawLine(x, fy - 44, x, fy - 1, rail, false);
+      if (stage == 1 && L == diaryFloor[curShaft] && side == diaryRight[curShaft]) drawDiaryTerm(fy, curShaft);
       // the floor's number, near the shaft, and the hazard edge
       drawVectorText(name, side ? SHAFT_X1 + 70 : SHAFT_X0 - 70, cy + 34, 5.0f, rgb565(255, 190, 70), true);
       if (side == 0) fillRect(SHAFT_X0 - 8, fy, SHAFT_X0 - 1, fy + 5, rgb565(230, 186, 36));
@@ -11118,6 +11154,8 @@ static void updateAgent(float dt) {
         useLoopPower();                 // the QUANTUMLOOP's power...
       } else if ((pressed & BTN_USE) && atLoopDoor()) {
         useLoopDoor();                  // ...and its doors
+      } else if ((pressed & BTN_USE) && atDiary()) {
+        useDiary();                     // Dr. Voss's diary, on the OMNIS terminal (with power)
       } else if ((pressed & BTN_USE) && atConsole()) {
         useConsole();                   // QUANTUM CONTROL: the main computer...
       } else if ((pressed & BTN_USE) && atBay()) {
@@ -12456,6 +12494,123 @@ static void drawTermCase(const char *label) {
     }
 }
 
+// ---- Dr. Voss's diary, on the OMNIS terminals in the shafts
+static bool atDiary() {
+  if (stage != 1 || mode != MODE_SHAFT || carMoving || carFloor != diaryFloor[curShaft]) return false;
+  if (fabsf(agY - CAR_FLOOR_Y) > 2) return false;
+  return fabsf(agX - diaryX(curShaft)) < 44;
+}
+static void useDiary() {
+  if (generatorsOn() <= 0) return;           // (no power: nothing happens)
+  diaryShaft = curShaft;
+  termOn = true;
+  termKind = 4;
+  termT = 0;
+  termSel = 0;
+  termPage = 0;
+  sfxPlay(SFX_POWERUP);
+}
+static void updateDiaryTerm(float dt) {
+  termT += dt;
+  bool go = (pressed & (BTN_USE | BTN_JUMP)) != 0;
+  if (termT < 0.6f) return;                  // (zooming in)
+  if (termPage == 0) {                       // the menu: the entry, LOG OFF
+    if (pressed & (BTN_UP | BTN_DOWN)) { termSel ^= 1; sfxPlay(SFX_KEY); }
+    if (go) {
+      if (termSel == 1) { termOn = false; sfxPlay(SFX_KEY); return; }
+      termPage = 1;
+      termT = 0.6f;
+      sfxPlay(SFX_KEY);
+      if (!diaryRead[diaryShaft]) {          // a first read: 500 points
+        diaryRead[diaryShaft] = true;
+        addScore(DIARY_SCORE, agX, agY - 160);
+      }
+    }
+  } else if (go && termT > 0.9f) {           // reading: X or Square, back to the menu
+    termPage = 0;
+    termT = 0.6f;
+    sfxPlay(SFX_KEY);
+  }
+}
+static int diaryCount() { int n = 0; for (int k = 0; k < SHAFTS; k++) n += diaryRead[k]; return n; }
+// The entry's text, wrapped to a width at a size: returns its height (and draws it if draw)
+static float diaryWrap(const char *text, float x, float y, float w, float size, bool draw, uint16_t c) {
+  float lineH = size * 6 + 7, paraGap = lineH * 0.55f, cy = y;
+  char line[200], word[64];
+  int ln = 0;
+  const char *p = text;
+  auto flush = [&]() {
+    if (ln > 0) {
+      line[ln] = 0;
+      if (draw) drawTextLeft(line, x, cy, size, c, false);
+      cy += lineH;
+      ln = 0;
+    }
+  };
+  while (*p) {
+    if (*p == '|') { flush(); cy += paraGap; p++; continue; }
+    if (*p == ' ') { p++; continue; }
+    int wl = 0;
+    while (*p && *p != ' ' && *p != '|' && wl < 63) word[wl++] = *p++;
+    word[wl] = 0;
+    if (ln > 0 && (ln + 1 + wl) * 6 * size > w) flush();
+    if (ln > 0) line[ln++] = ' ';
+    memcpy(line + ln, word, wl);
+    ln += wl;
+  }
+  flush();
+  return cy - y;
+}
+static void drawDiaryTerm() {
+  // zooming in on the terminal's screen first
+  float z = fminf(1.0f, termT / 0.6f);
+  if (z < 1.0f) {
+    float e = z * z * (3 - 2 * z);
+    float fx = (float)diaryX(diaryShaft), fy = CAR_FLOOR_Y;
+    float ax0 = fx - 24, ay0 = fy - 92, ax1 = fx + 24, ay1 = fy - 60;
+    float bx0 = TX0 - 56, by0 = TY0 - 44, bx1 = TX1 + 56, by1 = TY1 + 46;
+    blendRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, 0, 0, 0, 0.6f * e);
+    int x0 = (int)(ax0 + (bx0 - ax0) * e), y0 = (int)(ay0 + (by0 - ay0) * e), x1 = (int)(ax1 + (bx1 - ax1) * e), y1 = (int)(ay1 + (by1 - ay1) * e);
+    fillRect(x0, y0, x1, y1, rgb565(84, 90, 104));
+    int m = (int)(6 + 30 * e);
+    fillRect(x0 + m, y0 + m, x1 - m, y1 - m, rgb565(4, 22, 12));
+    return;
+  }
+  drawTermCase("OMNIS NODE  -  PROPERTY OF DR. A. VOSS");
+  uint16_t g = rgb565(100, 255, 140), gd = rgb565(40, 140, 70), amber = rgb565(255, 200, 80);
+  float lx = TX0 + 30;
+  char b[64];
+  snprintf(b, sizeof(b), "OMNIS 4.1   NODE %c-%d   PERSONAL ARCHIVE", 'A' + diaryShaft, diaryFloor[diaryShaft] + 1);
+  drawTextLeft(b, lx, TY0 + 26, 2.2f, gd, false);
+  fillRect(TX0 + 18, TY0 + 46, TX1 - 18, TY0 + 47, gd);
+  bool cur = ((int)(termT * 2.5f) & 1);
+  int n = diaryShaft + 1;
+  const DiaryEntry &E = vossDiary[diaryShaft];
+  if (termPage == 0) {
+    drawTextLeft("1 FILE FOUND", lx, TY0 + 92, 2.6f, g, true);
+    snprintf(b, sizeof(b), "%s VOSS DIARY ENTRY %d%s", termSel == 0 ? ">" : " ", n, diaryRead[diaryShaft] ? "   (READ)" : "");
+    drawTextLeft(b, lx + 20, TY0 + 170, 3.2f, termSel == 0 ? g : gd, termSel == 0);
+    snprintf(b, sizeof(b), "%s LOG OFF", termSel == 1 ? ">" : " ");
+    drawTextLeft(b, lx + 20, TY0 + 230, 3.2f, termSel == 1 ? g : gd, termSel == 1);
+    snprintf(b, sizeof(b), "DIARY ENTRIES READ: %d OF 10", diaryCount());
+    drawTextLeft(b, lx, TY1 - 64, 2.0f, amber, false);
+    drawTextLeft("UP / DOWN: CHOOSE    X: OPEN", lx, TY1 - 28, 2.0f, gd, false);
+    if (cur) fillRect((int)lx + 20, TY0 + 260, (int)lx + 36, TY0 + 263, g);
+    return;
+  }
+  snprintf(b, sizeof(b), "DIARY ENTRY %d", n);
+  drawTextLeft(b, lx, TY0 + 76, 2.6f, amber, true);
+  drawTextLeft(E.title, lx, TY0 + 108, 3.0f, g, true);
+  float dw = vectorTextWidth(E.date, 2.0f);
+  drawTextLeft(E.date, TX1 - 30 - dw, TY0 + 76, 2.0f, gd, false);
+  fillRect(TX0 + 18, TY0 + 128, TX1 - 18, TY0 + 128, gd);
+  float w = (float)(TX1 - TX0 - 60), top = TY0 + 150, room = (TY1 - 40) - top;
+  float size = 1.9f;
+  while (size > 1.05f && diaryWrap(E.text, lx, top, w, size, false, g) > room) size -= 0.05f;
+  diaryWrap(E.text, lx, top, w, size, true, g);
+  drawTextLeft("X: BACK", lx, TY1 - 22, 1.8f, gd, false);
+}
+
 static void drawFacilityTerminal();
 static void drawServerNode();
 static void drawDestructTerm();
@@ -12470,6 +12625,10 @@ static void drawTerminal() {
   }
   if (termKind == 3) {
     drawDestructTerm();
+    return;
+  }
+  if (termKind == 4) {
+    drawDiaryTerm();
     return;
   }
   drawTermCase("QC-9 QUANTUM CONTROL");
@@ -14740,6 +14899,19 @@ static void newGame() {
   bool right = roomOff(START_SHAFT, carFloor, true) >= 0;
   ventX = right ? (SHAFT_X1 + SCREEN_W - 40) / 2 : (40 + SHAFT_X0) / 2;
   ventOpen = false;
+  for (int sh = 0; sh < SHAFTS; sh++) {      // the diary terminals: a catwalk with a door, in each shaft, at random
+    int fl[FLOORS * 2], sd[FLOORS * 2], n = 0;
+    for (int f = 0; f < FLOORS; f++)
+      for (int side = 0; side < 2; side++)
+        if (roomOff(sh, f, side == 1) >= 0 && !(sh == ventShaft && f == ventFloor)) { fl[n] = f; sd[n] = side; n++; }
+    if (n == 0)                              // (only the duct's catwalk: then that one, its other side if it has one)
+      for (int side = 1; side >= 0; side--) if (roomOff(sh, ventFloor, side == 1) >= 0) { fl[0] = ventFloor; sd[0] = side; n = 1; break; }
+    int k = n > 0 ? rnd(n) : 0;
+    diaryFloor[sh] = n > 0 ? (int8_t)fl[k] : -1;
+    diaryRight[sh] = n > 0 ? (int8_t)sd[k] : 0;
+    diaryRead[sh] = false;
+  }
+  diaryShaft = -1;
   introT = 0;
   placeAgent((float)ventX, CAR_FLOOR_Y, right ? -1 : 1);
   mapOn = false;
@@ -14996,6 +15168,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
         if (termKind == 1) updateFacilityTerminal(dt);
         else if (termKind == 2) updateServerNode(dt);
         else if (termKind == 3) updateDestructTerm(dt);
+        else if (termKind == 4) updateDiaryTerm(dt);
         else updateTerminal(dt);
       }
     } else {
@@ -15104,8 +15277,8 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mode == MODE_ROOM && stage == 2 && curRoom < S2_ROOMS && s2Kind[curRoom] == LK_HAZARD) drawHazStorage();
   if (mode == MODE_ROOM && (curHazard == HZ_DRONE || curHazard == HZ_CAMDRONE)) drawDrone();
   if (mode == MODE_ROOM && powerPanelT > 0 && !mapOn) drawPowerPanel();
-  if (termOn && mode == MODE_ROOM) drawTerminal();
-  if (mode == MODE_SHAFT && scene != SC_RIDE) drawPanel();
+  if (termOn && (mode == MODE_ROOM || termKind == 4)) drawTerminal();
+  if (mode == MODE_SHAFT && scene != SC_RIDE && !(termOn && termKind == 4 && termT >= 0.6f)) drawPanel();   // (the diary, zoomed in, fills the screen)
   if (gameOver == END_NONE && scene == SC_NONE && warnT < 0.75f && flickerDim(warnT)) {   // the last minute's alert: the lights flicker
     gfxClip(HUD_H, PLAY_Y1);
     dimRoom();

@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 080: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 081: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -189,6 +189,26 @@ Square): the lever goes up, the lamp turns green and its engine fan starts
 turning (100 points), and **5 minutes** go back on the clock (each one). All 3 must be on before the main computer in QUANTUM
 CONTROL will start. The map marks a generator in a room you've been in (its
 lamp red or green), and the lift area's panel counts them.
+
+## Dr. Voss's diary
+
+Each of stage 1's ten lift shafts has an **OMNIS terminal** on one of its
+catwalks (picked at random each game), standing just before the door into a
+room: a pedestal with a tilted screen and a lamp. Shaft A's holds diary entry
+1, shaft B's entry 2, and so on to shaft J's entry 10 - Dr. Adrian Voss's
+story, from OMNIS's beginnings in 2029 to the intruder in his facility today
+(`src/voss_diary.h`).
+
+- **No power**: its lamp flashes red, its screen is dark, and searching it
+  does nothing.
+- **Once a power generator is on** (any one): its lamp is green and its
+  screen lit. Search it (Square) and the view zooms in on its screen: the
+  OMNIS PERSONAL ARCHIVE, **VOSS DIARY ENTRY n** and LOG OFF (up / down,
+  X or Square). Open the entry: its number, title and date, and Voss's words
+  (sized to fit the screen); X or Square goes back.
+- **500 points** the first time each entry is read (a yellow mark on its
+  screen after); the menu counts DIARY ENTRIES READ: n OF 10. The clock
+  runs on while you read.
 
 ## The nuclear launch sites (being tuned)
 
@@ -1084,6 +1104,7 @@ checked on the PC before it goes on the console.
 | `src/gfx.cpp`, `gfx.h` | drawing: the 1920x1080 picture, unit-space calls as in the sketch, vector letters |
 | `src/ps5_platform.cpp` | the PS5 side: the TV picture, the DualSense, the sound, the loop |
 | `src/micromod.c`, `.h` | the MOD player (Martin Cameron's Micromod, as in NUCLEAR MISSION); `micromod2.c`, `micromod3.c`, `micromod4.c` more copies of it (one a tune) |
+| `src/voss_diary.h` | Dr. Voss's ten diary entries (stage 1's OMNIS terminals) |
 | `src/agent_rig.h`, `people.h` | NUCLEAR MISSION's agent (more detail, version 080) and people |
 | `sim/` | the PC test build, the room layout checker and the icon maker (not compiled into the app) |
 | `sce_sys/` | `param.json` (PPSA99903) and the home-screen icon (`icon0.png`: made by `sim/icon_layers.cpp` and `sim/make_icon.py` - the agent running under the quantum core's orbits, a missile rising over a burning city, QUANTUM LOCKDOWN in glowing letters) |
