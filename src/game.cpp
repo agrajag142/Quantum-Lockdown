@@ -42,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "083"
+#define GAME_VERSION      "084"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -9917,15 +9917,18 @@ static void phoneText(int i, char *out, int n) {   // its words, [CITY] filled i
   }
   out[o] = 0;
 }
-static bool atPhone() { return phoneUnread && onWalkway() && gameOver == END_NONE; }
+static bool phoneSpot() {                    // by a lift, standing (a catwalk in stage 1, a walkway in stage 2, or the car): a signal
+  return mode == MODE_SHAFT && !carMoving && fabsf(agY - CAR_FLOOR_Y) < 0.5f && introT < 0 && scene == SC_NONE;
+}
+static bool atPhone() { return phoneUnread && phoneSpot() && gameOver == END_NONE; }
 static void updatePhone(float dt) {
   if (phoneBuzzT > 0) phoneBuzzT -= dt;
-  if (phoneSent < PHONE_MSG_COUNT && phoneDue(phoneSent) && onWalkway()) {
+  if (phoneSent < PHONE_MSG_COUNT && phoneDue(phoneSent) && phoneSpot()) {
     phoneSent++;                             // a message comes in
     phoneBuzzT = 2.6f;
     phoneRemindT = 20;
     sfxPlay(SFX_PHONE);
-  } else if (phoneUnread && onWalkway() && (phoneRemindT -= dt) <= 0) {
+  } else if (phoneUnread && phoneSpot() && (phoneRemindT -= dt) <= 0) {
     phoneRemindT = 20;                       // (still unread: a reminder now and then)
     phoneBuzzT = 1.6f;
     sfxPlay(SFX_PHONE);
@@ -10125,7 +10128,7 @@ static void drawPhoneRead() {
 }
 // The buzz in his pocket: lines shaking out from his hip
 static void drawPhoneBuzz() {
-  if (phoneBuzzT <= 0 || mode != MODE_SHAFT || stage != 2) return;
+  if (phoneBuzzT <= 0 || mode != MODE_SHAFT) return;
   if (fmodf(phoneBuzzT, 0.65f) < 0.2f) return;             // (in bursts)
   float hx = agX - agFacing * 7.0f, hy = agY - 50;
   float j = sinf(clockT * 90) * 1.6f;
@@ -15488,7 +15491,8 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
         else updateAgent(dt);
       }
       if (introT < 0) updateHazards(dt);
-      if (stage == 2 && gameOver == END_NONE && scene == SC_NONE) { updateStage2(dt); updatePhone(dt); }
+      if (stage == 2 && gameOver == END_NONE && scene == SC_NONE) updateStage2(dt);
+      if (gameOver == END_NONE && scene == SC_NONE) updatePhone(dt);   // (his phone: both stages)
     }
   }
 
@@ -15568,6 +15572,12 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     if (fgLoaded >= 0) drawNpcs();
     drawCarriedBody();
     drawS2Prompts();
+  }
+  if (mode == MODE_SHAFT && stage == 1 && atPhone() && agState == ST_IDLE && termOn == false) {   // (stage 1: his phone's the only prompt here)
+    const char *t = "SQUARE: READ MESSAGE";
+    float w = vectorTextWidth(t, 2.4f), x = clampv(agX, w / 2 + 24, SCREEN_W - w / 2 - 24);
+    blendRect((int)(x - w / 2 - 10), CAR_FLOOR_Y - 196, (int)(x + w / 2 + 10), CAR_FLOOR_Y - 172, 0, 0, 0, 0.55f);
+    drawVectorText(t, x, CAR_FLOOR_Y - 184, 2.4f, rgb565(255, 220, 120), true);
   }
   if ((mode == MODE_ROOM || fgLoaded >= 0) && stage == 2 && !s2Act && agState == ST_IDLE && gameOver == END_NONE && atNpcToKill() >= 0) {
     const Npc &n = npcs[atNpcToKill()];

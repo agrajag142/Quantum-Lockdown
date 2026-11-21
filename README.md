@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 083: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 084: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -475,14 +475,15 @@ cabinet, boxes. The top: crates and boxes, and mops and brooms hanging on the
 wall. **Two cleaners** (teal tunics, mops) walk their paths: one on the floor,
 one on the middle level - both walking away from you as you come in.
 
-**His phone** (stage 2): messages from home (`phoneMsgs` in
+**His phone** (both stages): messages from home (`phoneMsgs` in
 `src/game.cpp`; more to come). Each arrives when it's due - after so many
 sites are hacked, or so long after the first missile launches - and he's
-standing at a lift's walkway - the foyers, the
-only place with a signal: the phone **buzzes in his pocket** (two buzzes and
+standing by a lift - a catwalk in stage 1's
+shafts, a walkway in stage 2's foyers, or in the car, stopped: the only
+places with a signal: the phone **buzzes in his pocket** (two buzzes and
 a chime; shaking lines drawn at his hip, again every 20 seconds while
 unread) and the bar at the top shows a **message waiting** (a green bubble,
-its red count). On a walkway, **SQUARE: READ MESSAGE**: his gloved hand
+its red count). There, **SQUARE: READ MESSAGE**: his gloved hand
 holds the phone up over the screen - the time, one bar of signal, a low
 battery, HOME (a heart) and the conversation, a bubble each, the newest at
 the bottom (older ones scrolled up under the header). X or Square puts it away.
