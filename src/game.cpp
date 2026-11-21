@@ -42,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "081"
+#define GAME_VERSION      "082"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -1068,7 +1068,8 @@ enum Sfx : uint8_t { SFX_NONE, SFX_STEP, SFX_LIFT_STOP, SFX_BEEP, SFX_CLUNK, SFX
                      SFX_FALL, SFX_BOOM,     // (a landing: the warhead falling, the detonation)
                      SFX_RAY,                // (the QX-9)
                      SFX_HEART, SFX_HPALERT,   // (low health: a heartbeat, the warning)
-                     SFX_FLAME };              // (the FX-5: a roaring whoosh)
+                     SFX_FLAME,                // (the FX-5: a roaring whoosh)
+                     SFX_PHONE, SFX_PHONEOUT };   // (his phone: a message in - buzz buzz, ding; put away - a click)
 #define SFX_TONE 64                          // (64..95: the CODE ROOM's notes)
 #define SFX_PAIN 100                         // (100..103: the cries of someone burnt by the FX-5, pain_sounds.h)
 enum Wave : uint8_t { WAVE_SQUARE, WAVE_TRIANGLE, WAVE_NOISE };
@@ -1166,6 +1167,16 @@ static void startEffect(uint8_t sfx) {
     case SFX_HIT:                              // a bullet hits him
       startVoice(WAVE_NOISE, 1200, 200, 0, 120, 0.32f);
       startVoice(WAVE_SQUARE, 140, 60, 0, 140, 0.20f);
+      break;
+    case SFX_PHONE:                            // a message: the phone buzzing in his pocket, twice, and its two-note chime
+      startVoice(WAVE_SQUARE, 150, 140, 0, 160, 0.10f);
+      startVoice(WAVE_SQUARE, 150, 140, 260, 160, 0.10f);
+      startVoice(WAVE_TRIANGLE, 1568, 1568, 520, 150, 0.16f);
+      startVoice(WAVE_TRIANGLE, 2093, 2093, 680, 260, 0.16f);
+      break;
+    case SFX_PHONEOUT:                         // the screen locking
+      startVoice(WAVE_NOISE, 4000, 2000, 0, 30, 0.12f);
+      startVoice(WAVE_SQUARE, 600, 300, 0, 40, 0.06f);
       break;
     case SFX_POWERUP:                          // a generator starting: the lever's clunk, a rising whine, the engine
       startVoice(WAVE_NOISE, 900, 150, 0, 90, 0.30f);
@@ -9862,6 +9873,251 @@ static void drawCarriedBody() {
   if (binPhase == 2) drawBinFront(true, CAR_FLOOR_Y);
 }
 
+// ============================================================ his phone (stage 2)
+// Messages from home, arriving on his phone once things get going: each when enough sites are hacked and he's
+// standing on a walkway by a lift (the foyers: the only place there's a signal). It buzzes in his pocket (the
+// buzz drawn at his hip), the bar at the top shows a message waiting, and SQUARE there reads it: his gloved hand
+// holds the phone up, the message on its screen. Not needed to finish the game. [CITY]: where the first missile
+// is heading. \x01 in a message: the laughing face.
+struct PhoneMsg { int afterHacked; const char *from, *time, *text; };
+static const PhoneMsg phoneMsgs[] = {
+  { 1, "HOME", "23:46",
+    "HEY BABE, JUST GOT BACK FROM THE SHOPS. [CITY] IS ABSOLUTELY CRAZY TODAY, TRAFFIC EVERYWHERE AS USUAL \x01. "
+    "LITTLE ONE'S BEEN ASKING ABOUT YOU. WE MISS YOU! DON'T WORK TOO HARD. LOVE YOU XX" },
+};
+#define PHONE_MSG_COUNT ((int)(sizeof(phoneMsgs) / sizeof(phoneMsgs[0])))
+#define PHONE_RISE 0.45f
+static int phoneSent = 0;                    // how many have arrived
+static bool phoneUnread = false;             // the latest not read yet
+static float phoneBuzzT = 0, phoneRemindT = 0;
+static int phoneShown = -1;                  // the one on the screen (reading)
+static bool phoneClosing = false;
+static float phoneCloseT = 0;
+static void phoneText(int i, char *out, int n) {   // its words, [CITY] filled in
+  const char *src = phoneMsgs[i].text, *city = cities[landCity[0]].name;
+  int o = 0;
+  for (const char *q = src; *q && o < n - 1; ) {
+    if (strncmp(q, "[CITY]", 6) == 0) { for (const char *c = city; *c && o < n - 1; c++) out[o++] = *c; q += 6; }
+    else out[o++] = *q++;
+  }
+  out[o] = 0;
+}
+static bool atPhone() { return phoneUnread && onWalkway() && gameOver == END_NONE; }
+static void updatePhone(float dt) {
+  if (phoneBuzzT > 0) phoneBuzzT -= dt;
+  if (!phoneUnread && phoneSent < PHONE_MSG_COUNT && sitesHacked >= phoneMsgs[phoneSent].afterHacked && onWalkway()) {
+    phoneSent++;                             // a message comes in
+    phoneUnread = true;
+    phoneBuzzT = 2.6f;
+    phoneRemindT = 20;
+    sfxPlay(SFX_PHONE);
+  } else if (phoneUnread && onWalkway() && (phoneRemindT -= dt) <= 0) {
+    phoneRemindT = 20;                       // (still unread: a reminder now and then)
+    phoneBuzzT = 1.6f;
+    sfxPlay(SFX_PHONE);
+  }
+}
+static void usePhone() {
+  phoneShown = phoneSent - 1;
+  phoneUnread = false;
+  phoneBuzzT = 0;
+  phoneClosing = false;
+  termOn = true;
+  termKind = 5;
+  termT = 0;
+  sfxPlay(SFX_CLICK);
+}
+static void updatePhoneRead(float dt) {
+  termT += dt;
+  if (phoneClosing) {
+    phoneCloseT += dt;
+    if (phoneCloseT >= PHONE_RISE) { termOn = false; phoneShown = -1; }
+    return;
+  }
+  if (termT > 0.8f && (pressed & (BTN_USE | BTN_JUMP))) { phoneClosing = true; phoneCloseT = 0; sfxPlay(SFX_PHONEOUT); }
+}
+// The laughing face, at its size
+static void drawLaughFace(float cx, float cy, float r) {
+  fillCircle((int)cx, (int)cy, (int)r, rgb565(255, 204, 50));
+  fillCircle((int)cx, (int)(cy + r * 0.1f), (int)(r * 0.88f), rgb565(255, 214, 70));
+  drawLineF(cx - r * 0.55f, cy - r * 0.15f, cx - r * 0.3f, cy - r * 0.35f, rgb565(90, 60, 20), r * 0.14f);   // eyes, screwed shut
+  drawLineF(cx - r * 0.3f, cy - r * 0.35f, cx - r * 0.12f, cy - r * 0.15f, rgb565(90, 60, 20), r * 0.14f);
+  drawLineF(cx + r * 0.12f, cy - r * 0.15f, cx + r * 0.3f, cy - r * 0.35f, rgb565(90, 60, 20), r * 0.14f);
+  drawLineF(cx + r * 0.3f, cy - r * 0.35f, cx + r * 0.55f, cy - r * 0.15f, rgb565(90, 60, 20), r * 0.14f);
+  int mx[4] = { (int)(cx - r * 0.55f), (int)(cx + r * 0.55f), (int)(cx + r * 0.3f), (int)(cx - r * 0.3f) };
+  int my[4] = { (int)(cy + r * 0.1f), (int)(cy + r * 0.1f), (int)(cy + r * 0.62f), (int)(cy + r * 0.62f) };
+  fillPolygon(mx, my, 4, rgb565(120, 40, 30));                 // the open mouth
+  fillRect((int)(cx - r * 0.5f), (int)(cy + r * 0.1f), (int)(cx + r * 0.5f), (int)(cy + r * 0.22f), rgb565(255, 255, 255));
+  fillCircle((int)(cx - r * 0.8f), (int)(cy + r * 0.05f), (int)(r * 0.22f), rgb565(80, 170, 255));   // tears of joy
+  fillCircle((int)(cx + r * 0.8f), (int)(cy + r * 0.05f), (int)(r * 0.22f), rgb565(80, 170, 255));
+}
+// A line of the message (the face where \x01 is)
+static float lineW(const char *t, float size) {
+  float w = 0;
+  char seg[160];
+  int n = 0;
+  for (const char *q = t; ; q++) {
+    if (*q == '\x01' || !*q) { seg[n] = 0; w += n ? vectorTextWidth(seg, size) : 0; n = 0; if (!*q) break; w += size * 14; }
+    else if (n < 159) seg[n++] = *q;
+  }
+  return w;
+}
+static void drawMsgLine(const char *t, float x, float y, float size, uint16_t c) {
+  char seg[160];
+  int n = 0;
+  for (const char *q = t; ; q++) {
+    if (*q == '\x01' || !*q) {
+      seg[n] = 0;
+      if (n) { drawTextLeft(seg, x, y, size, c, false); x += vectorTextWidth(seg, size); }
+      n = 0;
+      if (!*q) break;
+      drawLaughFace(x + size * 7, y, size * 5.6f);
+      x += size * 14;
+    } else if (n < 159) seg[n++] = *q;
+  }
+}
+// The message, wrapped into lines of a width
+static int wrapMsg(const char *text, float w, float size, char lines[][160], int maxLines) {
+  int nl = 0, ln = 0;
+  char word[64];
+  const char *p = text;
+  lines[0][0] = 0;
+  while (*p && nl < maxLines) {
+    while (*p == ' ') p++;
+    if (!*p) break;
+    int wl = 0;
+    while (*p && *p != ' ' && wl < 63) word[wl++] = *p++;
+    word[wl] = 0;
+    char trial[160];
+    snprintf(trial, sizeof(trial), ln ? "%s %s" : "%s%s", ln ? lines[nl] : "", word);
+    if (ln && lineW(trial, size) > w) { nl++; if (nl >= maxLines) break; snprintf(lines[nl], 160, "%s", word); ln = wl; }
+    else { snprintf(lines[nl], 160, "%s", trial); ln = (int)strlen(lines[nl]); }
+  }
+  return ln ? nl + 1 : nl;
+}
+static void fillRoundRect(int x0, int y0, int x1, int y1, int r, uint16_t c) {
+  fillRect(x0 + r, y0, x1 - r, y1, c);
+  fillRect(x0, y0 + r, x1, y1 - r, c);
+  fillCircle(x0 + r, y0 + r, r, c);
+  fillCircle(x1 - r, y0 + r, r, c);
+  fillCircle(x0 + r, y1 - r, r, c);
+  fillCircle(x1 - r, y1 - r, r, c);
+}
+// Reading it: his gloved hand holds the phone up, the message on its screen
+static void drawPhoneRead() {
+  if (phoneShown < 0) return;
+  const PhoneMsg &M = phoneMsgs[phoneShown];
+  float k = fminf(1.0f, termT / PHONE_RISE);
+  if (phoneClosing) k = fminf(k, 1.0f - fminf(1.0f, phoneCloseT / PHONE_RISE));
+  float e = 1 - (1 - k) * (1 - k) * (1 - k);
+  gfxClipAll();
+  blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 4, 6, 12, 0.72f * e);
+  int oy = (int)((1 - e) * 700 + 3 * sinf(termT * 1.3f)), ox = (int)(2 * sinf(termT * 0.9f));
+  uint16_t glove = rgb565(36, 38, 44), gloveHi = rgb565(70, 74, 84), sleeve = rgb565(60, 66, 82);
+  int x0 = 480 + ox, x1 = 800 + ox, y0 = 64 + oy, y1 = 700 + oy;
+  // the sleeve and palm, behind it
+  int sx[4] = { 420 + ox, 640 + ox, 680 + ox, 400 + ox }, sy[4] = { 640 + oy, 640 + oy, SCREEN_H + 60, SCREEN_H + 60 };
+  fillPolygon(sx, sy, 4, sleeve);
+  fillRect(420 + ox, 632 + oy, 640 + ox, 646 + oy, rgb565(46, 50, 62));     // the cuff
+  int px[5] = { 410 + ox, 600 + ox, 660 + ox, 640 + ox, 420 + ox }, py[5] = { 540 + oy, 470 + oy, 560 + oy, 640 + oy, 640 + oy };
+  fillPolygon(px, py, 5, glove);
+  // the phone
+  fillRoundRect(x0 - 4, y0 - 4, x1 + 4, y1 + 4, 40, rgb565(70, 72, 80));
+  fillRoundRect(x0, y0, x1, y1, 36, rgb565(14, 14, 18));
+  int s0 = x0 + 12, s1 = x1 - 12, t0 = y0 + 14, t1 = y1 - 14;
+  fillRoundRect(s0, t0, s1, t1, 26, rgb565(246, 246, 250));
+  fillRoundRect((x0 + x1) / 2 - 44, t0 + 6, (x0 + x1) / 2 + 44, t0 + 26, 10, rgb565(14, 14, 18));   // the camera's notch
+  drawTextLeft(M.time, s0 + 26, t0 + 17, 1.5f, rgb565(20, 20, 24), true);           // the status bar: one bar of signal, down here
+  for (int b = 0; b < 4; b++) fillRect(s1 - 76 + b * 6, t0 + 20 - b * 3, s1 - 73 + b * 6, t0 + 21, b == 0 ? rgb565(20, 20, 24) : rgb565(190, 190, 196));
+  drawRectOutline(s1 - 46, t0 + 11, s1 - 20, t0 + 22, rgb565(20, 20, 24), 1);
+  fillRect(s1 - 44, t0 + 13, s1 - 37, t0 + 20, rgb565(220, 60, 40));              // (his battery: low)
+  // the conversation's header
+  int hy = t0 + 40;
+  drawLineF(s0 + 18.0f, hy + 26.0f, s0 + 28.0f, hy + 16.0f, rgb565(40, 120, 240), 2.4f);   // back
+  drawLineF(s0 + 18.0f, hy + 26.0f, s0 + 28.0f, hy + 36.0f, rgb565(40, 120, 240), 2.4f);
+  int ax = (s0 + s1) / 2;
+  fillCircle(ax, hy + 26, 20, rgb565(250, 120, 140));                                   // the contact's picture: a heart
+  fillCircle(ax - 5, hy + 22, 6, rgb565(255, 255, 255));
+  fillCircle(ax + 5, hy + 22, 6, rgb565(255, 255, 255));
+  int hx3[3] = { ax - 11, ax + 11, ax }, hy3[3] = { hy + 24, hy + 24, hy + 36 };
+  fillPolygon(hx3, hy3, 3, rgb565(255, 255, 255));
+  drawVectorText(M.from, (float)ax, hy + 60.0f, 1.6f, rgb565(20, 20, 24), true);
+  fillRect(s0, hy + 76, s1, hy + 76, rgb565(214, 214, 220));
+  char dateLine[32];
+  snprintf(dateLine, sizeof(dateLine), "TODAY %s", M.time);
+  drawVectorText(dateLine, (float)ax, hy + 98.0f, 1.2f, rgb565(140, 140, 150), false);
+  // the message: a grey bubble from the left
+  char text[400], lines[16][160];
+  phoneText(phoneShown, text, sizeof(text));
+  const float ts = 1.55f, lh = 19;
+  int bx0 = s0 + 16, bw = (s1 - s0) - 60;
+  int nl = wrapMsg(text, (float)bw - 28, ts, lines, 16);
+  int by0 = hy + 118, by1 = by0 + 22 + (int)(nl * lh);
+  float pop = fminf(1.0f, fmaxf(0.0f, (termT - PHONE_RISE * 0.6f) / 0.25f));
+  if (pop > 0) {
+    int bxw = (int)(bw * (0.6f + 0.4f * pop));
+    fillRoundRect(bx0, by0, bx0 + bxw, by1, 16, rgb565(229, 229, 235));
+    int tx[3] = { bx0 - 6, bx0 + 14, bx0 + 4 }, ty[3] = { by1 + 2, by1 - 14, by1 - 4 };   // its tail
+    fillPolygon(tx, ty, 3, rgb565(229, 229, 235));
+    if (pop >= 1) for (int i = 0; i < nl; i++) drawMsgLine(lines[i], bx0 + 14.0f, by0 + 20.0f + i * lh, ts, rgb565(20, 20, 24));
+  }
+  // the box to reply in
+  fillRoundRect(s0 + 16, t1 - 50, s1 - 16, t1 - 18, 16, rgb565(255, 255, 255));
+  drawRectOutline(s0 + 16, t1 - 50, s1 - 16, t1 - 18, rgb565(210, 210, 216), 1);
+  drawTextLeft("TEXT MESSAGE", s0 + 32, t1 - 34, 1.3f, rgb565(170, 170, 178), false);
+  fillCircle(s1 - 34, t1 - 34, 10, rgb565(40, 120, 240));
+  drawLineF(s1 - 34.0f, t1 - 40.0f, s1 - 34.0f, t1 - 28.0f, rgb565(255, 255, 255), 2.0f);   // send: an arrow up
+  drawLineF(s1 - 34.0f, t1 - 40.0f, s1 - 39.0f, t1 - 35.0f, rgb565(255, 255, 255), 2.0f);
+  drawLineF(s1 - 34.0f, t1 - 40.0f, s1 - 29.0f, t1 - 35.0f, rgb565(255, 255, 255), 2.0f);
+  // the gloved thumb and fingers, over its edges
+  int gx[5] = { 410 + ox, 470 + ox, 492 + ox, 500 + ox, 420 + ox }, gy[5] = { 560 + oy, 520 + oy, 546 + oy, 610 + oy, 640 + oy };
+  fillPolygon(gx, gy, 5, glove);
+  for (int i = 0; i <= 10; i++) fillCircle(472 + ox + i * 3, 548 + oy - i * 9, 15, glove);   // the thumb up its edge
+  fillCircle(500 + ox, 456 + oy, 13, gloveHi);
+  for (int f = 0; f < 4; f++) {
+    int fy = 330 + f * 58 + oy;
+    for (int i = 0; i <= 8; i++) fillCircle(792 + ox + i * 3, fy + i, 15 - (f == 3 ? 2 : 0), glove);
+    fillRect(796 + ox, fy - 4, 812 + ox, fy - 2, gloveHi);                       // the knuckle's seam
+  }
+  if (!phoneClosing && termT > 0.8f) {
+    blendRect(0, SCREEN_H - 34, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 0.5f);
+    drawVectorText("X: PUT IT AWAY", SCREEN_W / 2, SCREEN_H - 17, 1.8f, rgb565(200, 206, 220), false);
+  }
+}
+// The buzz in his pocket: lines shaking out from his hip
+static void drawPhoneBuzz() {
+  if (phoneBuzzT <= 0 || mode != MODE_SHAFT || stage != 2) return;
+  if (fmodf(phoneBuzzT, 0.65f) < 0.2f) return;             // (in bursts)
+  float hx = agX - agFacing * 7.0f, hy = agY - 50;
+  float j = sinf(clockT * 90) * 1.6f;
+  fillRect((int)(hx - 4 + j), (int)hy - 8, (int)(hx + 4 + j), (int)hy + 6, rgb565(30, 32, 38));   // the phone's edge, showing
+  fillRect((int)(hx - 3 + j), (int)hy - 7, (int)(hx + 3 + j), (int)hy - 5, rgb565(120, 200, 255));
+  for (int side = -1; side <= 1; side += 2)
+    for (int a = 0; a < 3; a++) {
+      float r = 12 + a * 7;
+      float cx = hx + side * 2;
+      for (int sg = 0; sg < 4; sg++) {
+        float a0 = -0.7f + sg * 0.35f, a1 = a0 + 0.35f;
+        drawLineF(cx + side * cosf(a0) * r + j, hy + sinf(a0) * r, cx + side * cosf(a1) * r + j, hy + sinf(a1) * r,
+                  rgb565(255, 230, 120), 1.6f);
+      }
+    }
+  glowDisc(hx, hy, 18, 255, 220, 120, 0.25f);
+}
+// In the bar at the top: a message waiting
+static void drawPhoneIcon() {
+  if (!phoneUnread) return;
+  int x = 290, y = HUD_H / 2;
+  float p = 0.5f + 0.5f * sinf(clockT * 4);
+  glowDisc((float)x, (float)y, 22, 80, 220, 120, 0.15f + 0.2f * p);
+  fillRoundRect(x - 16, y - 11, x + 16, y + 9, 8, rgb565(60, 200, 100));          // a speech bubble...
+  int tx[3] = { x - 10, x - 2, x - 14 }, ty[3] = { y + 6, y + 6, y + 15 };
+  fillPolygon(tx, ty, 3, rgb565(60, 200, 100));
+  for (int d = -1; d <= 1; d++) fillCircle(x + d * 8, y - 1, 2, rgb565(255, 255, 255));   // ...its dots
+  fillCircle(x + 16, y - 11, 8, rgb565(230, 40, 40));                               // the badge
+  drawVectorText("1", x + 16.0f, y - 11.0f, 1.2f, rgb565(255, 255, 255), true);
+}
+
 static int atGuardBody();
 // What X / SQUARE would do here (stage 2's lift areas)
 static void drawS2Prompts() {
@@ -9872,6 +10128,7 @@ static void drawS2Prompts() {
   else if (atBody()) t = wkState == WK_DOWN ? "SQUARE: SEARCH" : "SQUARE: INTO THE BIN";
   else if (atGuardBody() == 1) t = "SQUARE: SEARCH";
   else if (atFoyerAid() && !s2Aid[curShaft][carFloor]) t = "SQUARE: FIRST AID";
+  else if (atPhone()) t = "SQUARE: READ MESSAGE";
   if (!t) return;
   float w = vectorTextWidth(t, 2.4f);
   x = clampv(x, w / 2 + 24, SCREEN_W - w / 2 - 24);
@@ -11150,6 +11407,8 @@ static void updateAgent(float dt) {
         startS2Act(wkState == WK_DOWN ? 2 : 3);   // ...search him, then into the bin with him
       } else if ((pressed & BTN_USE) && atFoyerAid()) {
         useFoyerAid();                  // ...the walkway's first aid cabinet
+      } else if ((pressed & BTN_USE) && atPhone()) {
+        usePhone();                     // ...his phone: a message from home
       } else if ((pressed & BTN_USE) && atLoopPower()) {
         useLoopPower();                 // the QUANTUMLOOP's power...
       } else if ((pressed & BTN_USE) && atLoopDoor()) {
@@ -12902,6 +13161,7 @@ static void drawHud() {
   snprintf(b, sizeof(b), "SCORE %06ld", score);
   float w = vectorTextWidth(b, 2.6f);
   drawVectorText(b, 24 + w / 2, HUD_H / 2, 2.6f, rgb565(240, 240, 245), true);
+  drawPhoneIcon();                       // (a message waiting on his phone)
   // the clock (red in the last minute, flashing in the last ten seconds)
   if (bodyT >= 0) {                      // stage 2: the maintenance man will be found - first, and bigger; the nuclear countdown beside it, smaller
     int bs = (int)ceilf(bodyT);
@@ -14912,6 +15172,10 @@ static void newGame() {
     diaryRead[sh] = false;
   }
   diaryShaft = -1;
+  phoneSent = 0;
+  phoneUnread = phoneClosing = false;
+  phoneBuzzT = phoneRemindT = 0;
+  phoneShown = -1;
   introT = 0;
   placeAgent((float)ventX, CAR_FLOOR_Y, right ? -1 : 1);
   mapOn = false;
@@ -15169,6 +15433,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
         else if (termKind == 2) updateServerNode(dt);
         else if (termKind == 3) updateDestructTerm(dt);
         else if (termKind == 4) updateDiaryTerm(dt);
+        else if (termKind == 5) updatePhoneRead(dt);
         else updateTerminal(dt);
       }
     } else {
@@ -15179,7 +15444,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
         else updateAgent(dt);
       }
       if (introT < 0) updateHazards(dt);
-      if (stage == 2 && gameOver == END_NONE && scene == SC_NONE) updateStage2(dt);
+      if (stage == 2 && gameOver == END_NONE && scene == SC_NONE) { updateStage2(dt); updatePhone(dt); }
     }
   }
 
@@ -15218,6 +15483,7 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
     drawHealthAura();
     if (stage == 2 && s2Disguised) drawPersonU(shownPose, agX, agY, agFacing, myScale, PK_MAINT);   // in the maintenance man's overalls
     else drawAgentU(shownPose, agX, agY, agFacing, myScale);
+    drawPhoneBuzz();                     // (a message: his phone buzzing)
   }
   if (stage == 2 && !arOn() && (mode == MODE_ROOM || onWalkway()) && hasFlamer && scene == SC_NONE) {   // the FX-5 in his hands
     int hx, hy, mx, my;
@@ -15277,8 +15543,9 @@ void gameFrame(float dt, uint32_t heldNow, uint32_t pressedNow) {
   if (mode == MODE_ROOM && stage == 2 && curRoom < S2_ROOMS && s2Kind[curRoom] == LK_HAZARD) drawHazStorage();
   if (mode == MODE_ROOM && (curHazard == HZ_DRONE || curHazard == HZ_CAMDRONE)) drawDrone();
   if (mode == MODE_ROOM && powerPanelT > 0 && !mapOn) drawPowerPanel();
-  if (termOn && (mode == MODE_ROOM || termKind == 4)) drawTerminal();
+  if (termOn && (mode == MODE_ROOM || termKind == 4) && termKind != 5) drawTerminal();
   if (mode == MODE_SHAFT && scene != SC_RIDE && !(termOn && termKind == 4 && termT >= 0.6f)) drawPanel();   // (the diary, zoomed in, fills the screen)
+  if (termOn && termKind == 5) drawPhoneRead();   // (his phone: over the lot)
   if (gameOver == END_NONE && scene == SC_NONE && warnT < 0.75f && flickerDim(warnT)) {   // the last minute's alert: the lights flicker
     gfxClip(HUD_H, PLAY_Y1);
     dimRoom();
