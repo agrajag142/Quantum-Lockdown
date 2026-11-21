@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 082: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 083: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -476,19 +476,26 @@ wall. **Two cleaners** (teal tunics, mops) walk their paths: one on the floor,
 one on the middle level - both walking away from you as you come in.
 
 **His phone** (stage 2): messages from home (`phoneMsgs` in
-`src/game.cpp`; more to come). Each arrives once enough sites are hacked
-(the first: one) and he's standing at a lift's walkway - the foyers, the
+`src/game.cpp`; more to come). Each arrives when it's due - after so many
+sites are hacked, or so long after the first missile launches - and he's
+standing at a lift's walkway - the foyers, the
 only place with a signal: the phone **buzzes in his pocket** (two buzzes and
 a chime; shaking lines drawn at his hip, again every 20 seconds while
 unread) and the bar at the top shows a **message waiting** (a green bubble,
-its red 1). On a walkway, **SQUARE: READ MESSAGE**: his gloved hand holds
-the phone up over the screen - the time, one bar of signal, a low battery,
-HOME (a heart) and the message in its bubble. X or Square puts it away.
+its red count). On a walkway, **SQUARE: READ MESSAGE**: his gloved hand
+holds the phone up over the screen - the time, one bar of signal, a low
+battery, HOME (a heart) and the conversation, a bubble each, the newest at
+the bottom (older ones scrolled up under the header). X or Square puts it away.
 Reading it isn't needed; the world waits while he does. [CITY] in a message
-is the city the first missile is heading for, so it changes every game:
-- 1: HEY BABE, JUST GOT BACK FROM THE SHOPS. [CITY] IS ABSOLUTELY CRAZY
+is the city the first missile is heading for (the first one launched, once
+one has), so it changes every game:
+- 1 (one site hacked): HEY BABE, JUST GOT BACK FROM THE SHOPS. [CITY] IS ABSOLUTELY CRAZY
   TODAY, TRAFFIC EVERYWHERE AS USUAL (the laughing face). LITTLE ONE'S BEEN
   ASKING ABOUT YOU. WE MISS YOU! DON'T WORK TOO HARD. LOVE YOU XX
+- 2 (a minute after the first launch): BABE, WE'VE JUST RECEIVED AN
+  EMERGENCY ALERT ON OUR PHONES. THEY'RE SAYING A NUCLEAR MISSILE IS HEADING
+  TOWARDS [CITY]. ... PLEASE TELL ME THIS ISN'T REAL. PLEASE CALL ME. I LOVE
+  YOU.
 
 **The medical bay**: two levels (lift pad on the left). Downstairs: visitors'
 seats under an eye chart and a WASH YOUR HANDS poster, the NURSE STATION (its

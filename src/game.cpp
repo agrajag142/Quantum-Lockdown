@@ -42,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "082"
+#define GAME_VERSION      "083"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -959,6 +959,8 @@ static bool koGetUp = false;           // knocked down by a drop: he gets up whe
 enum EndReason : uint8_t { END_NONE, END_TIME, END_HEALTH, END_WIN, END_BODY, END_NUKES };
 static EndReason gameOver = END_NONE;
 static float gameOverT = 0;
+static int firstLaunchSite = -1;       // the first missile actually launched (-1: none yet), and when (playT)
+static float firstLaunchAt = 0;
 static float playT = 0;                // time played (seconds of play: not the map, not the opening)
 static float drainT = 0;               // towards the next minute's health
 static int warnSlot = 99;              // the last minute: which ten seconds the last alert was in
@@ -8414,6 +8416,7 @@ static void updateNukes(float dt) {
       launchT = 0;
       landLeft[sitesLaunched] = 60.0f * (LAND_MIN_MINUTES + (LAND_MAX_MINUTES - LAND_MIN_MINUTES) * (rnd32() % 1000) / 1000.0f);
       landTotal[sitesLaunched] = landLeft[sitesLaunched];
+      if (firstLaunchSite < 0) { firstLaunchSite = sitesLaunched; firstLaunchAt = playT; }   // (for his phone's messages)
       startLaunchScene(sitesLaunched);     // (NUCLEAR MISSION's launch, beside the game)
       sitesLaunched++;
     }
@@ -9879,22 +9882,34 @@ static void drawCarriedBody() {
 // buzz drawn at his hip), the bar at the top shows a message waiting, and SQUARE there reads it: his gloved hand
 // holds the phone up, the message on its screen. Not needed to finish the game. [CITY]: where the first missile
 // is heading. \x01 in a message: the laughing face.
-struct PhoneMsg { int afterHacked; const char *from, *time, *text; };
+enum : uint8_t { PM_HACKED, PM_AFTER_LAUNCH };   // when one arrives: n sites hacked / n seconds after the first launch
+struct PhoneMsg { uint8_t when; int n; const char *from, *time, *text; };   // ("|": a new paragraph)
 static const PhoneMsg phoneMsgs[] = {
-  { 1, "HOME", "23:46",
+  { PM_HACKED, 1, "HOME", "23:46",
     "HEY BABE, JUST GOT BACK FROM THE SHOPS. [CITY] IS ABSOLUTELY CRAZY TODAY, TRAFFIC EVERYWHERE AS USUAL \x01. "
     "LITTLE ONE'S BEEN ASKING ABOUT YOU. WE MISS YOU! DON'T WORK TOO HARD. LOVE YOU XX" },
+  { PM_AFTER_LAUNCH, 60, "HOME", "00:31",
+    "BABE,|WE'VE JUST RECEIVED AN EMERGENCY ALERT ON OUR PHONES. THEY'RE SAYING A NUCLEAR MISSILE IS HEADING TOWARDS [CITY].|"
+    "I DON'T KNOW WHAT'S HAPPENING. EVERYONE IS PANICKING AND THE NEWS IS TELLING PEOPLE TO GET UNDERGROUND IMMEDIATELY.|"
+    "I'M TRYING TO KEEP LITTLE ONE CALM BUT SHE'S TERRIFIED. SHE KEEPS ASKING ME WHAT'S HAPPENING.|"
+    "PLEASE TELL ME THIS ISN'T REAL. PLEASE CALL ME. I LOVE YOU." },
 };
+static bool phoneDue(int i) {
+  const PhoneMsg &m = phoneMsgs[i];
+  if (m.when == PM_HACKED) return sitesHacked >= m.n;
+  return firstLaunchSite >= 0 && playT - firstLaunchAt >= m.n;
+}
 #define PHONE_MSG_COUNT ((int)(sizeof(phoneMsgs) / sizeof(phoneMsgs[0])))
 #define PHONE_RISE 0.45f
 static int phoneSent = 0;                    // how many have arrived
-static bool phoneUnread = false;             // the latest not read yet
+static int phoneReadN = 0;                   // how many he's read (the rest: waiting)
+#define phoneUnread (phoneSent > phoneReadN)
 static float phoneBuzzT = 0, phoneRemindT = 0;
 static int phoneShown = -1;                  // the one on the screen (reading)
 static bool phoneClosing = false;
 static float phoneCloseT = 0;
 static void phoneText(int i, char *out, int n) {   // its words, [CITY] filled in
-  const char *src = phoneMsgs[i].text, *city = cities[landCity[0]].name;
+  const char *src = phoneMsgs[i].text, *city = cities[landCity[firstLaunchSite >= 0 ? firstLaunchSite : 0]].name;
   int o = 0;
   for (const char *q = src; *q && o < n - 1; ) {
     if (strncmp(q, "[CITY]", 6) == 0) { for (const char *c = city; *c && o < n - 1; c++) out[o++] = *c; q += 6; }
@@ -9905,9 +9920,8 @@ static void phoneText(int i, char *out, int n) {   // its words, [CITY] filled i
 static bool atPhone() { return phoneUnread && onWalkway() && gameOver == END_NONE; }
 static void updatePhone(float dt) {
   if (phoneBuzzT > 0) phoneBuzzT -= dt;
-  if (!phoneUnread && phoneSent < PHONE_MSG_COUNT && sitesHacked >= phoneMsgs[phoneSent].afterHacked && onWalkway()) {
+  if (phoneSent < PHONE_MSG_COUNT && phoneDue(phoneSent) && onWalkway()) {
     phoneSent++;                             // a message comes in
-    phoneUnread = true;
     phoneBuzzT = 2.6f;
     phoneRemindT = 20;
     sfxPlay(SFX_PHONE);
@@ -9918,8 +9932,8 @@ static void updatePhone(float dt) {
   }
 }
 static void usePhone() {
-  phoneShown = phoneSent - 1;
-  phoneUnread = false;
+  phoneShown = phoneSent - 1;                // (the conversation, down to the newest)
+  phoneReadN = phoneSent;
   phoneBuzzT = 0;
   phoneClosing = false;
   termOn = true;
@@ -9977,7 +9991,7 @@ static void drawMsgLine(const char *t, float x, float y, float size, uint16_t c)
   }
 }
 // The message, wrapped into lines of a width
-static int wrapMsg(const char *text, float w, float size, char lines[][160], int maxLines) {
+static int wrapMsg(const char *text, float w, float size, char lines[][160], int maxLines) {   // ("" lines: a paragraph's gap)
   int nl = 0, ln = 0;
   char word[64];
   const char *p = text;
@@ -9985,8 +9999,17 @@ static int wrapMsg(const char *text, float w, float size, char lines[][160], int
   while (*p && nl < maxLines) {
     while (*p == ' ') p++;
     if (!*p) break;
+    if (*p == '|') {                         // a new paragraph: the line ends, a gap
+      p++;
+      if (ln) nl++;
+      if (nl + 1 >= maxLines) break;
+      lines[nl++][0] = 0;
+      lines[nl][0] = 0;
+      ln = 0;
+      continue;
+    }
     int wl = 0;
-    while (*p && *p != ' ' && wl < 63) word[wl++] = *p++;
+    while (*p && *p != ' ' && *p != '|' && wl < 63) word[wl++] = *p++;
     word[wl] = 0;
     char trial[160];
     snprintf(trial, sizeof(trial), ln ? "%s %s" : "%s%s", ln ? lines[nl] : "", word);
@@ -10043,24 +10066,40 @@ static void drawPhoneRead() {
   fillPolygon(hx3, hy3, 3, rgb565(255, 255, 255));
   drawVectorText(M.from, (float)ax, hy + 60.0f, 1.6f, rgb565(20, 20, 24), true);
   fillRect(s0, hy + 76, s1, hy + 76, rgb565(214, 214, 220));
-  char dateLine[32];
-  snprintf(dateLine, sizeof(dateLine), "TODAY %s", M.time);
-  drawVectorText(dateLine, (float)ax, hy + 98.0f, 1.2f, rgb565(140, 140, 150), false);
-  // the message: a grey bubble from the left
-  char text[400], lines[16][160];
-  phoneText(phoneShown, text, sizeof(text));
-  const float ts = 1.55f, lh = 19;
-  int bx0 = s0 + 16, bw = (s1 - s0) - 60;
-  int nl = wrapMsg(text, (float)bw - 28, ts, lines, 16);
-  int by0 = hy + 118, by1 = by0 + 22 + (int)(nl * lh);
-  float pop = fminf(1.0f, fmaxf(0.0f, (termT - PHONE_RISE * 0.6f) / 0.25f));
-  if (pop > 0) {
-    int bxw = (int)(bw * (0.6f + 0.4f * pop));
-    fillRoundRect(bx0, by0, bx0 + bxw, by1, 16, rgb565(229, 229, 235));
-    int tx[3] = { bx0 - 6, bx0 + 14, bx0 + 4 }, ty[3] = { by1 + 2, by1 - 14, by1 - 4 };   // its tail
-    fillPolygon(tx, ty, 3, rgb565(229, 229, 235));
-    if (pop >= 1) for (int i = 0; i < nl; i++) drawMsgLine(lines[i], bx0 + 14.0f, by0 + 20.0f + i * lh, ts, rgb565(20, 20, 24));
+  // the messages: grey bubbles from the left, the newest at the bottom (older ones scrolled up under the header)
+  const float ts = 1.35f, lh = 17;
+  int bx0 = s0 + 16, bw = (s1 - s0) - 56;
+  int areaTop = hy + 80, bottom = t1 - 66;
+  gfxClip(areaTop, t1 - 56);
+  int yb = bottom;
+  for (int m = phoneShown; m >= 0 && yb > areaTop; m--) {
+    char text[700], lines[40][160];
+    phoneText(m, text, sizeof(text));
+    int nl = wrapMsg(text, (float)bw - 26, ts, lines, 40);
+    float h = 20;
+    for (int i = 0; i < nl; i++) h += lines[i][0] ? lh : lh * 0.5f;
+    int by1 = yb, by0 = yb - (int)h;
+    bool newest = m == phoneShown;
+    float pop = newest ? fminf(1.0f, fmaxf(0.0f, (termT - PHONE_RISE * 0.6f) / 0.25f)) : 1.0f;
+    if (pop > 0) {
+      int bxw = (int)(bw * (0.6f + 0.4f * pop));
+      fillRoundRect(bx0, by0, bx0 + bxw, by1, 14, rgb565(229, 229, 235));
+      int tx[3] = { bx0 - 6, bx0 + 14, bx0 + 4 }, ty[3] = { by1 + 2, by1 - 14, by1 - 4 };   // its tail
+      fillPolygon(tx, ty, 3, rgb565(229, 229, 235));
+      if (pop >= 1) {
+        float ly = by0 + 18.0f;
+        for (int i = 0; i < nl; i++) {
+          if (lines[i][0]) { drawMsgLine(lines[i], bx0 + 13.0f, ly, ts, rgb565(20, 20, 24)); ly += lh; }
+          else ly += lh * 0.5f;
+        }
+      }
+    }
+    char tl[32];                             // its time, above it
+    snprintf(tl, sizeof(tl), m == 0 ? "TODAY %s" : "%s", phoneMsgs[m].time);
+    drawVectorText(tl, (float)ax, by0 - 14.0f, 1.2f, rgb565(140, 140, 150), false);
+    yb = by0 - 30;
   }
+  gfxClipAll();
   // the box to reply in
   fillRoundRect(s0 + 16, t1 - 50, s1 - 16, t1 - 18, 16, rgb565(255, 255, 255));
   drawRectOutline(s0 + 16, t1 - 50, s1 - 16, t1 - 18, rgb565(210, 210, 216), 1);
@@ -10072,8 +10111,8 @@ static void drawPhoneRead() {
   // the gloved thumb and fingers, over its edges
   int gx[5] = { 410 + ox, 470 + ox, 492 + ox, 500 + ox, 420 + ox }, gy[5] = { 560 + oy, 520 + oy, 546 + oy, 610 + oy, 640 + oy };
   fillPolygon(gx, gy, 5, glove);
-  for (int i = 0; i <= 10; i++) fillCircle(472 + ox + i * 3, 548 + oy - i * 9, 15, glove);   // the thumb up its edge
-  fillCircle(500 + ox, 456 + oy, 13, gloveHi);
+  for (int i = 0; i <= 10; i++) fillCircle(464 + ox + i * 2, 548 + oy - i * 9, 15, glove);   // the thumb up its edge
+  fillCircle(484 + ox, 456 + oy, 13, gloveHi);
   for (int f = 0; f < 4; f++) {
     int fy = 330 + f * 58 + oy;
     for (int i = 0; i <= 8; i++) fillCircle(792 + ox + i * 3, fy + i, 15 - (f == 3 ? 2 : 0), glove);
@@ -10115,7 +10154,9 @@ static void drawPhoneIcon() {
   fillPolygon(tx, ty, 3, rgb565(60, 200, 100));
   for (int d = -1; d <= 1; d++) fillCircle(x + d * 8, y - 1, 2, rgb565(255, 255, 255));   // ...its dots
   fillCircle(x + 16, y - 11, 8, rgb565(230, 40, 40));                               // the badge
-  drawVectorText("1", x + 16.0f, y - 11.0f, 1.2f, rgb565(255, 255, 255), true);
+  char nb[4];
+  snprintf(nb, sizeof(nb), "%d", phoneSent - phoneReadN);
+  drawVectorText(nb, x + 16.0f, y - 11.0f, 1.2f, rgb565(255, 255, 255), true);
 }
 
 static int atGuardBody();
@@ -15173,7 +15214,10 @@ static void newGame() {
   }
   diaryShaft = -1;
   phoneSent = 0;
-  phoneUnread = phoneClosing = false;
+  phoneReadN = 0;
+  phoneClosing = false;
+  firstLaunchSite = -1;
+  firstLaunchAt = 0;
   phoneBuzzT = phoneRemindT = 0;
   phoneShown = -1;
   introT = 0;
