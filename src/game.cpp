@@ -42,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "086"
+#define GAME_VERSION      "087"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -1550,9 +1550,27 @@ static int shaftTop(const Lift &l) {
   return t < CEIL_Y + 14 ? CEIL_Y + 14 : t;
 }
 
-static void paintLiftShaft(const Lift &l) {
+static inline int cl8(int v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+static void paintLiftShaft(const Lift &l, int tr = -1, int tg = 0, int tb = 0) {   // (tr..: the room's wall colour, its shaft a dark shade of it)
   int top = shaftTop(l), bottom = l.stops[l.stopCount - 1] + PAD_H;
-  fillRect(l.x0, top, l.x1 - 1, bottom, rgb565(18, 22, 30));
+  if (tr < 0) fillRect(l.x0, top, l.x1 - 1, bottom, rgb565(18, 22, 30));
+  else {
+    int r = tr * 34 / 100, g = tg * 34 / 100, b = tb * 34 / 100;           // the back of the shaft: the room's colour, in shadow
+    fillRect(l.x0, top, l.x1 - 1, bottom, rgb565(r, g, b));
+    int w = l.x1 - l.x0;
+    for (int k = 0; k < 4; k++) {                                          // darker into its corners
+      blendRect(l.x0 + k * 4, top, l.x0 + k * 4 + 3, bottom, 0, 0, 0, 0.30f - k * 0.07f);
+      blendRect(l.x1 - 1 - k * 4 - 3, top, l.x1 - 1 - k * 4, bottom, 0, 0, 0, 0.30f - k * 0.07f);
+    }
+    for (int y = top + 30; y < bottom; y += 60) {                          // its panels' seams, a bolt each side
+      fillRect(l.x0 + 6, y, l.x1 - 7, y, rgb565(r * 6 / 10, g * 6 / 10, b * 6 / 10));
+      fillRect(l.x0 + 6, y + 1, l.x1 - 7, y + 1, rgb565(cl8(r + 18), cl8(g + 18), cl8(b + 18)));
+      fillCircle(l.x0 + 12, y + 30, 1, rgb565(cl8(r + 30), cl8(g + 30), cl8(b + 30)));
+      fillCircle(l.x1 - 13, y + 30, 1, rgb565(cl8(r + 30), cl8(g + 30), cl8(b + 30)));
+    }
+    fillRect(l.x0 + w / 2 - 1, top, l.x0 + w / 2, bottom, rgb565(r * 7 / 10, g * 7 / 10, b * 7 / 10));   // a cable run down the middle
+    blendRect(l.x0, top, l.x1 - 1, top + 30, 0, 0, 0, 0.25f);             // (dark under its head)
+  }
   uint16_t rail = rgb565(96, 102, 116), railDark = rgb565(54, 58, 68);
   fillRect(l.x0, top, l.x0 + 3, bottom, rail);
   fillRect(l.x0 + 4, top, l.x0 + 5, bottom, railDark);
@@ -3811,7 +3829,6 @@ static void paintSink(int x0, int x1, int fy) {
 
 // ---- solid looking stores: a front face shaded top to bottom, its top and right side seen in
 // perspective (going back up and to the right), a soft shadow on the wall behind
-static inline int cl8(int v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
 static void solidBlock(int x0, int y0, int x1, int y1, int r, int g, int b, int d, bool shade = true) {
   if (shade) {
     blendRect(x1 + 1, y0 - d + 6, x1 + d + 6, y1 - 1, 0, 0, 0, 0.10f);            // its shadow on the wall
@@ -5883,7 +5900,7 @@ static void paintRoom() {
     fillRect(x - 3, CEIL_Y + 2, x + 3, CAM_Y - 4, rgb565(90, 96, 108));
     fillCircle(x, CAM_Y, 6, rgb565(50, 54, 64));
   }
-  for (int i = 0; i < liftCount; i++) paintLiftShaft(lifts[i]);
+  for (int i = 0; i < liftCount; i++) paintLiftShaft(lifts[i], wr, wg, wb);
   for (int i = 0; i < platCount; i++) paintPlatform(plats[i]);
   for (int i = 0; i < liftCount; i++) {
     Plat f = { lifts[i].x0, lifts[i].x1, lifts[i].stops[lifts[i].stopCount - 1] };

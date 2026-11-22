@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 086: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 087: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -111,7 +111,9 @@ of the wall and settled on the ribs, grime under the ceiling, rust bleeding
 down from the rivets and water stains from the ribs, a damp-stained panel or
 two with a tide mark, jagged branching cracks across the panels, paint flaking
 off to bare pitted metal, and cobwebs in the top corners, under the ribs and in
-the panel corners. Only the walls: the equipment is untouched. 12 of them, each in a different room, have
+the panel corners. Only the walls: the equipment is untouched. The room's
+lifts run in shafts the room's colour in shadow (a third as bright, darker
+into their corners, panel seams and bolts, a cable run down the middle). 12 of them, each in a different room, have
 a QUANTUM DRIVE in them, and 5 others (each in a different room) TOP SECRET
 DOCUMENTS; the rest have nothing.
 
