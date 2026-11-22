@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 088: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 089: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -504,14 +504,18 @@ and the conversation, a bubble each, the newest at the bottom; it opens at
 the start of the newest, UP / DOWN scrolls. X or Square puts it away.
 Reading them isn't needed; the world waits while he does. [CITY] is the city
 the North Atlantic missile is heading for, so it changes every game. **Stop
-its launch** (or destroy it in flight) and messages 2 and 3 never come; if
-it lands first, nor do any still to come.
+its launch** and messages 2, 3 and 4 never come; destroy it in flight and
+2 and 3 (if they haven't come yet) never do, but 4 does; if it lands, nor
+do any still to come.
 - 1 (North Atlantic hacked): HEY BABE, JUST GOT BACK FROM THE SHOPS. [CITY]
   IS ABSOLUTELY CRAZY TODAY ... LOVE YOU XX
 - 2 (a minute after its launch): BABE, WE'VE JUST RECEIVED AN EMERGENCY
   ALERT ON OUR PHONES ... PLEASE CALL ME. I LOVE YOU.
 - 3 (2 minutes before its impact): MY LOVE... THEY'VE JUST ANNOUNCED THAT
   IMPACT IS EXPECTED IN A COUPLE OF MINUTES ... GOODBYE SWEETHEART.
+- 4 (15 seconds after it's destroyed in flight - so never with 3, unless 3
+  came first; never if it lands): DADDYYYY!!! MUMMY SAYS THE BAD ROCKET IS
+  GONE!!! ARE WE SAFE NOW??? ... I LOVE YOU!!! (two red hearts)
 
 **The medical bay**: two levels (lift pad on the left). Downstairs: visitors'
 seats under an eye chart and a WASH YOUR HANDS poster, the NURSE STATION (its

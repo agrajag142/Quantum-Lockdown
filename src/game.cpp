@@ -42,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "088"
+#define GAME_VERSION      "089"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -959,6 +959,7 @@ static bool koGetUp = false;           // knocked down by a drop: he gets up whe
 enum EndReason : uint8_t { END_NONE, END_TIME, END_HEALTH, END_WIN, END_BODY, END_NUKES };
 static EndReason gameOver = END_NONE;
 static float gameOverT = 0;
+static float naDestroyedAt = -1;       // ...and when it was destroyed in flight (-1: it wasn't)
 static float naLaunchAt = -1;          // when the North Atlantic site's missile launched (playT; -1: not yet) - his phone's messages
 static float playT = 0;                // time played (seconds of play: not the map, not the opening)
 static float drainT = 0;               // towards the next minute's health
@@ -9025,6 +9026,7 @@ static void updateDestructTerm(float dt) {
         termT = 0;
         if (!inFlight(dsSite)) { termPage = DS_LATE; sfxPlay(SFX_DENIED); break; }   // (it landed while the code went)
         nukeDestroyed[dsSite] = true;
+        if (dsSite == 0) naDestroyedAt = playT;   // (the North Atlantic's: for his phone's messages)
         s2NukeCode = false;
         termPage = DS_DONE;
         addScore(PREVENT_SCORE, agX, agY - 200);
@@ -10067,7 +10069,7 @@ static void drawCarriedBody() {
 // is heading. \x01 in a message: the laughing face.
 // The three messages follow the North Atlantic site's missile (site 0, the first hacked): hacked; launched (a minute
 // after); about to land (2 minutes before). Stop its launch, or destroy it in flight, and the rest never come.
-enum : uint8_t { PM_HACKED, PM_AFTER_LAUNCH, PM_BEFORE_IMPACT };   // site 0: hacked / n seconds after its launch / n before its impact
+enum : uint8_t { PM_HACKED, PM_AFTER_LAUNCH, PM_BEFORE_IMPACT, PM_AFTER_DESTROYED };   // (..., n seconds after it's destroyed in flight)   // site 0: hacked / n seconds after its launch / n before its impact
 struct PhoneMsg { uint8_t when; int n; const char *from, *time, *text; };   // ("|": a new paragraph)
 static const PhoneMsg phoneMsgs[] = {
   { PM_HACKED, 1, "HOME", "23:46",
@@ -10087,17 +10089,24 @@ static const PhoneMsg phoneMsgs[] = {
     "PLEASE KNOW THAT WE BOTH LOVE YOU MORE THAN ANYTHING IN THIS WORLD.|"
     "YOU GAVE US THE HAPPIEST LIFE. I'LL LOVE YOU FOREVER.|"
     "GOODBYE SWEETHEART." },
+  { PM_AFTER_DESTROYED, 15, "HOME", "01:07",
+    "DADDYYYY!!! MUMMY SAYS THE BAD ROCKET IS GONE!!! ARE WE SAFE NOW???|"
+    "CAN YOU COME HOME PLEASE? I WANT A BIG CUDDLE!!|"
+    "I LOVE YOU!!! \x02\x02" },
 };
 static bool phoneDue(int i) {
   const PhoneMsg &m = phoneMsgs[i];
   if (m.when == PM_HACKED) return sitesHacked >= m.n;
+  if (m.when == PM_AFTER_DESTROYED) return naDestroyedAt >= 0 && playT - naDestroyedAt >= m.n;
   if (!inFlight(0) || naLaunchAt < 0) return false;   // (its missile: up, and still coming)
   if (m.when == PM_AFTER_LAUNCH) return playT - naLaunchAt >= m.n;
   return landLeft[0] <= m.n;
 }
 static bool phoneVoid(int i) {               // never coming now: its launch stopped, its missile destroyed, or already landed
   if (phoneMsgs[i].when == PM_HACKED) return false;
-  return prevented[0] || nukeDestroyed[0] || (sitesLaunched > 0 && naLaunchAt >= 0 && landLeft[0] <= 0);
+  bool landed = sitesLaunched > 0 && naLaunchAt >= 0 && !nukeDestroyed[0] && landLeft[0] <= 0;
+  if (phoneMsgs[i].when == PM_AFTER_DESTROYED) return prevented[0] || landed;   // (only once it's shot down)
+  return prevented[0] || nukeDestroyed[0] || landed;
 }
 #define PHONE_MSG_COUNT ((int)(sizeof(phoneMsgs) / sizeof(phoneMsgs[0])))
 #define PHONE_RISE 0.45f
@@ -10182,13 +10191,22 @@ static void drawLaughFace(float cx, float cy, float r) {
   fillCircle((int)(cx - r * 0.8f), (int)(cy + r * 0.05f), (int)(r * 0.22f), rgb565(80, 170, 255));   // tears of joy
   fillCircle((int)(cx + r * 0.8f), (int)(cy + r * 0.05f), (int)(r * 0.22f), rgb565(80, 170, 255));
 }
-// A line of the message (the face where \x01 is)
+// A red heart, at its size
+static void drawHeartGlyph(float cx, float cy, float r) {
+  uint16_t red = rgb565(230, 30, 50);
+  fillCircle((int)(cx - r * 0.45f), (int)(cy - r * 0.25f), (int)(r * 0.55f), red);
+  fillCircle((int)(cx + r * 0.45f), (int)(cy - r * 0.25f), (int)(r * 0.55f), red);
+  int hx[3] = { (int)(cx - r * 0.98f), (int)(cx + r * 0.98f), (int)cx }, hy[3] = { (int)(cy - r * 0.08f), (int)(cy - r * 0.08f), (int)(cy + r * 0.95f) };
+  fillPolygon(hx, hy, 3, red);
+  fillCircle((int)(cx - r * 0.55f), (int)(cy - r * 0.4f), (int)(r * 0.16f), rgb565(255, 150, 160));   // its shine
+}
+// A line of the message (the face where \x01 is, a heart where \x02)
 static float lineW(const char *t, float size) {
   float w = 0;
   char seg[160];
   int n = 0;
   for (const char *q = t; ; q++) {
-    if (*q == '\x01' || !*q) { seg[n] = 0; w += n ? vectorTextWidth(seg, size) : 0; n = 0; if (!*q) break; w += size * 14; }
+    if (*q == '\x01' || *q == '\x02' || !*q) { seg[n] = 0; w += n ? vectorTextWidth(seg, size) : 0; n = 0; if (!*q) break; w += size * 14; }
     else if (n < 159) seg[n++] = *q;
   }
   return w;
@@ -10197,12 +10215,13 @@ static void drawMsgLine(const char *t, float x, float y, float size, uint16_t c)
   char seg[160];
   int n = 0;
   for (const char *q = t; ; q++) {
-    if (*q == '\x01' || !*q) {
+    if (*q == '\x01' || *q == '\x02' || !*q) {
       seg[n] = 0;
       if (n) { drawTextLeft(seg, x, y, size, c, false); x += vectorTextWidth(seg, size); }
       n = 0;
       if (!*q) break;
-      drawLaughFace(x + size * 7, y, size * 5.6f);
+      if (*q == '\x02') drawHeartGlyph(x + size * 7, y, size * 5.2f);
+      else drawLaughFace(x + size * 7, y, size * 5.6f);
       x += size * 14;
     } else if (n < 159) seg[n++] = *q;
   }
@@ -15467,7 +15486,7 @@ static void newGame() {
   phoneSent = 0;
   phoneReadN = phoneSkip = 0;
   phoneClosing = false;
-  naLaunchAt = -1;
+  naLaunchAt = naDestroyedAt = -1;
   phoneBuzzT = phoneRemindT = 0;
   phoneShown = -1;
   introT = 0;
