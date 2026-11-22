@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 084: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 085: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -476,27 +476,27 @@ wall. **Two cleaners** (teal tunics, mops) walk their paths: one on the floor,
 one on the middle level - both walking away from you as you come in.
 
 **His phone** (both stages): messages from home (`phoneMsgs` in
-`src/game.cpp`; more to come). Each arrives when it's due - after so many
-sites are hacked, or so long after the first missile launches - and he's
-standing by a lift - a catwalk in stage 1's
-shafts, a walkway in stage 2's foyers, or in the car, stopped: the only
-places with a signal: the phone **buzzes in his pocket** (two buzzes and
-a chime; shaking lines drawn at his hip, again every 20 seconds while
-unread) and the bar at the top shows a **message waiting** (a green bubble,
-its red count). There, **SQUARE: READ MESSAGE**: his gloved hand
-holds the phone up over the screen - the time, one bar of signal, a low
-battery, HOME (a heart) and the conversation, a bubble each, the newest at
-the bottom (older ones scrolled up under the header). X or Square puts it away.
-Reading it isn't needed; the world waits while he does. [CITY] in a message
-is the city the first missile is heading for (the first one launched, once
-one has), so it changes every game:
-- 1 (one site hacked): HEY BABE, JUST GOT BACK FROM THE SHOPS. [CITY] IS ABSOLUTELY CRAZY
-  TODAY, TRAFFIC EVERYWHERE AS USUAL (the laughing face). LITTLE ONE'S BEEN
-  ASKING ABOUT YOU. WE MISS YOU! DON'T WORK TOO HARD. LOVE YOU XX
-- 2 (a minute after the first launch): BABE, WE'VE JUST RECEIVED AN
-  EMERGENCY ALERT ON OUR PHONES. THEY'RE SAYING A NUCLEAR MISSILE IS HEADING
-  TOWARDS [CITY]. ... PLEASE TELL ME THIS ISN'T REAL. PLEASE CALL ME. I LOVE
-  YOU.
+`src/game.cpp`), following the **North Atlantic** site's missile: one when
+it's hacked, one a minute after it launches, one 2 minutes before it hits.
+Each arrives when it's due and he's standing by a lift - a catwalk in stage
+1's shafts, a walkway in stage 2's foyers, or in the car, stopped: the only
+places with a signal. The phone **buzzes in his pocket** (two buzzes and a
+chime; shaking lines drawn at his hip, again every 20 seconds while unread)
+and the bar at the top shows a **message waiting** (a green bubble, its red
+count). There, **SQUARE: READ MESSAGE**: his gloved hand holds the phone up
+over the screen - the time, one bar of signal, a low battery, HOME (a heart)
+and the conversation, a bubble each, the newest at the bottom; it opens at
+the start of the newest, UP / DOWN scrolls. X or Square puts it away.
+Reading them isn't needed; the world waits while he does. [CITY] is the city
+the North Atlantic missile is heading for, so it changes every game. **Stop
+its launch** (or destroy it in flight) and messages 2 and 3 never come; if
+it lands first, nor do any still to come.
+- 1 (North Atlantic hacked): HEY BABE, JUST GOT BACK FROM THE SHOPS. [CITY]
+  IS ABSOLUTELY CRAZY TODAY ... LOVE YOU XX
+- 2 (a minute after its launch): BABE, WE'VE JUST RECEIVED AN EMERGENCY
+  ALERT ON OUR PHONES ... PLEASE CALL ME. I LOVE YOU.
+- 3 (2 minutes before its impact): MY LOVE... THEY'VE JUST ANNOUNCED THAT
+  IMPACT IS EXPECTED IN A COUPLE OF MINUTES ... GOODBYE SWEETHEART.
 
 **The medical bay**: two levels (lift pad on the left). Downstairs: visitors'
 seats under an eye chart and a WASH YOUR HANDS poster, the NURSE STATION (its

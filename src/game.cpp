@@ -42,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "084"
+#define GAME_VERSION      "085"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -959,8 +959,7 @@ static bool koGetUp = false;           // knocked down by a drop: he gets up whe
 enum EndReason : uint8_t { END_NONE, END_TIME, END_HEALTH, END_WIN, END_BODY, END_NUKES };
 static EndReason gameOver = END_NONE;
 static float gameOverT = 0;
-static int firstLaunchSite = -1;       // the first missile actually launched (-1: none yet), and when (playT)
-static float firstLaunchAt = 0;
+static float naLaunchAt = -1;          // when the North Atlantic site's missile launched (playT; -1: not yet) - his phone's messages
 static float playT = 0;                // time played (seconds of play: not the map, not the opening)
 static float drainT = 0;               // towards the next minute's health
 static int warnSlot = 99;              // the last minute: which ten seconds the last alert was in
@@ -8416,7 +8415,7 @@ static void updateNukes(float dt) {
       launchT = 0;
       landLeft[sitesLaunched] = 60.0f * (LAND_MIN_MINUTES + (LAND_MAX_MINUTES - LAND_MIN_MINUTES) * (rnd32() % 1000) / 1000.0f);
       landTotal[sitesLaunched] = landLeft[sitesLaunched];
-      if (firstLaunchSite < 0) { firstLaunchSite = sitesLaunched; firstLaunchAt = playT; }   // (for his phone's messages)
+      if (sitesLaunched == 0) naLaunchAt = playT;   // (the North Atlantic's: for his phone's messages)
       startLaunchScene(sitesLaunched);     // (NUCLEAR MISSION's launch, beside the game)
       sitesLaunched++;
     }
@@ -9882,7 +9881,9 @@ static void drawCarriedBody() {
 // buzz drawn at his hip), the bar at the top shows a message waiting, and SQUARE there reads it: his gloved hand
 // holds the phone up, the message on its screen. Not needed to finish the game. [CITY]: where the first missile
 // is heading. \x01 in a message: the laughing face.
-enum : uint8_t { PM_HACKED, PM_AFTER_LAUNCH };   // when one arrives: n sites hacked / n seconds after the first launch
+// The three messages follow the North Atlantic site's missile (site 0, the first hacked): hacked; launched (a minute
+// after); about to land (2 minutes before). Stop its launch, or destroy it in flight, and the rest never come.
+enum : uint8_t { PM_HACKED, PM_AFTER_LAUNCH, PM_BEFORE_IMPACT };   // site 0: hacked / n seconds after its launch / n before its impact
 struct PhoneMsg { uint8_t when; int n; const char *from, *time, *text; };   // ("|": a new paragraph)
 static const PhoneMsg phoneMsgs[] = {
   { PM_HACKED, 1, "HOME", "23:46",
@@ -9893,23 +9894,45 @@ static const PhoneMsg phoneMsgs[] = {
     "I DON'T KNOW WHAT'S HAPPENING. EVERYONE IS PANICKING AND THE NEWS IS TELLING PEOPLE TO GET UNDERGROUND IMMEDIATELY.|"
     "I'M TRYING TO KEEP LITTLE ONE CALM BUT SHE'S TERRIFIED. SHE KEEPS ASKING ME WHAT'S HAPPENING.|"
     "PLEASE TELL ME THIS ISN'T REAL. PLEASE CALL ME. I LOVE YOU." },
+  { PM_BEFORE_IMPACT, 120, "HOME", "00:52",
+    "MY LOVE...|THEY'VE JUST ANNOUNCED THAT IMPACT IS EXPECTED IN A COUPLE OF MINUTES.|"
+    "WE'RE STILL IN THE BASEMENT BUT EVERYONE IS CRYING AND SCREAMING.|"
+    "OUR LITTLE GIRL IS HOLDING ONTO ME.|"
+    "SHE KEEPS ASKING WHEN DADDY IS COMING HOME. I TOLD HER YOU'RE COMING, EVEN THOUGH I KNOW YOU CAN'T.|"
+    "I WISH I COULD SEE YOU ONE MORE TIME. I WISH WE HAD MORE TIME TOGETHER.|"
+    "PLEASE KNOW THAT WE BOTH LOVE YOU MORE THAN ANYTHING IN THIS WORLD.|"
+    "YOU GAVE US THE HAPPIEST LIFE. I'LL LOVE YOU FOREVER.|"
+    "GOODBYE SWEETHEART." },
 };
 static bool phoneDue(int i) {
   const PhoneMsg &m = phoneMsgs[i];
   if (m.when == PM_HACKED) return sitesHacked >= m.n;
-  return firstLaunchSite >= 0 && playT - firstLaunchAt >= m.n;
+  if (!inFlight(0) || naLaunchAt < 0) return false;   // (its missile: up, and still coming)
+  if (m.when == PM_AFTER_LAUNCH) return playT - naLaunchAt >= m.n;
+  return landLeft[0] <= m.n;
+}
+static bool phoneVoid(int i) {               // never coming now: its launch stopped, its missile destroyed, or already landed
+  if (phoneMsgs[i].when == PM_HACKED) return false;
+  return prevented[0] || nukeDestroyed[0] || (sitesLaunched > 0 && naLaunchAt >= 0 && landLeft[0] <= 0);
 }
 #define PHONE_MSG_COUNT ((int)(sizeof(phoneMsgs) / sizeof(phoneMsgs[0])))
 #define PHONE_RISE 0.45f
 static int phoneSent = 0;                    // how many have arrived
+static int phoneSkip = 0;                    // (bits: messages that never came)
 static int phoneReadN = 0;                   // how many he's read (the rest: waiting)
-#define phoneUnread (phoneSent > phoneReadN)
+static int phoneUnreadN() {                  // arrived, not read (skipped ones don't count)
+  int n = 0;
+  for (int m = phoneReadN; m < phoneSent; m++) n += !(phoneSkip & (1 << m));
+  return n;
+}
+#define phoneUnread (phoneUnreadN() > 0)
 static float phoneBuzzT = 0, phoneRemindT = 0;
 static int phoneShown = -1;                  // the one on the screen (reading)
 static bool phoneClosing = false;
+static float phoneScroll = -1;               // how far up the conversation he's scrolled (-1: just opened)
 static float phoneCloseT = 0;
 static void phoneText(int i, char *out, int n) {   // its words, [CITY] filled in
-  const char *src = phoneMsgs[i].text, *city = cities[landCity[firstLaunchSite >= 0 ? firstLaunchSite : 0]].name;
+  const char *src = phoneMsgs[i].text, *city = cities[landCity[0]].name;   // (the North Atlantic missile's city)
   int o = 0;
   for (const char *q = src; *q && o < n - 1; ) {
     if (strncmp(q, "[CITY]", 6) == 0) { for (const char *c = city; *c && o < n - 1; c++) out[o++] = *c; q += 6; }
@@ -9923,6 +9946,7 @@ static bool phoneSpot() {                    // by a lift, standing (a catwalk i
 static bool atPhone() { return phoneUnread && phoneSpot() && gameOver == END_NONE; }
 static void updatePhone(float dt) {
   if (phoneBuzzT > 0) phoneBuzzT -= dt;
+  while (phoneSent < PHONE_MSG_COUNT && phoneVoid(phoneSent)) phoneSkip |= 1 << phoneSent++;   // (never coming: skipped)
   if (phoneSent < PHONE_MSG_COUNT && phoneDue(phoneSent) && phoneSpot()) {
     phoneSent++;                             // a message comes in
     phoneBuzzT = 2.6f;
@@ -9936,9 +9960,11 @@ static void updatePhone(float dt) {
 }
 static void usePhone() {
   phoneShown = phoneSent - 1;                // (the conversation, down to the newest)
+  while (phoneShown > 0 && (phoneSkip & (1 << phoneShown))) phoneShown--;
   phoneReadN = phoneSent;
   phoneBuzzT = 0;
   phoneClosing = false;
+  phoneScroll = -1;
   termOn = true;
   termKind = 5;
   termT = 0;
@@ -9950,6 +9976,10 @@ static void updatePhoneRead(float dt) {
     phoneCloseT += dt;
     if (phoneCloseT >= PHONE_RISE) { termOn = false; phoneShown = -1; }
     return;
+  }
+  if (phoneScroll >= 0) {                      // UP / DOWN: scroll
+    if (held & BTN_UP) phoneScroll += 260 * dt;
+    if (held & BTN_DOWN) phoneScroll -= 260 * dt;
   }
   if (termT > 0.8f && (pressed & (BTN_USE | BTN_JUMP))) { phoneClosing = true; phoneCloseT = 0; sfxPlay(SFX_PHONEOUT); }
 }
@@ -10069,30 +10099,42 @@ static void drawPhoneRead() {
   fillPolygon(hx3, hy3, 3, rgb565(255, 255, 255));
   drawVectorText(M.from, (float)ax, hy + 60.0f, 1.6f, rgb565(20, 20, 24), true);
   fillRect(s0, hy + 76, s1, hy + 76, rgb565(214, 214, 220));
-  // the messages: grey bubbles from the left, the newest at the bottom (older ones scrolled up under the header)
+  // the messages: grey bubbles from the left, the newest at the bottom; UP / DOWN scrolls (it opens on the newest's start)
   const float ts = 1.35f, lh = 17;
   int bx0 = s0 + 16, bw = (s1 - s0) - 56;
   int areaTop = hy + 80, bottom = t1 - 66;
-  gfxClip(areaTop, t1 - 56);
-  int yb = bottom;
-  for (int m = phoneShown; m >= 0 && yb > areaTop; m--) {
-    char text[700], lines[40][160];
+  static char lines[PHONE_MSG_COUNT][40][160];
+  int nls[PHONE_MSG_COUNT], hs[PHONE_MSG_COUNT], total = 0;
+  for (int m = 0; m <= phoneShown; m++) {
+    nls[m] = hs[m] = 0;
+    if (phoneSkip & (1 << m)) continue;
+    char text[900];
     phoneText(m, text, sizeof(text));
-    int nl = wrapMsg(text, (float)bw - 26, ts, lines, 40);
+    nls[m] = wrapMsg(text, (float)bw - 26, ts, lines[m], 40);
     float h = 20;
-    for (int i = 0; i < nl; i++) h += lines[i][0] ? lh : lh * 0.5f;
-    int by1 = yb, by0 = yb - (int)h;
+    for (int i = 0; i < nls[m]; i++) h += lines[m][i][0] ? lh : lh * 0.5f;
+    hs[m] = (int)h;
+    total += hs[m] + 30;
+  }
+  float maxScroll = fmaxf(0.0f, (float)(total - (bottom - areaTop)));
+  if (phoneScroll < 0) phoneScroll = fminf(maxScroll, fmaxf(0.0f, (float)(hs[phoneShown] + 30 - (bottom - areaTop))));   // (opening)
+  phoneScroll = clampv(phoneScroll, 0.0f, maxScroll);
+  gfxClip(areaTop, t1 - 56);
+  int yb = bottom + (int)phoneScroll;
+  for (int m = phoneShown; m >= 0 && yb > areaTop; m--) {
+    if (phoneSkip & (1 << m)) continue;
+    int by1 = yb, by0 = yb - hs[m];
     bool newest = m == phoneShown;
     float pop = newest ? fminf(1.0f, fmaxf(0.0f, (termT - PHONE_RISE * 0.6f) / 0.25f)) : 1.0f;
-    if (pop > 0) {
+    if (pop > 0 && by0 < t1 - 56) {
       int bxw = (int)(bw * (0.6f + 0.4f * pop));
       fillRoundRect(bx0, by0, bx0 + bxw, by1, 14, rgb565(229, 229, 235));
       int tx[3] = { bx0 - 6, bx0 + 14, bx0 + 4 }, ty[3] = { by1 + 2, by1 - 14, by1 - 4 };   // its tail
       fillPolygon(tx, ty, 3, rgb565(229, 229, 235));
       if (pop >= 1) {
         float ly = by0 + 18.0f;
-        for (int i = 0; i < nl; i++) {
-          if (lines[i][0]) { drawMsgLine(lines[i], bx0 + 13.0f, ly, ts, rgb565(20, 20, 24)); ly += lh; }
+        for (int i = 0; i < nls[m]; i++) {
+          if (lines[m][i][0]) { if (ly > areaTop - 20 && ly < t1 - 40) drawMsgLine(lines[m][i], bx0 + 13.0f, ly, ts, rgb565(20, 20, 24)); ly += lh; }
           else ly += lh * 0.5f;
         }
       }
@@ -10103,6 +10145,11 @@ static void drawPhoneRead() {
     yb = by0 - 30;
   }
   gfxClipAll();
+  if (maxScroll > 0 && termT > 0.8f) {         // a scroll bar, and the hint
+    int sh = t1 - 56 - areaTop, bh = (int)(sh * (bottom - areaTop) / (float)total);
+    int by = areaTop + (int)((sh - bh) * (1 - phoneScroll / maxScroll));
+    fillRoundRect(s1 - 8, by, s1 - 4, by + bh, 2, rgb565(170, 170, 178));
+  }
   // the box to reply in
   fillRoundRect(s0 + 16, t1 - 50, s1 - 16, t1 - 18, 16, rgb565(255, 255, 255));
   drawRectOutline(s0 + 16, t1 - 50, s1 - 16, t1 - 18, rgb565(210, 210, 216), 1);
@@ -10123,7 +10170,7 @@ static void drawPhoneRead() {
   }
   if (!phoneClosing && termT > 0.8f) {
     blendRect(0, SCREEN_H - 34, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, 0.5f);
-    drawVectorText("X: PUT IT AWAY", SCREEN_W / 2, SCREEN_H - 17, 1.8f, rgb565(200, 206, 220), false);
+    drawVectorText("UP / DOWN: SCROLL     X: PUT IT AWAY", SCREEN_W / 2, SCREEN_H - 17, 1.8f, rgb565(200, 206, 220), false);
   }
 }
 // The buzz in his pocket: lines shaking out from his hip
@@ -10158,7 +10205,7 @@ static void drawPhoneIcon() {
   for (int d = -1; d <= 1; d++) fillCircle(x + d * 8, y - 1, 2, rgb565(255, 255, 255));   // ...its dots
   fillCircle(x + 16, y - 11, 8, rgb565(230, 40, 40));                               // the badge
   char nb[4];
-  snprintf(nb, sizeof(nb), "%d", phoneSent - phoneReadN);
+  snprintf(nb, sizeof(nb), "%d", phoneUnreadN());
   drawVectorText(nb, x + 16.0f, y - 11.0f, 1.2f, rgb565(255, 255, 255), true);
 }
 
@@ -15217,10 +15264,9 @@ static void newGame() {
   }
   diaryShaft = -1;
   phoneSent = 0;
-  phoneReadN = 0;
+  phoneReadN = phoneSkip = 0;
   phoneClosing = false;
-  firstLaunchSite = -1;
-  firstLaunchAt = 0;
+  naLaunchAt = -1;
   phoneBuzzT = phoneRemindT = 0;
   phoneShown = -1;
   introT = 0;
