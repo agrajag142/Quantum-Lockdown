@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 085: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 086: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -48,6 +48,19 @@ then the bottom doors'), 12 in all.
 The lift car only stops at floors with a door. Everywhere else the shaft is
 wall, and the car runs past it (picking up speed on a long run). A catwalk
 leads off the car only on the side the door is.
+
+Inside the shaft, above and below the car (`paintShaftInside`): its
+concrete back wall in pours (damp running down it in stage 1; lighter and
+clean in stage 2), the car's steel guide rails with their brackets, a ladder
+up the back, caged lamps, the counterweight on its own rails moving the other
+way to the car, a steel sill at each stop with the floor's number painted on
+the concrete, and at the bottom the pit with its spring buffers. Each
+catwalk's bay (`paintCatwalkBay`) has a grey panelled back wall, set back and
+darker than the shaft's walls: a shadow under the beam, pools of light under
+its lamps, a big pipe and a yellow-banded one along it (rust run down from
+them in stage 1), the girders standing in front, and one thing on the wall
+(the same each visit): a fire extinguisher, a fuse box, a LEVEL sign or a
+wall phone.
 
 The title screen tells the story, typed out as a classified transmission
 that glitches now and then. Each new game (X on the title screen) lays out a
