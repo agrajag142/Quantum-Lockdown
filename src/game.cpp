@@ -42,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "087"
+#define GAME_VERSION      "088"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -12646,26 +12646,32 @@ static void nightVision() {
   }
   float ex, ey;
   eyePos(ex, ey);
-  // the cone, in pixels
+  // The view's edges are feathered: the cone fades out across its sides and its far end, the circle round
+  // him across its rim. Rows are scanned only across the (widened) cone and circle; outside, near black.
+  const float FEATHER = 11.0f;                 // degrees, each side of the cone's edge
   const int N = 10;
   float cx[N + 2], cy[N + 2];
   cx[0] = ex * UNIT_K;
   cy[0] = ey * UNIT_K;
   float mid = agFacing > 0 ? 78.0f : -78.0f;   // degrees from straight down
-  for (int i = 0; i <= N; i++) {
-    float a = (mid - NVG_HALF_DEG + 2 * NVG_HALF_DEG * i / N) * 0.017453293f;
-    cx[i + 1] = (ex + sinf(a) * NVG_RANGE) * UNIT_K;
-    cy[i + 1] = (ey + cosf(a) * NVG_RANGE) * UNIT_K;
+  float wideHalf = NVG_HALF_DEG + FEATHER, R = NVG_RANGE * UNIT_K;
+  for (int i = 0; i <= N; i++) {               // (the widened cone: where any of it shows)
+    float a = (mid - wideHalf + 2 * wideHalf * i / N) * 0.017453293f;
+    cx[i + 1] = (ex + sinf(a) * NVG_RANGE * 1.12f) * UNIT_K;
+    cy[i + 1] = (ey + cosf(a) * NVG_RANGE * 1.12f) * UNIT_K;
   }
+  float ma = mid * 0.017453293f, mdx = sinf(ma), mdy = cosf(ma);   // the cone's middle, as a direction
+  float cosIn = cosf((NVG_HALF_DEG - FEATHER) * 0.017453293f), cosOut = cosf(wideHalf * 0.017453293f);
   float rcx = agX * UNIT_K, rcy = (ey + 44 * myScale) * UNIT_K, rr = NVG_AROUND * myScale * UNIT_K;
+  float rIn = rr * 0.70f, rOut = rr * 1.30f;
   float ecx = cx[0], ecy = cy[0];
-  float fadeFrom = NVG_RANGE * 0.65f * UNIT_K, fadeLen = NVG_RANGE * 0.35f * UNIT_K;
+  float fadeFrom = R * 0.55f, fadeTo = R * 1.10f;
+  auto smooth = [](float e0, float e1, float v) { float t = (v - e0) / (e1 - e0); t = t < 0 ? 0 : (t > 1 ? 1 : t); return t * t * (3 - 2 * t); };
   int y0 = (int)(HUD_H * UNIT_K);
   for (int y = y0; y < FB_H; y++) {
     uint32_t *row = g_frame + (size_t)y * FB_W;
     float fy = y + 0.5f;
-    // the cone's span on this row (it is convex)
-    float a0 = 1e9f, a1 = -1e9f;
+    float a0 = 1e9f, a1 = -1e9f;               // the widened cone's span on this row (it is convex)
     for (int i = 0; i < N + 2; i++) {
       int j = (i + 1) % (N + 2);
       float ya = cy[i], yb = cy[j];
@@ -12675,31 +12681,42 @@ static void nightVision() {
         if (x > a1) a1 = x;
       }
     }
-    // the circle's
-    float b0 = 1e9f, b1 = -1e9f, dy = fy - rcy;
-    if (dy * dy < rr * rr) {
-      float h = sqrtf(rr * rr - dy * dy);
+    float b0 = 1e9f, b1 = -1e9f, dy = fy - rcy;   // the widened circle's
+    if (dy * dy < rOut * rOut) {
+      float h = sqrtf(rOut * rOut - dy * dy);
       b0 = rcx - h;
       b1 = rcx + h;
     }
-    int la = (int)clampv(a0, 0.0f, (float)FB_W), lb = (int)clampv(a1, 0.0f, (float)FB_W);
-    int ca = (int)clampv(b0, 0.0f, (float)FB_W), cb = (int)clampv(b1, 0.0f, (float)FB_W);
+    int la = (int)clampv(a0, 0.0f, (float)FB_W), lb = (int)clampv(a1 + 1, 0.0f, (float)FB_W);
+    int ca = (int)clampv(b0, 0.0f, (float)FB_W), cb = (int)clampv(b1 + 1, 0.0f, (float)FB_W);
     const uint32_t *tab = nvgTab[(y % 6) == 0];
-    float edy = fy - ecy;
+    float edy = fy - ecy, rdy2 = dy * dy;
     for (int x = 0; x < FB_W; x++) {
       uint32_t p = row[x];
+      uint32_t dark = ((p >> 4) & 0x000f0f0fu) - ((p >> 6) & 0x00030303u) + 0xff000000u;   // almost black
       bool inCone = x >= la && x < lb, inRing = x >= ca && x < cb;
-      if (!inCone && !inRing) {
-        row[x] = ((p >> 4) & 0x000f0f0fu) - ((p >> 6) & 0x00030303u) + 0xff000000u;   // almost black
-        continue;
-      }
-      int r = p & 255, g = (p >> 8) & 255, b = (p >> 16) & 255;
-      int lum = (r * 2 + g * 5 + b) >> 3;
-      if (inCone && !inRing) {         // the far end of the cone fades
+      if (!inCone && !inRing) { row[x] = dark; continue; }
+      float w = 0;
+      if (inCone) {                            // the cone: across its sides, and its far end
         float ddx = x + 0.5f - ecx, d = sqrtf(ddx * ddx + edy * edy);
-        if (d > fadeFrom) lum = (int)(lum * fmaxf(0.25f, 1.0f - (d - fadeFrom) / fadeLen));
+        if (d > 0.5f) {
+          float c = (ddx * mdx + edy * mdy) / d;
+          w = smooth(cosOut, cosIn, c) * (1.0f - smooth(fadeFrom, fadeTo, d));
+        } else w = 1;
       }
-      row[x] = tab[lum];
+      if (inRing && w < 1) {                   // the circle round him: across its rim
+        float rdx = x + 0.5f - rcx, rd = sqrtf(rdx * rdx + rdy2);
+        float wr = 1.0f - smooth(rIn, rOut, rd);
+        if (wr > w) w = wr;
+      }
+      if (w <= 0.004f) { row[x] = dark; continue; }
+      int r = p & 255, g = (p >> 8) & 255, b = (p >> 16) & 255;
+      uint32_t gp = tab[(r * 2 + g * 5 + b) >> 3];
+      if (w >= 0.996f) { row[x] = gp; continue; }
+      int k = (int)(w * 256);
+      int dr = dark & 255, dg = (dark >> 8) & 255, db = (dark >> 16) & 255;
+      int gr = gp & 255, gg = (gp >> 8) & 255, gb = (gp >> 16) & 255;
+      row[x] = rgba(dr + (((gr - dr) * k) >> 8), dg + (((gg - dg) * k) >> 8), db + (((gb - db) * k) >> 8));
     }
   }
 }

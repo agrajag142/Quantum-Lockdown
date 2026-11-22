@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 087: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 088: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -980,7 +980,9 @@ None in room 1, where he starts. The map marks the ones he has been in.
 - **Dark room** (3 rooms, 10%; NUCLEAR MISSION's blackout): the lights flicker
   and die a moment after he comes in, and his night vision comes on. Only what
   the goggles light up is seen, in green: a cone the way he faces and a little
-  round him. The EXIT lamps, red lights and lift pad lamps still glow.
+  round him, its edges feathered - the cone fading out across its sides and
+  far end, the circle across its rim - not cut out. The EXIT lamps, red
+  lights and lift pad lamps still glow.
 
 - **Security cameras** (6 rooms with one, 20%; 3 rooms with two, 10%): hung
   from the ceiling in a top corner (or both), each sweeping its beam across
