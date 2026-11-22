@@ -42,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "085"
+#define GAME_VERSION      "086"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -6694,6 +6694,7 @@ static void drawLabDoor(int side, int fy, int cy, int room) {
 // The lift area in stage 2: dark space, the shaft, and at each of this lift's levels its walkways
 // (white walls, duct, the stripe, glass rails), doors with card readers, first aid, bins
 static void drawFoyerGuardAt(int sh, int L, int fy);
+static void paintShaftInside(int top, int bot, int ts, int bs);
 static void drawLabShaft() {
   auto screenY = [](int f) { return (int)lroundf(CAR_FLOOR_Y + (f * LEVEL_GAP - carWorldY)); };
   int ts = topStop(curShaft), bs = bottomStop(curShaft);
@@ -6706,11 +6707,9 @@ static void drawLabShaft() {
   fillRect(SHAFT_X1 - 6, HUD_H, SHAFT_X1 - 1, PANEL_Y - 1, rgb565(210, 214, 222));
   fillRect(SHAFT_X0 + 6, HUD_H, SHAFT_X0 + 7, PANEL_Y - 1, rgb565(120, 126, 136));
   fillRect(SHAFT_X1 - 8, HUD_H, SHAFT_X1 - 7, PANEL_Y - 1, rgb565(120, 126, 136));
-  float off = fmodf(carWorldY, 60.0f);
-  for (int k = -1; k < 12; k++) {
-    int y = (int)lroundf(HUD_H + k * 60 - off);
-    if (y > capY && y < pitY) drawLine(SHAFT_X0 + 10, y, SHAFT_X1 - 11, y, rgb565(36, 42, 54), false);
-  }
+  paintShaftInside(capY > HUD_H ? capY : HUD_H, pitY < PANEL_Y - 1 ? pitY : PANEL_Y - 1, ts, bs);   // (the car's drawn over it)
+  fillRect(SHAFT_X0, HUD_H, SHAFT_X0 + 5, PANEL_Y - 1, rgb565(210, 214, 222));
+  fillRect(SHAFT_X1 - 6, HUD_H, SHAFT_X1 - 1, PANEL_Y - 1, rgb565(210, 214, 222));
   for (int L = 0; L <= S2_ARRIVAL; L++) {
     if (!s2Stops(curShaft, L)) continue;
     int fy = screenY(L), cy = fy - CORR_H;
@@ -6794,6 +6793,166 @@ static void drawDiaryTerm(int fy, int sh) {
   if (lit) glowDisc(x + 22.0f, fy - 56.0f, 12, lr, lg, lb, 0.5f);
 }
 
+// ---- inside the lift shaft: its concrete back wall, the car's guide rails, a ladder, the counterweight on its
+// own rails going the other way, caged lamps, each floor's sill and number (drawn behind the car; it all moves with it)
+static void paintShaftInside(int top, int bot, int ts, int bs);
+static void paintShaftInsideAll(int top, int bot, int ts, int bs) {   // (above the car, and below it: the car's cabin is painted already)
+  paintShaftInside(top, bot < CAR_FLOOR_Y - 193 ? bot : CAR_FLOOR_Y - 193, ts, bs);
+  paintShaftInside(top > CAR_FLOOR_Y + 14 ? top : CAR_FLOOR_Y + 14, bot, ts, bs);
+}
+static void paintShaftInside(int top, int bot, int ts, int bs) {
+  if (bot < top) return;
+  gfxClip(top, bot);
+  const int x0 = SHAFT_X0, x1 = SHAFT_X1 - 1;
+  int w0 = (int)lroundf(carWorldY) - CAR_FLOOR_Y;     // world y of screen row 0
+  auto wmod = [&](int y, int m) { return ((y + w0) % m + m) % m; };
+  const bool lab = stage == 2;                           // (stage 2's: newer, lighter, clean)
+  const int cr = lab ? 72 : 50, cg = lab ? 78 : 54, cb = lab ? 90 : 62;
+  fillRect(x0, top, x1, bot, rgb565(cr, cg, cb));       // the concrete, cast in lifts
+  for (int y = top; y <= bot; y++) {
+    int m = wmod(y, 120);
+    if (m == 0) fillRect(x0, y, x1, y, rgb565(cr - 16, cg - 17, cb - 18));        // its pour lines
+    else if (m == 1) fillRect(x0, y, x1, y, rgb565(cr + 16, cg + 16, cb + 18));
+    else if (m < 40) fillRect(x0, y, x1, y, rgb565(cr + 3, cg + 3, cb + 3));      // (each pour a little lighter at the top)
+  }
+  for (int k = 0; k < 4 && !lab; k++) {                 // damp running down it
+    int sx = x0 + 34 + k * 23;
+    for (int y = top; y <= bot; y += 3) {
+      int m = wmod(y + k * 53, 360);
+      if (m < 70) blendRect(sx, y, sx + 3 + (k & 1), y + 2, 20, 24, 30, 0.35f * (1 - m / 70.0f));
+    }
+  }
+  // the ladder up the back
+  int lx0 = x0 + 46, lx1 = x0 + 64;
+  fillRect(lx0, top, lx0 + 2, bot, rgb565(96, 100, 110));
+  fillRect(lx1, top, lx1 + 2, bot, rgb565(96, 100, 110));
+  for (int y = top; y <= bot; y++) if (wmod(y, 30) == 0) fillRect(lx0 + 3, y, lx1 - 1, y + 1, rgb565(120, 124, 134));
+  // the counterweight's rails, and it (its weight hangs the other way to the car)
+  int cwx0 = x1 - 44, cwx1 = x1 - 26;
+  fillRect(cwx0 - 3, top, cwx0 - 2, bot, rgb565(80, 86, 96));
+  fillRect(cwx1 + 2, top, cwx1 + 3, bot, rgb565(80, 86, 96));
+  int cwy = CAR_FLOOR_Y + (ts + bs) * LEVEL_GAP - (int)lroundf(carWorldY) - (int)lroundf(carWorldY) + w0 + CAR_FLOOR_Y;
+  cwy = CAR_FLOOR_Y + ((ts + bs) * LEVEL_GAP - 2 * (int)lroundf(carWorldY)) + 0;
+  int cwTop = cwy - 110, cwBot = cwy - 20;
+  if (cwBot > top && cwTop < bot) {
+    int a = cwTop < top ? top : cwTop, b = cwBot > bot ? bot : cwBot;
+    fillRect(cwx0, a, cwx1, b, rgb565(70, 74, 84));
+    for (int y = cwTop + 8; y < cwBot; y += 12) if (y >= top && y <= bot) fillRect(cwx0 + 1, y, cwx1 - 1, y + 1, rgb565(44, 48, 56));   // its slabs
+    if (cwTop >= top) hazardBand(cwx0, cwx1, cwTop, cwTop + 5);
+    drawLine((cwx0 + cwx1) / 2, top, (cwx0 + cwx1) / 2, a, rgb565(110, 116, 128), false);   // its cables, up
+  }
+  // the car's guide rails: steel T-rails, a bracket every 120
+  int gr[2] = { x0 + 10, x1 - 14 };
+  for (int g = 0; g < 2; g++) {
+    fillRect(gr[g], top, gr[g] + 4, bot, rgb565(120, 126, 138));
+    fillRect(gr[g] + 1, top, gr[g] + 1, bot, rgb565(190, 196, 206));
+    for (int y = top; y <= bot; y++)
+      if (wmod(y, 120) == 60) {
+        fillRect(g ? gr[g] - 2 : gr[g] - 6, y - 4, g ? gr[g] + 10 : gr[g] + 6, y + 4, rgb565(84, 90, 100));
+        fillCircle(g ? gr[g] + 7 : gr[g] - 3, y, 1, rgb565(160, 166, 176));
+      }
+  }
+  // caged lamps every other pour, on the back wall
+  for (int y = top - 400; y <= bot; y++) {
+    if (wmod(y, 240) != 100) continue;
+    int lx = x0 + 84;
+    if (y < top - 10 || y > bot + 10) continue;
+    glowDisc((float)lx, (float)y, 36, 255, 200, 120, 0.18f);
+    fillRect(lx - 4, y - 5, lx + 4, y + 5, rgb565(255, 226, 160));
+    drawRectOutline(lx - 6, y - 7, lx + 6, y + 7, rgb565(60, 62, 70), 1);
+    fillRect(lx - 6, y - 1, lx + 6, y, rgb565(60, 62, 70));
+  }
+  // each stop: the steel sill the car meets, the floor's number painted on the concrete
+  for (int f = ts; f <= bs; f++) {
+    if (stage == 2 && !s2Stops(curShaft, f)) continue;
+    int fy = (int)lroundf(CAR_FLOOR_Y + (f * LEVEL_GAP - carWorldY));
+    if (fy + 8 < top || fy - 120 > bot) continue;
+    if (fy >= top && fy + 5 <= bot) {
+      fillRect(x0, fy, x1, fy + 5, rgb565(96, 102, 114));
+      fillRect(x0, fy, x1, fy, rgb565(170, 176, 188));
+    }
+    char n[12];
+    if (stage == 2) s2LevelName(f, n, sizeof(n));
+    else if (f == SUB_FLOOR) snprintf(n, sizeof(n), "SB");
+    else snprintf(n, sizeof(n), "%d", f + 1);
+    int ny = fy - 96;
+    if (ny > top + 12 && ny < bot - 12) drawVectorText(n, (float)(x0 + x1) / 2 + 20, (float)ny, 2.6f, rgb565(200, 200, 186), true);
+  }
+  gfxClip(HUD_H, PANEL_Y - 1);
+}
+// ---- a catwalk's bay: the back wall behind the catwalk (grey panels, set back, darker than the shaft's walls),
+// pipes along it, a pool of light under each lamp, the girders standing in front, and a thing or two on the wall
+static void paintCatwalkBay(int x0, int x1, int cy, int fy, int side, int L) {
+  fillRect(x0, cy, x1, fy + 32, rgb565(10, 13, 20));                     // (under the deck, dark)
+  int wy0 = cy, wy1 = fy - 1;
+  fillRect(x0, wy0, x1, wy1, rgb565(78, 82, 92));
+  for (int y = wy0; y <= wy1; y += 3) fillRect(x0, y, x1, y, rgb565(74, 78, 88));   // (brushed)
+  for (int x = x0 + 60; x < x1; x += 120) {                                  // its panels
+    fillRect(x, wy0, x + 1, wy1, rgb565(54, 58, 66));
+    fillRect(x + 2, wy0, x + 2, wy1, rgb565(104, 108, 118));
+    for (int ry = wy0 + 52; ry < wy1 - 20; ry += 60) { fillCircle(x - 6, ry, 1, rgb565(120, 124, 134)); fillCircle(x + 8, ry, 1, rgb565(120, 124, 134)); }
+  }
+  fillRect(x0, wy0 + 100, x1, wy0 + 101, rgb565(54, 58, 66));                // a seam along it
+  fillRect(x0, wy0 + 102, x1, wy0 + 102, rgb565(104, 108, 118));
+  fillRect(x0, wy1 - 16, x1, wy1, rgb565(56, 60, 68));                       // the kick plate
+  fillRect(x0, wy1 - 16, x1, wy1 - 15, rgb565(96, 100, 110));
+  for (int k = 0; k < 14; k++) blendRect(x0, wy0 + k * 3, x1, wy0 + k * 3 + 3, 0, 0, 0, 0.30f * (1 - k / 14.0f));   // shadow under the beam
+  // the lamps' light pooling down the wall
+  for (int x = x0 + 50; x < x1 - 20; x += 120) {
+    glowDisc(x + 9.0f, wy0 + 30.0f, 70, 255, 214, 150, 0.10f);
+    float tx[4] = { x + 2.0f, x + 16.0f, x + 60.0f, x - 42.0f }, ty[4] = { wy0 + 4.0f, wy0 + 4.0f, wy1 - 16.0f, wy1 - 16.0f };
+    blendPolygonF(tx, ty, 4, 255, 220, 160, 0.05f);
+  }
+  // pipes along the top: a big grey one, a thinner one banded yellow, brackets
+  int p1 = wy0 + 66, p2 = wy0 + 82;                                         // (under the floor's number and the room's)
+  fillRect(x0, p1 - 5, x1, p1 + 5, rgb565(112, 118, 128));
+  fillRect(x0, p1 - 4, x1, p1 - 3, rgb565(170, 176, 186));
+  fillRect(x0, p1 + 4, x1, p1 + 5, rgb565(70, 74, 84));
+  fillRect(x0, p2 - 3, x1, p2 + 3, rgb565(96, 102, 112));
+  fillRect(x0, p2 - 2, x1, p2 - 2, rgb565(150, 156, 166));
+  for (int x = x0 + 30; x < x1; x += 160) {
+    fillRect(x, p2 - 3, x + 12, p2 + 3, rgb565(230, 186, 36));
+    fillRect(x + 70, p1 - 8, x + 74, p2 + 6, rgb565(60, 64, 72));             // a bracket
+  }
+  // a thing or two on the wall (the same each visit), clear of the door and the floor's number
+  uint32_t h = (uint32_t)(curShaft * 7 + L * 3 + side) * 2654435761u;
+  int ix = x0 + 214 + (int)(h % 100);                                         // (between the first two girders)
+  int kind = (int)((h >> 8) % 4);
+  int iy = wy0 + 112;
+  if (kind == 0) {                                                             // a fire extinguisher, its sign
+    fillRect(ix - 12, iy - 8, ix + 12, iy + 6, rgb565(200, 40, 30));
+    drawVectorText("FIRE", (float)ix, iy - 1.0f, 0.9f, rgb565(255, 255, 255), false);
+    fillRect(ix - 6, iy + 14, ix + 6, iy + 50, rgb565(200, 40, 30));
+    fillRect(ix - 6, iy + 14, ix - 4, iy + 50, rgb565(240, 100, 90));
+    fillRect(ix - 3, iy + 8, ix + 3, iy + 14, rgb565(30, 30, 34));
+    drawLine(ix + 3, iy + 10, ix + 10, iy + 24, rgb565(30, 30, 34), false);
+  } else if (kind == 1) {                                                      // a fuse box, its conduit
+    fillRect(ix - 16, iy - 4, ix + 16, iy + 36, rgb565(130, 136, 146));
+    fillRect(ix - 16, iy - 4, ix + 16, iy - 3, rgb565(180, 186, 196));
+    fillRect(ix - 2, wy0 + 86, ix + 2, iy - 4, rgb565(96, 102, 112));
+    hazardBand(ix - 12, ix + 12, iy + 26, iy + 30);
+    fillRect(ix - 6, iy + 6, ix + 6, iy + 16, rgb565(230, 186, 36));
+    drawLine(ix - 4, iy + 8, ix + 2, iy + 11, rgb565(30, 30, 34), false);
+  } else if (kind == 2) {                                                      // a level sign
+    fillRect(ix - 34, iy - 4, ix + 34, iy + 24, rgb565(30, 60, 120));
+    drawRectOutline(ix - 34, iy - 4, ix + 34, iy + 24, rgb565(220, 226, 236), 1);
+    char b[16];
+    snprintf(b, sizeof(b), "LEVEL %d", L + 1);
+    drawVectorText(b, (float)ix, iy + 10.0f, 1.3f, rgb565(240, 244, 250), false);
+  } else {                                                                     // a wall phone in its hood
+    fillRect(ix - 14, iy - 6, ix + 14, iy + 34, rgb565(200, 160, 40));
+    fillRect(ix - 10, iy, ix + 10, iy + 30, rgb565(40, 42, 48));
+    fillRect(ix - 4, iy + 4, ix + 4, iy + 18, rgb565(160, 30, 30));
+    drawVectorText("PHONE", (float)ix, iy - 12.0f, 0.8f, rgb565(220, 220, 220), false);
+  }
+  if (stage == 1) {                                                            // (abandoned: rust down from the pipes)
+    for (int k = 0; k < 4; k++) {
+      int sx = x0 + 40 + (int)((h >> (k * 5)) % (uint32_t)(x1 - x0 - 80));
+      for (int j = 0; j < 40; j += 2) blendRect(sx, p2 + 4 + j, sx + 2, p2 + 5 + j, 140, 70, 30, 0.35f * (1 - j / 40.0f));
+    }
+  }
+}
+
 static void drawShaftScene() {
   if (stage == 2) {                    // the QUANTUM LAB's lift areas
     drawLabShaft();
@@ -6805,14 +6964,8 @@ static void drawShaftScene() {
   int ts = topStop(curShaft), bs = bottomStop(curShaft);
   int capY = screenY(ts) - CORR_H - 70;          // the head of the shaft, above its top stop
   int pitY = screenY(bs) + 14;                   // its bottom, under the last stop
-  // rungs on the back of the shaft (they show the car moving)
-  float off = fmodf(carWorldY, 60.0f);
-  for (int k = -1; k < 14; k++) {
-    int y = (int)lroundf(HUD_H + k * 60 - off);
-    if (y >= CAR_FLOOR_Y - 194 && y <= CAR_FLOOR_Y + 14) continue;   // (the car is in front)
-    if (y <= capY || y >= pitY) continue;
-    drawLine(SHAFT_X0 + 10, y, SHAFT_X1 - 11, y, rgb565(28, 32, 42), false);
-  }
+  // inside the shaft, behind the car (it shows the car moving)
+  paintShaftInsideAll(capY > HUD_H ? capY : HUD_H, pitY < PLAY_Y1 ? pitY : PLAY_Y1, ts, bs);
   paintShaftWall(0, HUD_H, PLAY_Y1);
   paintShaftWall(1, HUD_H, PLAY_Y1);
   // the head of the shaft and its bottom
@@ -6821,9 +6974,21 @@ static void drawShaftScene() {
     hazardBand(SHAFT_X0, SHAFT_X1 - 1, capY - 12, capY);
     fillCircle((SHAFT_X0 + SHAFT_X1) / 2, capY - 30, 9, rgb565(30, 32, 38));   // the pulley
   }
-  if (pitY <= PLAY_Y1) {
-    fillRect(SHAFT_X0, pitY, SHAFT_X1 - 1, PLAY_Y1, rgb565(14, 16, 20));
+  if (pitY <= PLAY_Y1) {                          // the pit: its floor, the buffers the car would land on
+    fillRect(SHAFT_X0, pitY, SHAFT_X1 - 1, PLAY_Y1, rgb565(30, 32, 38));
     hazardBand(SHAFT_X0 + 8, SHAFT_X1 - 9, pitY, pitY + 8);
+    int pf = pitY + 70;
+    if (pf < PLAY_Y1) {
+      fillRect(SHAFT_X0, pf, SHAFT_X1 - 1, PLAY_Y1, rgb565(44, 46, 52));
+      fillRect(SHAFT_X0, pf, SHAFT_X1 - 1, pf + 1, rgb565(70, 74, 82));
+      for (int b = 0; b < 2; b++) {
+        int bx = b ? SHAFT_X1 - 34 : SHAFT_X0 + 22;
+        fillRect(bx, pf - 30, bx + 12, pf, rgb565(200, 160, 40));
+        for (int k = 0; k < 4; k++) fillRect(bx - 1, pf - 28 + k * 7, bx + 13, pf - 27 + k * 7, rgb565(60, 60, 64));   // springs
+        fillRect(bx - 3, pf - 34, bx + 15, pf - 30, rgb565(30, 30, 34));
+      }
+      blendRect(SHAFT_X0 + 30, pf + 4, SHAFT_X1 - 30, pf + 8, 40, 60, 80, 0.5f);   // a puddle
+    }
   }
   for (int L = 0; L <= SUB_FLOOR; L++) {
     int fy = screenY(L);
@@ -6837,11 +7002,13 @@ static void drawShaftScene() {
       int room = roomOff(curShaft, L, side == 1);
       if (room < 0) continue;                      // no door: the wall carries on
       int x0 = side ? SHAFT_X1 : 0, x1 = side ? SCREEN_W - 1 : SHAFT_X0 - 1;
-      // the bay: dark behind, girders standing in it
-      fillRect(x0, cy, x1, fy + 32, rgb565(10, 13, 20));
+      // the bay: its back wall, girders standing in it
+      paintCatwalkBay(x0, x1, cy, fy, side, L);
       for (int gx = x0 + 150; gx < x1 - 40; gx += 230) {
-        fillRect(gx, cy, gx + 15, fy - 1, rgb565(30, 36, 48));
-        fillRect(gx, cy, gx + 2, fy - 1, rgb565(48, 56, 70));
+        fillRect(gx, cy, gx + 15, fy - 1, rgb565(46, 52, 64));
+        fillRect(gx, cy, gx + 2, fy - 1, rgb565(80, 88, 102));
+        fillRect(gx + 13, cy, gx + 15, fy - 1, rgb565(30, 34, 42));
+        for (int ry = cy + 20; ry < fy - 10; ry += 40) fillCircle(gx + 7, ry, 1, rgb565(110, 118, 132));
       }
       // catwalk deck and the truss under it
       fillRect(x0, fy, x1, fy + 13, deck);
