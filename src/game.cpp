@@ -42,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "091"
+#define GAME_VERSION      "092"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -371,6 +371,7 @@ static bool vossDoorOpen = false;           // his secret exit, open
 static float uplink = 0, upX = 0, upY = 0, upT = 0, upDoneT = -1, upDenyT = 0;
 static int vossRoomIdx() { return s2Room[5][0]; }
 static void paintLaunchBay();
+static void paintBayDecor();
 static void paintVossExit(float k);
 static void drawVossComp();
 static void updateVossComp(float dt);
@@ -5655,7 +5656,9 @@ static void paintDestructRoom() {
 }
 
 // ---- lift F: THE PROFESSOR's office. A world map screen, bookshelves, his desk, a globe
+static void paintBossDecor(bool front);
 static void paintBossRoom() {
+  paintBossDecor(false);
   fillRect(380, 128, 900, 180, rgb565(30, 24, 40));
   drawRectOutline(380, 128, 900, 180, rgb565(200, 170, 80), 3);
   drawVectorText("DR. VOSS", 640, 154, 3.4f, rgb565(230, 200, 110), true);
@@ -5697,6 +5700,123 @@ static void paintBossRoom() {
   fillCircle(1153, ROOM_FLOOR_Y - 150, 40, rgb565(50, 110, 180));
   fillCircle(1140, ROOM_FLOOR_Y - 162, 14, rgb565(70, 150, 80));
   fillCircle(1166, ROOM_FLOOR_Y - 136, 10, rgb565(70, 150, 80));
+  paintBossDecor(true);
+}
+static void bossFrame(int x0, int y0, int x1, int y1) {                     // a gilt picture frame, its shadow on the wall
+  blendRect(x0 + 4, y0 + 5, x1 + 5, y1 + 6, 0, 0, 0, 0.14f);
+  fillRect(x0, y0, x1, y1, rgb565(170, 130, 50));
+  fillRect(x0, y0, x1, y0 + 1, rgb565(230, 196, 110));
+  fillRect(x0, y0, x0 + 1, y1, rgb565(220, 186, 100));
+  fillRect(x0, y1 - 1, x1, y1, rgb565(110, 80, 30));
+}
+static void paintBossDecor(bool front) {
+  const int F = ROOM_FLOOR_Y;
+  if (!front) {                                                              // walnut panelling along the bottom of the walls, a rug
+    fillRect(14, F - 132, 1205, F - 1, rgb565(78, 48, 28));
+    for (int x = 22; x < 1190; x += 112) bevelPanel(x, F - 118, x + 100, F - 18, 70, 42, 24);
+    fillRect(14, F - 138, 1205, F - 131, rgb565(118, 78, 44));             // the dado rail
+    fillRect(14, F - 138, 1205, F - 138, rgb565(160, 112, 66));
+    fillRect(14, F - 12, 1205, F - 1, rgb565(52, 32, 18));                 // the skirting
+    for (int x = 60; x < 1200; x += 300) {                                   // brass wall lights over the panelling
+      fillRect(x - 3, F - 168, x + 3, F - 150, rgb565(170, 130, 50));
+      int lx[4] = { x - 12, x + 12, x + 7, x - 7 }, ly[4] = { F - 168, F - 168, F - 184, F - 184 };
+      fillPolygon(lx, ly, 4, rgb565(246, 226, 180));
+      glowDisc((float)x, F - 180.0f, 46, 255, 220, 150, 0.22f);
+    }
+    // over the bookshelves: two diplomas and his portrait
+    for (int d = 0; d < 2; d++) {
+      int x0 = d ? 266 : 74, x1 = x0 + 74, y0 = 262, y1 = 322;
+      bossFrame(x0, y0, x1, y1);
+      fillRect(x0 + 5, y0 + 5, x1 - 5, y1 - 5, rgb565(240, 232, 206));
+      fillRect(x0 + 14, y0 + 12, x1 - 14, y0 + 14, rgb565(60, 50, 40));
+      for (int l = 0; l < 3; l++) fillRect(x0 + 12, y0 + 22 + l * 7, x1 - 12 - (l * 9) % 20, y0 + 22 + l * 7, rgb565(140, 130, 110));
+      fillCircle(x1 - 16, y1 - 14, 6, rgb565(190, 40, 40));
+    }
+    bossFrame(166, 226, 252, 346);                                          // him, in oils
+    fillRect(172, 232, 246, 340, rgb565(40, 30, 34));
+    for (int y = 232; y < 340; y += 6) blendRect(172, y, 246, y + 3, 90, 60, 50, 0.08f);
+    fillRect(186, 304, 232, 340, rgb565(24, 24, 30));                       // his coat
+    fillRect(204, 306, 214, 318, rgb565(230, 230, 236));
+    fillCircle(209, 284, 15, rgb565(230, 190, 160));                        // his face, the wild white hair
+    for (int k = 0; k < 7; k++) fillCircle(195 + k * 5, 270 + (k % 2) * 4, 7, rgb565(240, 240, 244));
+    fillRect(201, 282, 217, 284, rgb565(30, 30, 36));
+    // on the right: PROJECT EXODUS (the capsule, drawn out) and the clock
+    bossFrame(904, 218, 1104, 352);
+    fillRect(910, 224, 1098, 346, rgb565(30, 70, 140));
+    for (int x = 910; x < 1098; x += 12) fillRect(x, 224, x, 346, rgb565(50, 92, 160));
+    for (int y = 224; y < 346; y += 12) fillRect(910, y, 1098, y, rgb565(50, 92, 160));
+    uint16_t bw = rgb565(220, 236, 255);
+    int cx = 970, cy0 = 248, cy1 = 330;                                      // the capsule, in white lines
+    drawLine(cx, cy0, cx - 14, cy0 + 22, bw, false); drawLine(cx, cy0, cx + 14, cy0 + 22, bw, false);
+    drawRectOutline(cx - 14, cy0 + 22, cx + 14, cy1 - 10, bw, 1);
+    drawLine(cx - 14, cy1 - 24, cx - 26, cy1, bw, false); drawLine(cx + 14, cy1 - 24, cx + 26, cy1, bw, false);
+    drawLine(cx - 26, cy1, cx - 14, cy1 - 10, bw, false); drawLine(cx + 26, cy1, cx + 14, cy1 - 10, bw, false);
+    drawCircle(cx, cy0 + 36, 5, bw);
+    drawLine(cx - 30, cy0 + 40, cx - 14, cy0 + 40, bw, false);
+    drawTextLeft("PROJECT EXODUS", 1000, 240, 1.1f, bw, false);
+    drawTextLeft("ESCAPE CAPSULE", 1000, 262, 0.8f, bw, false);
+    for (int l = 0; l < 5; l++) fillRect(1000, 280 + l * 10, 1000 + 70 - (l * 23) % 40, 280 + l * 10, rgb565(150, 186, 230));
+    fillRect(1000, 334, 1090, 334, bw);
+    blendRect(1060, 300, 1098, 346, 255, 255, 255, 0.06f);
+    fillCircle(1152, 262, 30, rgb565(120, 84, 40));                         // the clock
+    fillCircle(1152, 262, 25, rgb565(244, 238, 222));
+    for (int h = 0; h < 12; h++) { float a = h * TWO_PI / 12; fillRect(1152 + (int)(cosf(a) * 20), 262 + (int)(sinf(a) * 20), 1153 + (int)(cosf(a) * 20), 263 + (int)(sinf(a) * 20), rgb565(40, 34, 30)); }
+    drawLineF(1152, 262, 1152, 246, rgb565(30, 26, 24), 2.0f);
+    drawLineF(1152, 262, 1164, 268, rgb565(30, 26, 24), 2.0f);
+    fillCircle(1152, 262, 2, rgb565(160, 30, 30));
+    // under the map: his armchair, a side table and lamp, the drinks cabinet
+    fillRect(360, F - 3, 1100, F - 1, rgb565(130, 30, 34));                // the rug
+    for (int x = 360; x < 1100; x += 6) fillRect(x, F - 4, x + 2, F - 4, rgb565(200, 160, 80));
+    solidBlock(372, F - 140, 392, F - 20, 120, 34, 36, 8);                  // the armchair: its back, seat, arms, legs
+    solidBlock(392, F - 66, 476, F - 30, 130, 38, 40, 8);
+    solidBlock(386, F - 92, 404, F - 30, 110, 30, 32, 6);
+    solidBlock(464, F - 92, 482, F - 30, 110, 30, 32, 6);
+    for (int b = 0; b < 6; b++) fillCircle(378 + (b % 2) * 8, F - 130 + (b / 2) * 30, 1, rgb565(70, 16, 18));
+    fillRect(392, F - 30, 398, F - 1, rgb565(50, 30, 18)); fillRect(470, F - 30, 476, F - 1, rgb565(50, 30, 18));
+    solidBlock(500, F - 70, 548, F - 62, 96, 60, 34, 6);                     // the side table, a lamp, a book
+    fillRect(520, F - 62, 526, F - 1, rgb565(80, 50, 28));
+    fillRect(508, F - 4, 540, F - 1, rgb565(80, 50, 28));
+    fillRect(521, F - 104, 525, F - 70, rgb565(170, 130, 50));
+    int sx[4] = { 506, 540, 532, 514 }, sy[4] = { F - 104, F - 104, F - 126, F - 126 };
+    fillPolygon(sx, sy, 4, rgb565(236, 214, 160));
+    glowDisc(523, F - 110.0f, 50, 255, 220, 150, 0.25f);
+    fillRect(504, F - 76, 520, F - 71, rgb565(40, 70, 120));
+    solidBlock(578, F - 120, 726, F - 1, 92, 56, 30, 10);                    // the drinks cabinet
+    for (int d = 0; d < 2; d++) {
+      int x0 = 586 + d * 70, x1 = x0 + 62;
+      bevelPanel(x0, F - 110, x1, F - 46, 60, 36, 20);
+      fillRect(x0 + 6, F - 104, x1 - 6, F - 52, rgb565(40, 46, 52));
+      for (int b = 0; b < 4; b++) {
+        static const uint16_t bc[4] = { rgb565(120, 60, 20), rgb565(40, 90, 50), rgb565(180, 140, 60), rgb565(120, 30, 40) };
+        int bx = x0 + 10 + b * 12;
+        fillRect(bx, F - 86, bx + 7, F - 54, bc[(b + d) % 4]);
+        fillRect(bx + 2, F - 94, bx + 5, F - 86, bc[(b + d) % 4]);
+      }
+      blendRect(x0 + 6, F - 104, x0 + 20, F - 52, 255, 255, 255, 0.10f);
+      bevelPanel(x0, F - 40, x1, F - 8, 60, 36, 20);
+      metalHandle(x0 + 26, F - 26, x0 + 36, F - 24);
+    }
+    fillRect(600, F - 150, 616, F - 122, rgb565(200, 150, 70));               // on top: a decanter and two glasses
+    fillCircle(608, F - 150, 4, rgb565(200, 150, 70));
+    fillRect(605, F - 162, 611, F - 152, rgb565(220, 220, 226));
+    blendRect(601, F - 148, 604, F - 124, 255, 255, 255, 0.4f);
+    for (int g = 0; g < 2; g++) { fillRect(640 + g * 22, F - 136, 652 + g * 22, F - 122, rgb565(200, 210, 220)); fillRect(642 + g * 22, F - 130, 650 + g * 22, F - 123, rgb565(190, 130, 60)); }
+    return;
+  }
+  // in front of the desk and the wall: his desk lamp, the red telephone, a plant
+  fillRect(1008, F - 84, 1034, F - 80, rgb565(170, 130, 50));               // the banker's lamp
+  fillRect(1019, F - 108, 1023, F - 84, rgb565(170, 130, 50));
+  fillRect(1002, F - 118, 1040, F - 108, rgb565(30, 110, 60));
+  fillRect(1002, F - 118, 1040, F - 117, rgb565(90, 180, 110));
+  glowDisc(1021, F - 98.0f, 40, 255, 230, 160, 0.3f);
+  fillRect(940, F - 90, 962, F - 80, rgb565(170, 30, 30));                   // the red telephone
+  fillRect(936, F - 96, 966, F - 91, rgb565(200, 40, 40));
+  fillCircle(951, F - 86, 3, rgb565(240, 230, 220));
+  solidBlock(1066, F - 44, 1104, F - 1, 150, 80, 50, 6);                     // a plant in its pot
+  for (int l = 0; l < 7; l++) {
+    float a = -2.6f + l * 0.35f;
+    drawLineF(1085, F - 44.0f, 1085 + cosf(a) * 46, F - 44 + sinf(a) * 60, rgb565(50 + l * 6, 130 + l * 5, 60), 5.0f);
+  }
 }
 
 // A stage 2 room: white walls, the duct and stripe along the top; then what is in it (the kitchen; the rest empty for now)
@@ -14700,6 +14820,99 @@ static const float bayFireOn = 1.5f, bayFireOff = 1.9f, bayFireWarn = 0.5f;
 #define BAY_CONSOLE_X 1160
 static float bayFirePhase(int i) { return fmodf(playT + i * 1.3f, bayFireOn + bayFireOff); }   // (0..on: burning)
 static bool bayFireBurning(int i) { return bayFirePhase(i) < bayFireOn; }
+static void bayDrum(int x, int y1, bool lying, int r, int g, int b) {   // a fuel drum, standing (or knocked over)
+  if (!lying) {
+    solidBlock(x - 22, y1 - 62, x + 22, y1 - 1, r, g, b, 6);
+    for (int k = 0; k < 2; k++) fillRect(x - 22, y1 - 46 + k * 28, x + 22, y1 - 44 + k * 28, rgb565(cl8(r - 30), cl8(g - 30), cl8(b - 30)));
+    fillRect(x - 8, y1 - 36, x + 8, y1 - 20, rgb565(230, 200, 40));
+    drawVectorText("!", (float)x, y1 - 28.0f, 1.0f, rgb565(20, 20, 20), true);
+  } else {
+    fillRect(x - 31, y1 - 44, x + 31, y1 - 1, rgb565(r, g, b));
+    fillCircle(x + 31, y1 - 22, 21, rgb565(cl8(r - 24), cl8(g - 24), cl8(b - 24)));
+    fillCircle(x + 31, y1 - 22, 14, rgb565(cl8(r - 50), cl8(g - 50), cl8(b - 50)));
+    for (int k = 0; k < 2; k++) fillRect(x - 15 + k * 30, y1 - 44, x - 13 + k * 30, y1 - 1, rgb565(cl8(r - 30), cl8(g - 30), cl8(b - 30)));
+  }
+}
+static void paintBayDecor() {
+  const int F = ROOM_FLOOR_Y;
+  // the roof: steel girders, a truss
+  fillRect(0, HUD_H, SCREEN_W - 1, HUD_H + 14, rgb565(50, 46, 44));
+  fillRect(0, CEIL_Y + 34, SCREEN_W - 1, CEIL_Y + 42, rgb565(50, 46, 44));
+  fillRect(0, CEIL_Y + 34, SCREEN_W - 1, CEIL_Y + 34, rgb565(84, 78, 74));
+  for (int x = 0; x < SCREEN_W; x += 60) {
+    drawLineF((float)x, HUD_H + 14.0f, x + 30.0f, CEIL_Y + 34.0f, rgb565(60, 56, 52), 4.0f);
+    drawLineF(x + 30.0f, CEIL_Y + 34.0f, x + 60.0f, HUD_H + 14.0f, rgb565(60, 56, 52), 4.0f);
+  }
+  // the fuel tanks by the door: LOX and RP-1, gauges, valves, their pipes up and along the wall
+  for (int t = 0; t < 2; t++) {
+    int x0 = 70 + t * 118, x1 = x0 + 96, cx = (x0 + x1) / 2, top = 340;
+    fillCircle(cx, top, 48, t ? rgb565(150, 70, 50) : rgb565(170, 176, 186));
+    solidBlock(x0, top, x1, F - 20, t ? 150 : 170, t ? 70 : 176, t ? 50 : 186, 0, false);
+    blendRect(x0 + 10, top - 30, x0 + 24, F - 24, 255, 255, 255, 0.10f);
+    blendRect(x1 - 26, top - 30, x1, F - 24, 0, 0, 0, 0.18f);
+    for (int k = 0; k < 3; k++) fillRect(x0, top + 60 + k * 100, x1, top + 64 + k * 100, rgb565(70, 64, 60));
+    drawVectorText(t ? "RP-1" : "LOX", (float)cx, top + 110.0f, 2.0f, t ? rgb565(250, 220, 180) : rgb565(30, 60, 110), true);
+    drawVectorText("FLAMMABLE", (float)cx, top + 134.0f, 0.8f, rgb565(40, 30, 20), false);
+    fillCircle(cx, top + 196, 13, rgb565(40, 40, 42));                       // its gauge, in the red
+    fillCircle(cx, top + 196, 10, rgb565(236, 232, 220));
+    fillRect(cx + 2, top + 188, cx + 10, top + 196, rgb565(220, 50, 40));
+    drawLineF((float)cx, top + 196.0f, cx + 8.0f, top + 190.0f, rgb565(20, 20, 20), 1.5f);
+    fillRect(x0 - 6, F - 20, x1 + 6, F - 1, rgb565(56, 52, 50));             // its cradle, hazard stripes
+    hazardBand(x0 - 6, x1 + 6, F - 12, F - 4);
+    fillRect(cx - 4, top - 80, cx + 4, top - 44, rgb565(110, 104, 98));       // its pipe, up to the wall's
+  }
+  for (int p = 0; p < 2; p++) {                                              // the pipes along the wall
+    int y = 252 + p * 18;
+    fillRect(14, y, 924, y + 10, rgb565(110, 104, 98));
+    fillRect(14, y, 924, y + 2, rgb565(160, 152, 146));
+    fillRect(14, y + 9, 924, y + 10, rgb565(60, 56, 54));
+    for (int x = 340; x < 920; x += 140) fillRect(x, y - 3, x + 6, y + 13, rgb565(80, 76, 72));
+  }
+  fillRect(118, 252, 126, 262, rgb565(110, 104, 98)); fillRect(236, 252, 244, 262, rgb565(110, 104, 98));
+  for (int v = 0; v < 2; v++) {                                              // valve wheels
+    int vx = v ? 800 : 380, vy = 257 + v * 18;
+    drawCircle(vx, vy, 12, rgb565(200, 40, 30)); drawCircle(vx, vy, 11, rgb565(200, 40, 30));
+    fillRect(vx - 11, vy, vx + 11, vy + 1, rgb565(200, 40, 30)); fillRect(vx, vy - 11, vx + 1, vy + 11, rgb565(200, 40, 30));
+  }
+  fillRect(568, 280, 578, F - 6, rgb565(100, 94, 88));                       // a drop to the deck (the burst line)
+  fillRect(560, 296, 586, 304, rgb565(70, 66, 62));
+  for (int k = 0; k < 5; k++) fillRect(576 + k * 2, 300 + k * 3, 580 + k * 2, 301 + k * 3, rgb565(90, 84, 70));   // torn
+  // warnings: over the pits
+  for (int w = 0; w < 2; w++) {
+    int cx = w ? 776 : 376, cy = 160;
+    int tx[3] = { cx, cx + 42, cx - 42 }, ty[3] = { cy - 38, cy + 34, cy + 34 };
+    fillPolygon(tx, ty, 3, rgb565(40, 34, 20));
+    int ix[3] = { cx, cx + 34, cx - 34 }, iy[3] = { cy - 28, cy + 29, cy + 29 };
+    fillPolygon(ix, iy, 3, rgb565(220, 180, 40));
+    drawVectorText("!", (float)cx, cy + 8.0f, 2.6f, rgb565(30, 24, 14), true);
+    drawVectorText(w ? "BLAST AREA" : "DANGER", (float)cx, cy + 50.0f, 1.2f, rgb565(200, 170, 60), true);
+    drawVectorText(w ? "KEEP CLEAR" : "FUEL LINES", (float)cx, cy + 66.0f, 1.0f, rgb565(170, 140, 60), false);
+    blendRect(cx - 44, cy - 40, cx + 44, cy + 74, 10, 8, 6, 0.25f + 0.15f * w);   // (scorched)
+  }
+  // the bay's status screen, cracked (its words: drawLaunchBayAnim)
+  solidBlock(640, 318, 820, 420, 56, 52, 50, 6);
+  fillRect(650, 328, 810, 410, rgb565(4, 10, 8));
+  drawLine(730, 328, 718, 368, rgb565(150, 160, 156), false); drawLine(718, 368, 742, 410, rgb565(150, 160, 156), false);
+  drawLine(718, 368, 676, 386, rgb565(150, 160, 156), false); drawLine(730, 328, 770, 352, rgb565(110, 120, 116), false);
+  // the service gantry beside the tube, its arm swung back
+  for (int s = 0; s < 2; s++) fillRect(846 + s * 50, 230, 852 + s * 50, F - 1, rgb565(90, 30, 24));
+  for (int y = 240; y < F; y += 40) {
+    fillRect(846, y, 902, y + 4, rgb565(90, 30, 24));
+    drawLineF(849, (float)y, 899, y + 40.0f, rgb565(80, 26, 20), 3.0f);
+  }
+  fillRect(902, 300, 924, 312, rgb565(90, 30, 24));
+  fillRect(840, 224, 908, 232, rgb565(110, 40, 30));
+  // a fire extinguisher, the deck's clutter: drums (one knocked over), a fallen panel
+  fillRect(694, 530, 712, 590, rgb565(200, 30, 30));
+  fillRect(698, 520, 708, 530, rgb565(40, 40, 40));
+  fillRect(696, 552, 710, 566, rgb565(240, 240, 240));
+  bayDrum(266, F, false, 40, 80, 130);
+  bayDrum(470, F, true, 160, 120, 40);
+  bayDrum(670, F, false, 150, 50, 40);
+  int fx[4] = { 860, 900, 916, 870 }, fy[4] = { F - 1, F - 1, F - 70, F - 74 };
+  fillPolygon(fx, fy, 4, rgb565(80, 76, 72));
+  for (int k = 0; k < 6; k++) fogDisc(300 + k * 150.0f, F - 20.0f, 60, 10, 8, 8, 0.25f);   // soot over the lot, low down
+}
 static void paintLaunchBay() {
   fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(34, 30, 30));            // scorched steel
   for (int x = 0; x < SCREEN_W; x += 128) {
@@ -14711,6 +14924,7 @@ static void paintLaunchBay() {
     float cx = 1060 - k * 70.0f, cy = 300 + (k * 53) % 260;
     fogDisc(cx, cy, 120.0f - k * 4, 6, 6, 6, 0.55f - k * 0.025f);
   }
+  paintBayDecor();
   // the launch tube, up through the roof, and the cradle (empty, still hot)
   fillRect(930, HUD_H, 1130, ROOM_FLOOR_Y - 40, rgb565(18, 16, 16));
   fillRect(924, HUD_H, 930, ROOM_FLOOR_Y - 40, rgb565(90, 84, 80));
@@ -14724,7 +14938,7 @@ static void paintLaunchBay() {
     fillRect(ax - 4, ROOM_FLOOR_Y - 120, ax + 4, ROOM_FLOOR_Y - 100, rgb565(255, 120, 40));
   }
   fillRect(940, ROOM_FLOOR_Y - 46, 1120, ROOM_FLOOR_Y - 40, rgb565(255, 140, 50));   // the pad, glowing
-  drawVectorText("LAUNCH BAY", 400, 150, 4.0f, rgb565(110, 60, 50), true);
+  drawVectorText("LAUNCH BAY", 600, 150, 4.0f, rgb565(110, 60, 50), true);
   // the console, the key in it (drawn while it's there: drawLaunchBayAnim)
   int cx = BAY_CONSOLE_X;
   int px[4] = { cx - 46, cx + 46, cx + 38, cx - 38 }, py[4] = { ROOM_FLOOR_Y - 96, ROOM_FLOOR_Y - 96, ROOM_FLOOR_Y - 124, ROOM_FLOOR_Y - 124 };
@@ -14761,6 +14975,49 @@ static void paintLaunchBay() {
   fillRect(SCREEN_W - 14, CEIL_Y, SCREEN_W - 1, ROOM_FLOOR_Y, rgb565(60, 56, 54));   // (no way on: the far wall)
 }
 static void drawLaunchBayAnim() {
+  for (int b = 0; b < 3; b++) {                                             // red beacons, turning
+    float x = 220.0f + b * 520, y = CEIL_Y + 52;
+    if (b == 2) x = 1190;
+    fillRect((int)x - 8, CEIL_Y + 42, (int)x + 8, CEIL_Y + 46, rgb565(60, 56, 52));
+    fillCircle((int)x, (int)y, 8, rgb565(160, 20, 16));
+    float a = clockT * 5 + b * 2.1f, c = cosf(a);
+    if (c > 0) {
+      glowDisc(x + sinf(a) * 220, y + 150, 110, 255, 40, 30, 0.14f * c);   // (its beam, sweeping the wall)
+      glowDisc(x, y, 30, 255, 60, 40, 0.6f * c);
+    }
+  }
+  {                                                                         // a broken lamp, hanging by its cable, swinging
+    float a = sinf(clockT * 1.3f) * 0.35f, ax = 330, ay = CEIL_Y + 42, L = 150;
+    float lx = ax + sinf(a) * L, ly = ay + cosf(a) * L;
+    drawLineF(ax, ay, lx, ly, rgb565(20, 20, 20), 2.0f);
+    int px[4] = { (int)lx - 14, (int)lx + 14, (int)lx + 8, (int)lx - 8 }, py[4] = { (int)ly + 14, (int)ly + 14, (int)ly, (int)ly };
+    fillPolygon(px, py, 4, rgb565(70, 66, 62));
+    bool on = fmodf(clockT * 7.3f, 5.0f) > 0.8f && fmodf(clockT * 3.1f, 2.0f) > 0.3f;
+    if (on) glowDisc(lx, ly + 16, 70, 255, 210, 140, 0.35f);
+    fillCircle((int)lx, (int)ly + 15, 4, on ? rgb565(255, 240, 200) : rgb565(80, 76, 60));
+  }
+  {                                                                         // a severed cable, sparking now and then
+    float x = 760, y = CEIL_Y + 120;
+    drawLineF(x, CEIL_Y + 42.0f, x - 10, y, rgb565(20, 20, 20), 3.0f);
+    if (fmodf(clockT, 2.6f) < 0.35f) {
+      for (int s = 0; s < 6; s++) fillCircle((int)(x - 10 + frnd(-14, 14)), (int)(y + frnd(0, 30)), 1, rgb565(255, 230, 140));
+      glowDisc(x - 10, y, 34, 200, 220, 255, 0.5f);
+      if (fmodf(clockT, 2.6f) < 0.03f) sfxPlay(SFX_ZAP);
+    }
+  }
+  for (int d = 0; d < 2; d++) {                                             // fuel dripping from the torn line
+    float t = fmodf(clockT * 0.9f + d * 0.5f, 1.0f);
+    fillRect(580, 306 + (int)(t * t * 360), 582, 310 + (int)(t * t * 360), rgb565(150, 130, 60));
+  }
+  {                                                                         // the status screen, flickering
+    bool on = fmodf(clockT * 5.7f, 3.0f) > 0.4f;
+    if (on) {
+      drawVectorText("CAPSULE", 730, 350, 1.6f, rgb565(255, 90, 70), false);
+      drawVectorText(fmodf(clockT, 1.0f) < 0.6f ? "LAUNCHED" : "", 730, 378, 1.6f, rgb565(255, 90, 70), true);
+      blendRect(650, 328, 810, 410, 60, 0, 0, 0.12f);
+    }
+    for (int y = 328 + (int)fmodf(clockT * 40, 82.0f), k = 0; k < 1; k++) fillRect(650, y, 810, y + 1, rgb565(40, 60, 50));
+  }
   for (int k = 0; k < 9; k++) {                                             // smoke, drifting up the tube and across
     float t = fmodf(clockT * 0.08f + k / 9.0f, 1.0f);
     float x = 1030 - 500 * t * ((k % 3) * 0.3f + 0.4f) + sinf(clockT * 0.6f + k) * 30, y = ROOM_FLOOR_Y - 80 - t * 420;
@@ -15080,19 +15337,19 @@ static void drawVossEscapeScene(float t) {                                 // Vo
   float x;
   int dir = 1;
   if (t < typeEnd) {                                                       // at the keyboard, typing
-    x = 760;
+    x = 792;
     p = PERSON_IDLE;
     p.armN = 70 + 12 * sinf(t * 9); p.elbowN = 50; p.armF = 60 + 10 * sinf(t * 9 + 1.5f); p.elbowF = 56;
     p.torso = 8; p.head = 6;
   } else if (t < doorEnd) {                                                // watching it open
-    x = 760;
+    x = 792;
     p = PERSON_IDLE;
     p.head = -4;
   } else if (t < walkEnd) {                                                // and away, to the capsule
-    x = 760 + (1340 - 760) * (t - doorEnd) / (walkEnd - doorEnd);
+    x = 792 + (1320 - 792) * (t - doorEnd) / (walkEnd - doorEnd);
     personWalk(p, t * 1.6f);
   } else { x = 2000; p = PERSON_IDLE; }
-  if (x < SCREEN_W + 60) drawPersonU(p, x, ROOM_FLOOR_Y, dir, AGENT_SCALE * 2, PK_PROFESSOR);
+  if (x < SCREEN_W + 60) drawPersonU(p, x, ROOM_FLOOR_Y, dir, AGENT_SCALE, PK_PROFESSOR);   // (his own size: through the door)
   if (x > 1212 && x < SCREEN_W + 60) paintVossExit(1.0f);                   // (the passage's edge, over him as he goes in)
   if (t > 4.2f && t < 4.4f) sfxPlay(SFX_DOORS);
   gfxClipAll();

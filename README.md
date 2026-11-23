@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 091: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 092: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -876,8 +876,11 @@ landed) or **YOU HAVE DONE THE BEST YOU COULD** (some did), and you carry on.
 (If none were destroyed and they all land, the game goes on: NO MISSILES LEFT.)
 
 **Lift F: DR. VOSS** (the Professor) - the end. His office (DR. VOSS on the
-sign): a world map screen, bookshelves, a globe and his desk with a
-dual-monitor computer. He can't be killed - he gets away, and you have to stop
+sign): a world map screen, walnut panelling with brass wall lights,
+bookshelves under two framed diplomas and his portrait, a red leather armchair
+and reading lamp, a drinks cabinet (a decanter, two glasses), the PROJECT
+EXODUS blueprint of his escape capsule, a wall clock, a globe, a plant and his
+desk with a dual-monitor computer, a banker's lamp and a red telephone. He can't be killed - he gets away, and you have to stop
 him.
 
 **Dr. Voss's escape.** Halfway along lift F's walkway towards his office, two
@@ -885,7 +888,7 @@ him.
 by the lift - PLASMA BARRIERS - YOU'RE TRAPPED! Then the cut scenes:
 **MEANWHILE, IN DR. VOSS'S OFFICE...** - him at his computer (SECRET EXIT
 OPEN), a hidden door opening on the right of his office, him walking out
-through it - then **DR. VOSS'S ESCAPE CAPSULE HAS LAUNCHED** (the silo doors,
+through it (his own size now) - then **DR. VOSS'S ESCAPE CAPSULE HAS LAUNCHED** (the silo doors,
 the smoke, the capsule climbing): OUT OF RANGE IN 5:00 - STOP IT! The barriers
 go, and the top bar shows **CAPSULE OUT OF RANGE m:ss** beside the nuclear
 clock (which never stops - it can all happen before the missiles are dealt
@@ -895,8 +898,13 @@ with).
 altitude, range and time left. SELF DESTRUCT needs his authentication key:
 AUTHENTICATION KEY REQUIRED - ITS KEY: ON THE LAUNCH CONSOLE.
 
-**The launch bay**, through the secret door (LAUNCH BAY): dark and smoky, three
-platforms over two pits, each with a burning exhaust jet that comes and goes
+**The launch bay**, through the secret door (LAUNCH BAY): dark and smoky, a
+steel truss roof with turning red beacons, a broken lamp swinging on its cable
+(flickering), a severed cable sparking, the LOX and RP-1 tanks, fuel pipes with
+valve wheels (one torn, dripping), scorched DANGER and BLAST AREA signs, the
+cracked status screen (CAPSULE LAUNCHED), the red service gantry, drums (one
+knocked over), a fire extinguisher and a fallen panel - three platforms over
+two pits, each with a burning exhaust jet that comes and goes
 (on 1.5s, off 1.9s) - walk into one and it burns (10 health) and throws you
 back to the door. At the far end the **LAUNCH CONTROL** console: SQUARE: TAKE
 THE KEY (+2000).
