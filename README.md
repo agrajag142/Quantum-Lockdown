@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 089: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 090: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -875,11 +875,44 @@ When the last missile is dealt with and at least one was destroyed:
 landed) or **YOU HAVE DONE THE BEST YOU COULD** (some did), and you carry on.
 (If none were destroyed and they all land, the game goes on: NO MISSILES LEFT.)
 
-**Lift F: DR. VOSS** (the Professor) - the end. His office (DR. VOSS on the sign) (a world map screen,
-bookshelves, his desk, a globe) and him: a black coat, wild white hair,
-glasses, twice the size, walking back and forth, no weapon for now. Kill him
-(DR. VOSS IS DEAD) and the game ends: MISSION COMPLETE, with how many
-missiles landed and the dead, and the end of game bonus.
+**Lift F: DR. VOSS** (the Professor) - the end. His office (DR. VOSS on the
+sign): a world map screen, bookshelves, a globe and his desk with a
+dual-monitor computer. He can't be killed - he gets away, and you have to stop
+him.
+
+**Dr. Voss's escape.** Halfway along lift F's walkway towards his office, two
+**plasma barriers** (top to bottom) come down: one by his door, one behind you
+by the lift - PLASMA BARRIERS - YOU'RE TRAPPED! Then the cut scenes:
+**MEANWHILE, IN DR. VOSS'S OFFICE...** - him at his computer (SECRET EXIT
+OPEN), a hidden door opening on the right of his office, him walking out
+through it - then **DR. VOSS'S ESCAPE CAPSULE HAS LAUNCHED** (the silo doors,
+the smoke, the capsule climbing): OUT OF RANGE IN 5:00 - STOP IT! The barriers
+go, and the top bar shows **CAPSULE OUT OF RANGE m:ss** beside the nuclear
+clock (which never stops - it can all happen before the missiles are dealt
+with).
+
+**His computer** (SQUARE: USE HIS COMPUTER): ESCAPE CAPSULE - IN FLIGHT, its
+altitude, range and time left. SELF DESTRUCT needs his authentication key:
+AUTHENTICATION KEY REQUIRED - ITS KEY: ON THE LAUNCH CONSOLE.
+
+**The launch bay**, through the secret door (LAUNCH BAY): dark and smoky, three
+platforms over two pits, each with a burning exhaust jet that comes and goes
+(on 1.5s, off 1.9s) - walk into one and it burns (10 health) and throws you
+back to the door. At the far end the **LAUNCH CONTROL** console: SQUARE: TAKE
+THE KEY (+2000).
+
+**The uplink.** Back at his computer with the key, SELF DESTRUCT: **UPLINK -
+KEEP THE CAPSULE IN THE SIGHTS**. The capsule wanders around the scope; steer
+the sights onto it with the D-pad. LOCKED ON fills the uplink, NO LOCK drains
+it; at 100%: UPLINK ESTABLISHED - SELF DESTRUCT SENT.
+
+**The endings.** The capsule blows apart high over the hills - THE ESCAPE
+CAPSULE IS DESTROYED / DR. VOSS IS DEAD (+20000) - and the game ends: MISSION
+COMPLETE (or MISSION SUCCESS with no missiles landed). Or the 5 minutes run
+out: the capsule ejects him and he drifts off under his parachute - CAPSULE
+OUT OF RANGE / DR. VOSS HAS ESCAPED - and the game ends: **MISSION
+INCOMPLETE - DR. VOSS HAS ESCAPED**. Either way: the missiles that landed,
+the dead, and the end of game bonus.
 
 **The panel** in stage 2: LIFT A..F and the level; ROOMS (of 21), ACCESS
 CARD, DISGUISE, FIRST AID LEFT, SCORE. The mini map and the Options map show
@@ -928,7 +961,7 @@ its dead appearing one by one, then the **TOTAL DEAD** - PRESS X - then the
 usual bonus and score page over the burning city, and X again to the high
 scores. Dying in stage 1 is all 5 cities; in stage 2, every missile not
 stopped or destroyed (launched or not, landed or not) is on the list. If none
-landed: green hills (with **Dr. Voss dead**, **MISSION SUCCESS**; out of
+landed: green hills (with **Dr. Voss dead**, **MISSION SUCCESS**; escaped, MISSION INCOMPLETE; out of
 health, GAME OVER - with NO NUCLEAR MISSILES LANDED under it) - a
 forest, a meadow of flowers swaying, clouds drifting and birds flying across
 (NO NUCLEAR MISSILES LANDED - THE WORLD IS SAFE), with the bonus and score.
