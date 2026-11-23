@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 090: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 091: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -903,8 +903,11 @@ THE KEY (+2000).
 
 **The uplink.** Back at his computer with the key, SELF DESTRUCT: **UPLINK -
 KEEP THE CAPSULE IN THE SIGHTS**. The capsule wanders around the scope; steer
-the sights onto it with the D-pad. LOCKED ON fills the uplink, NO LOCK drains
-it; at 100%: UPLINK ESTABLISHED - SELF DESTRUCT SENT.
+the sights onto it with the D-pad (a tap nudges them, holding speeds them up).
+The capsule drifts slowly, a little faster as it gets away; once LOCKED ON
+the sights pull gently towards it. LOCKED ON fills the uplink (about 7
+seconds held), NO LOCK drains it slowly; at 100%: UPLINK ESTABLISHED - SELF
+DESTRUCT SENT.
 
 **The endings.** The capsule blows apart high over the hills - THE ESCAPE
 CAPSULE IS DESTROYED / DR. VOSS IS DEAD (+20000) - and the game ends: MISSION

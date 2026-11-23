@@ -42,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "090"
+#define GAME_VERSION      "091"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -14841,8 +14841,9 @@ static void useVossComp() {
 #define UP_SCOPE_X 470
 #define UP_SCOPE_Y 340
 #define UP_SCOPE_R 190
+#define UP_LOCK_R  44
 static void upBlip(float *bx, float *by) {                                // the capsule on the scope: drifting, harder the further it gets
-  float hard = 1 + 1.3f * (1 - capLeft / CAP_SECONDS), t = upT * hard;
+  float hard = 1 + 0.6f * (1 - capLeft / CAP_SECONDS), t = upT * 0.6f * hard;
   *bx = UP_SCOPE_X + UP_SCOPE_R * (0.5f * sinf(t * 0.73f + 1.1f) + 0.22f * sinf(t * 1.91f));
   *by = UP_SCOPE_Y + UP_SCOPE_R * (0.45f * sinf(t * 0.61f) + 0.24f * cosf(t * 1.57f + 0.4f));
 }
@@ -14865,18 +14866,22 @@ static void updateVossComp(float dt) {
   }
   if (termPage == 1) {                                                     // tracking it
     upT += dt;
-    const float sp = 330;
-    if (held & BTN_LEFT) upX -= sp * dt;
-    if (held & BTN_RIGHT) upX += sp * dt;
-    if (held & BTN_UP) upY -= sp * dt;
-    if (held & BTN_DOWN) upY += sp * dt;
+    static float hx = 0, hy = 0;                                           // (held a while: faster; a tap: a nudge)
+    hx = (held & (BTN_LEFT | BTN_RIGHT)) ? hx + dt : 0;
+    hy = (held & (BTN_UP | BTN_DOWN)) ? hy + dt : 0;
+    float spx = 110 + 190 * fminf(1.0f, hx / 0.35f), spy = 110 + 190 * fminf(1.0f, hy / 0.35f);
+    if (held & BTN_LEFT) upX -= spx * dt;
+    if (held & BTN_RIGHT) upX += spx * dt;
+    if (held & BTN_UP) upY -= spy * dt;
+    if (held & BTN_DOWN) upY += spy * dt;
     float dx = upX - UP_SCOPE_X, dy = upY - UP_SCOPE_Y, d = sqrtf(dx * dx + dy * dy);
     if (d > UP_SCOPE_R) { upX = UP_SCOPE_X + dx / d * UP_SCOPE_R; upY = UP_SCOPE_Y + dy / d * UP_SCOPE_R; }
     float bx, by;
     upBlip(&bx, &by);
-    bool lock = (upX - bx) * (upX - bx) + (upY - by) * (upY - by) < 28 * 28;
+    bool lock = (upX - bx) * (upX - bx) + (upY - by) * (upY - by) < UP_LOCK_R * UP_LOCK_R;
+    if (lock) { upX += (bx - upX) * 1.5f * dt; upY += (by - upY) * 1.5f * dt; }   // (locked on: the sights help a little)
     float before = uplink;
-    uplink = clampv(uplink + (lock ? 11.0f : -6.0f) * dt, 0.0f, 100.0f);
+    uplink = clampv(uplink + (lock ? 14.0f : -3.0f) * dt, 0.0f, 100.0f);
     if (lock && (int)(before / 10) != (int)(uplink / 10)) sfxPlay(SFX_BEEP);
     if (uplink >= 100) { termPage = 2; termT = 0; sfxPlay(SFX_KLAXON); }
     if ((pressed & BTN_USE) && termT > 0.5f) { termPage = 0; termT = 0.3f; sfxPlay(SFX_KEY); }   // (Square: back)
@@ -14945,15 +14950,15 @@ static void drawVossComp() {
     fillRect(sx, sy - r, sx, sy + r, rgb565(16, 60, 30));
     float bx, by;
     upBlip(&bx, &by);
-    bool lock = (upX - bx) * (upX - bx) + (upY - by) * (upY - by) < 28 * 28;
+    bool lock = (upX - bx) * (upX - bx) + (upY - by) * (upY - by) < UP_LOCK_R * UP_LOCK_R;
     glowDisc(bx, by, 16, 255, 220, 80, 0.5f);
     fillCircle((int)bx, (int)by, 5, amber);                                 // the capsule
     uint16_t cc = lock ? g : red;                                           // the sights
-    drawRectOutline((int)upX - 28, (int)upY - 28, (int)upX + 28, (int)upY + 28, cc, 2);
-    fillRect((int)upX - 40, (int)upY, (int)upX - 30, (int)upY + 1, cc);
-    fillRect((int)upX + 30, (int)upY, (int)upX + 40, (int)upY + 1, cc);
-    fillRect((int)upX, (int)upY - 40, (int)upX + 1, (int)upY - 30, cc);
-    fillRect((int)upX, (int)upY + 30, (int)upX + 1, (int)upY + 40, cc);
+    drawRectOutline((int)upX - 36, (int)upY - 36, (int)upX + 36, (int)upY + 36, cc, 2);
+    fillRect((int)upX - 50, (int)upY, (int)upX - 38, (int)upY + 1, cc);
+    fillRect((int)upX + 38, (int)upY, (int)upX + 50, (int)upY + 1, cc);
+    fillRect((int)upX, (int)upY - 50, (int)upX + 1, (int)upY - 38, cc);
+    fillRect((int)upX, (int)upY + 38, (int)upX + 1, (int)upY + 50, cc);
     int px = TX0 + 720, py = TY0 + 110;
     drawTextLeft(lock ? "LOCKED ON" : "NO LOCK", px, py, 2.4f, lock ? g : red, true);
     snprintf(b, sizeof(b), "UPLINK %d%%", (int)uplink);
