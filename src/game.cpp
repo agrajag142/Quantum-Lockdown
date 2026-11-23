@@ -42,7 +42,7 @@
 #include <string.h>
 
 // ============================================================ settings
-#define GAME_VERSION      "092"
+#define GAME_VERSION      "093"
 #define COLS              9        // columns of rooms across...
 #define ROWS              6        // ...rows down...
 #define ROOM_COUNT        30       // ...and the rooms in them
@@ -360,7 +360,9 @@ static uint8_t arHaz[S2_ROOMS];               // (lift D's top-down rooms: how m
 #define ESC_TRIGGER_X 990                   // (lift F's walkway: half way along)
 #define ESC_BEAM_L    772                   // the barriers: behind him (by the lift), and before the door
 #define ESC_BEAM_R    1206
-#define VE_SECONDS    12.5f                 // the cut scenes: Voss leaving...
+#define VE_SECONDS    19.8f                 // the cut scenes: Voss leaving (his office, then the bay: boarding)...
+#define VE_BAY        10.2f                 // (...the bay, from here)
+static bool veBayPainted = false;
 #define CL_SECONDS    10.0f                 // ...the capsule launching...
 #define CB_SECONDS    7.5f                  // ...destroyed / escaping
 #define CAP_SCORE     20000
@@ -370,8 +372,9 @@ static bool capKey = false;                 // the authentication key (from the 
 static bool vossDoorOpen = false;           // his secret exit, open
 static float uplink = 0, upX = 0, upY = 0, upT = 0, upDoneT = -1, upDenyT = 0;
 static int vossRoomIdx() { return s2Room[5][0]; }
-static void paintLaunchBay();
-static void paintBayDecor();
+static void paintLaunchBay(bool intact = false);
+static void paintBayDecor(bool intact);
+static void drawCapsuleShape(float x, float y, float s, float flame);
 static void paintVossExit(float k);
 static void drawVossComp();
 static void updateVossComp(float dt);
@@ -14833,7 +14836,7 @@ static void bayDrum(int x, int y1, bool lying, int r, int g, int b) {   // a fue
     for (int k = 0; k < 2; k++) fillRect(x - 15 + k * 30, y1 - 44, x - 13 + k * 30, y1 - 1, rgb565(cl8(r - 30), cl8(g - 30), cl8(b - 30)));
   }
 }
-static void paintBayDecor() {
+static void paintBayDecor(bool intact) {
   const int F = ROOM_FLOOR_Y;
   // the roof: steel girders, a truss
   fillRect(0, HUD_H, SCREEN_W - 1, HUD_H + 14, rgb565(50, 46, 44));
@@ -14876,7 +14879,7 @@ static void paintBayDecor() {
   }
   fillRect(568, 280, 578, F - 6, rgb565(100, 94, 88));                       // a drop to the deck (the burst line)
   fillRect(560, 296, 586, 304, rgb565(70, 66, 62));
-  for (int k = 0; k < 5; k++) fillRect(576 + k * 2, 300 + k * 3, 580 + k * 2, 301 + k * 3, rgb565(90, 84, 70));   // torn
+  if (!intact) for (int k = 0; k < 5; k++) fillRect(576 + k * 2, 300 + k * 3, 580 + k * 2, 301 + k * 3, rgb565(90, 84, 70));   // torn
   // warnings: over the pits
   for (int w = 0; w < 2; w++) {
     int cx = w ? 776 : 376, cy = 160;
@@ -14887,13 +14890,15 @@ static void paintBayDecor() {
     drawVectorText("!", (float)cx, cy + 8.0f, 2.6f, rgb565(30, 24, 14), true);
     drawVectorText(w ? "BLAST AREA" : "DANGER", (float)cx, cy + 50.0f, 1.2f, rgb565(200, 170, 60), true);
     drawVectorText(w ? "KEEP CLEAR" : "FUEL LINES", (float)cx, cy + 66.0f, 1.0f, rgb565(170, 140, 60), false);
-    blendRect(cx - 44, cy - 40, cx + 44, cy + 74, 10, 8, 6, 0.25f + 0.15f * w);   // (scorched)
+    if (!intact) blendRect(cx - 44, cy - 40, cx + 44, cy + 74, 10, 8, 6, 0.25f + 0.15f * w);   // (scorched)
   }
   // the bay's status screen, cracked (its words: drawLaunchBayAnim)
   solidBlock(640, 318, 820, 420, 56, 52, 50, 6);
   fillRect(650, 328, 810, 410, rgb565(4, 10, 8));
-  drawLine(730, 328, 718, 368, rgb565(150, 160, 156), false); drawLine(718, 368, 742, 410, rgb565(150, 160, 156), false);
-  drawLine(718, 368, 676, 386, rgb565(150, 160, 156), false); drawLine(730, 328, 770, 352, rgb565(110, 120, 116), false);
+  if (!intact) {
+    drawLine(730, 328, 718, 368, rgb565(150, 160, 156), false); drawLine(718, 368, 742, 410, rgb565(150, 160, 156), false);
+    drawLine(718, 368, 676, 386, rgb565(150, 160, 156), false); drawLine(730, 328, 770, 352, rgb565(110, 120, 116), false);
+  }
   // the service gantry beside the tube, its arm swung back
   for (int s = 0; s < 2; s++) fillRect(846 + s * 50, 230, 852 + s * 50, F - 1, rgb565(90, 30, 24));
   for (int y = 240; y < F; y += 40) {
@@ -14907,37 +14912,61 @@ static void paintBayDecor() {
   fillRect(698, 520, 708, 530, rgb565(40, 40, 40));
   fillRect(696, 552, 710, 566, rgb565(240, 240, 240));
   bayDrum(266, F, false, 40, 80, 130);
-  bayDrum(470, F, true, 160, 120, 40);
   bayDrum(670, F, false, 150, 50, 40);
+  if (intact) { bayDrum(470, F, false, 160, 120, 40); return; }               // (before the launch: tidy, clean)
+  bayDrum(470, F, true, 160, 120, 40);
   int fx[4] = { 860, 900, 916, 870 }, fy[4] = { F - 1, F - 1, F - 70, F - 74 };
   fillPolygon(fx, fy, 4, rgb565(80, 76, 72));
   for (int k = 0; k < 6; k++) fogDisc(300 + k * 150.0f, F - 20.0f, 60, 10, 8, 8, 0.25f);   // soot over the lot, low down
 }
-static void paintLaunchBay() {
-  fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, rgb565(34, 30, 30));            // scorched steel
+#define CAP_BAY_X  1030                     // the capsule in its cradle (before the launch: the cut scene)
+#define CAP_BAY_S  4.2f
+#define CAP_BAY_Y  (ROOM_FLOOR_Y - 6 - 40 * CAP_BAY_S)
+#define CAP_HATCH_X0 1006
+#define CAP_HATCH_X1 1054
+#define CAP_HATCH_Y0 (ROOM_FLOOR_Y - 162)
+static void paintLaunchBay(bool intact) {
+  fillRect(0, HUD_H, SCREEN_W - 1, PLAY_Y1, intact ? rgb565(52, 54, 58) : rgb565(34, 30, 30));   // steel (scorched, after)
   for (int x = 0; x < SCREEN_W; x += 128) {
     fillRect(x, HUD_H, x + 2, ROOM_FLOOR_Y, rgb565(22, 20, 20));
     fillRect(x + 3, HUD_H, x + 3, ROOM_FLOOR_Y, rgb565(56, 50, 48));
   }
   for (int y = CEIL_Y + 40; y < ROOM_FLOOR_Y; y += 96) fillRect(0, y, SCREEN_W - 1, y + 1, rgb565(22, 20, 20));
-  for (int k = 0; k < 14; k++) {                                            // soot, blown out from the launch
+  for (int k = 0; k < 14 && !intact; k++) {                                // soot, blown out from the launch
     float cx = 1060 - k * 70.0f, cy = 300 + (k * 53) % 260;
     fogDisc(cx, cy, 120.0f - k * 4, 6, 6, 6, 0.55f - k * 0.025f);
   }
-  paintBayDecor();
+  paintBayDecor(intact);
   // the launch tube, up through the roof, and the cradle (empty, still hot)
-  fillRect(930, HUD_H, 1130, ROOM_FLOOR_Y - 40, rgb565(18, 16, 16));
+  fillRect(930, HUD_H, 1130, ROOM_FLOOR_Y - 40, intact ? rgb565(34, 36, 42) : rgb565(18, 16, 16));
   fillRect(924, HUD_H, 930, ROOM_FLOOR_Y - 40, rgb565(90, 84, 80));
   fillRect(1130, HUD_H, 1136, ROOM_FLOOR_Y - 40, rgb565(90, 84, 80));
   for (int y = HUD_H + 20; y < ROOM_FLOOR_Y - 40; y += 70) { fillRect(930, y, 1130, y + 3, rgb565(60, 54, 50)); }
-  glowDisc(1030, ROOM_FLOOR_Y - 60.0f, 160, 255, 100, 40, 0.25f);
-  for (int s = 0; s < 2; s++) {                                             // the cradle's arms, swung open
-    int ax = s ? 1110 : 950;
-    fillRect(ax - 6, ROOM_FLOOR_Y - 180, ax + 6, ROOM_FLOOR_Y - 40, rgb565(70, 64, 60));
-    drawLineF((float)ax, ROOM_FLOOR_Y - 170.0f, ax + (s ? 40.0f : -40.0f), ROOM_FLOOR_Y - 200.0f, rgb565(70, 64, 60), 6.0f);
-    fillRect(ax - 4, ROOM_FLOOR_Y - 120, ax + 4, ROOM_FLOOR_Y - 100, rgb565(255, 120, 40));
+  if (intact) {                                                             // the capsule, on its pad, the cradle's arms holding it
+    for (int y = HUD_H + 60; y < ROOM_FLOOR_Y - 60; y += 140) glowDisc(1030, (float)y, 60, 200, 220, 255, 0.10f);
+    fillRect(940, ROOM_FLOOR_Y - 46, 1120, ROOM_FLOOR_Y - 40, rgb565(90, 94, 100));
+    drawCapsuleShape(CAP_BAY_X, CAP_BAY_Y, CAP_BAY_S, 0);
+    blendRect(CAP_BAY_X + 30, (int)(CAP_BAY_Y - 20 * CAP_BAY_S), CAP_BAY_X + 76, ROOM_FLOOR_Y - 6, 0, 0, 0, 0.12f);   // (round: shaded on the right)
+    drawTextLeft("V-1", CAP_BAY_X - 64, (int)(CAP_BAY_Y - 6 * CAP_BAY_S), 1.6f, rgb565(40, 44, 52), true);
+    fillRect(CAP_HATCH_X0 - 4, CAP_HATCH_Y0 - 4, CAP_HATCH_X1 + 4, ROOM_FLOOR_Y - 6, rgb565(150, 154, 162));   // the hatch's frame
+    fillRect(CAP_HATCH_X0, CAP_HATCH_Y0, CAP_HATCH_X1, ROOM_FLOOR_Y - 6, rgb565(14, 16, 20));                    // (inside: the hatch itself, drawn over it)
+    for (int s = 0; s < 2; s++) {
+      int ax = s ? 1112 : 948;
+      fillRect(ax - 6, ROOM_FLOOR_Y - 220, ax + 6, ROOM_FLOOR_Y - 40, rgb565(70, 74, 80));
+      fillRect(s ? ax - 14 : ax + 6, ROOM_FLOOR_Y - 200, s ? ax - 6 : ax + 14, ROOM_FLOOR_Y - 180, rgb565(70, 74, 80));   // its clamps
+      fillRect(s ? ax - 14 : ax + 6, ROOM_FLOOR_Y - 120, s ? ax - 6 : ax + 14, ROOM_FLOOR_Y - 100, rgb565(70, 74, 80));
+      fillRect(ax - 4, ROOM_FLOOR_Y - 150, ax + 4, ROOM_FLOOR_Y - 140, rgb565(80, 200, 120));
+    }
+  } else {
+    glowDisc(1030, ROOM_FLOOR_Y - 60.0f, 160, 255, 100, 40, 0.25f);
+    for (int s = 0; s < 2; s++) {                                           // the cradle's arms, swung open
+      int ax = s ? 1110 : 950;
+      fillRect(ax - 6, ROOM_FLOOR_Y - 180, ax + 6, ROOM_FLOOR_Y - 40, rgb565(70, 64, 60));
+      drawLineF((float)ax, ROOM_FLOOR_Y - 170.0f, ax + (s ? 40.0f : -40.0f), ROOM_FLOOR_Y - 200.0f, rgb565(70, 64, 60), 6.0f);
+      fillRect(ax - 4, ROOM_FLOOR_Y - 120, ax + 4, ROOM_FLOOR_Y - 100, rgb565(255, 120, 40));
+    }
+    fillRect(940, ROOM_FLOOR_Y - 46, 1120, ROOM_FLOOR_Y - 40, rgb565(255, 140, 50));   // the pad, glowing
   }
-  fillRect(940, ROOM_FLOOR_Y - 46, 1120, ROOM_FLOOR_Y - 40, rgb565(255, 140, 50));   // the pad, glowing
   drawVectorText("LAUNCH BAY", 600, 150, 4.0f, rgb565(110, 60, 50), true);
   // the console, the key in it (drawn while it's there: drawLaunchBayAnim)
   int cx = BAY_CONSOLE_X;
@@ -14949,14 +14978,15 @@ static void paintLaunchBay() {
   for (int k = 0; k < 6; k++) fillRect(cx + 4 + (k % 3) * 10, ROOM_FLOOR_Y - 118 + (k / 3) * 8, cx + 10 + (k % 3) * 10, ROOM_FLOOR_Y - 113 + (k / 3) * 8, k == 4 ? rgb565(220, 60, 40) : rgb565(150, 150, 150));
   drawVectorText("LAUNCH CONTROL", (float)cx, ROOM_FLOOR_Y - 70.0f, 0.9f, rgb565(200, 180, 160), false);
   // the walkway: grating, its broken ends, and the fuel lines
-  for (int i = 0; i < platCount; i++) {
-    const Plat &pl = plats[i];
+  Plat whole = { 0, SCREEN_W, ROOM_FLOOR_Y };
+  for (int i = 0; i < (intact ? 1 : platCount); i++) {
+    const Plat &pl = intact ? whole : plats[i];
     fillRect(pl.x0, ROOM_FLOOR_Y, pl.x1 - 1, ROOM_FLOOR_Y + 16, rgb565(70, 66, 64));
     for (int x = pl.x0; x < pl.x1; x += 8) fillRect(x, ROOM_FLOOR_Y + 3, x + 1, ROOM_FLOOR_Y + 13, rgb565(40, 38, 36));
     fillRect(pl.x0, ROOM_FLOOR_Y, pl.x1 - 1, ROOM_FLOOR_Y + 1, rgb565(130, 124, 118));
     fillRect(pl.x0, ROOM_FLOOR_Y + 16, pl.x1 - 1, PLAY_Y1, rgb565(14, 12, 12));
   }
-  for (int i = 0; i < pitCount; i++) {                                     // the gaps: torn edges, a glow far below
+  for (int i = 0; i < (intact ? 0 : pitCount); i++) {                      // the gaps: torn edges, a glow far below
     int a = pits[i][0], b = pits[i][1];
     fillRect(a, ROOM_FLOOR_Y, b - 1, PLAY_Y1, rgb565(8, 4, 4));
     glowDisc((a + b) / 2.0f, (float)PLAY_Y1, 70, 255, 90, 30, 0.35f);
@@ -15291,6 +15321,7 @@ static void updateEscape(float dt) {
     if (escT >= 1.6f) {
       escState = 2;
       paintVossRoomFor(false);
+      veBayPainted = false;
       scene = SC_VOSS_ESCAPE;
       sceneT = 0;
     }
@@ -15326,7 +15357,9 @@ static void drawSceneCaption(const char *a, const char *b, float t, float t0) { 
   drawVectorText(a, SCREEN_W / 2, SCREEN_H - 92, 2.8f, rgb565(255, 200, 80), true);
   if (b) drawVectorText(b, SCREEN_W / 2, SCREEN_H - 56, 2.0f, rgb565(230, 230, 236), false);
 }
+static void drawVossBoardScene(float t);
 static void drawVossEscapeScene(float t) {                                 // Voss at his computer, the secret exit, gone
+  if (t >= VE_BAY - 0.15f) { drawVossBoardScene(t - VE_BAY); return; }
   memcpy(g_frame, roomBg, sizeof(roomBg));
   gfxClip(HUD_H, PLAY_Y1);
   const float typeEnd = 4.6f, doorEnd = 6.4f, walkEnd = 10.2f;
@@ -15357,7 +15390,73 @@ static void drawVossEscapeScene(float t) {                                 // Vo
   drawVectorText("MEANWHILE, IN DR. VOSS'S OFFICE...", 40 + vectorTextWidth("MEANWHILE, IN DR. VOSS'S OFFICE...", 1.8f) / 2, 200, 1.8f, rgb565(255, 200, 80), true);
   if (t < typeEnd) drawSceneCaption("DR. VOSS: 'AN UNPREDICTABLE VARIABLE...'", "'I WILL NOT LET ONE MAN UNDO EVERYTHING.'", t, 0.6f);
   else drawSceneCaption("DR. VOSS HEADS FOR HIS ESCAPE CAPSULE", nullptr, t, doorEnd);
-  float fade = t < 0.5f ? 1 - t / 0.5f : (t > VE_SECONDS - 0.5f ? (t - (VE_SECONDS - 0.5f)) / 0.5f : 0);
+  float fade = t < 0.5f ? 1 - t / 0.5f : (t > VE_BAY - 0.7f ? (t - (VE_BAY - 0.7f)) / 0.5f : 0);
+  if (fade > 0) blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, clampv(fade, 0.0f, 1.0f));
+}
+// ...and the launch bay, before the launch: clean, lit, the capsule in its cradle. In he comes, along the walkway,
+// up to the capsule; its hatch opens, he steps in, it shuts: sealed. (u: from VE_BAY)
+static void drawVossBoardScene(float u) {
+  memcpy(g_frame, roomBg, sizeof(roomBg));
+  gfxClip(HUD_H, PLAY_Y1);
+  const float walk0 = 0.2f, walk1 = 5.6f, open0 = 3.8f, open1 = 4.6f, in1 = 6.6f, shut0 = 6.9f, shut1 = 7.7f;
+  const int F = ROOM_FLOOR_Y, hx0 = CAP_HATCH_X0, hx1 = CAP_HATCH_X1, hy0 = CAP_HATCH_Y0, hcx = (hx0 + hx1) / 2;
+  bool sealed = u >= shut1;
+  for (int b = 0; b < 3; b++) {                                            // the beacons: turning once he's sealed in
+    float x = b == 2 ? 1190.0f : 220.0f + b * 520, y = CEIL_Y + 52;
+    fillRect((int)x - 8, CEIL_Y + 42, (int)x + 8, CEIL_Y + 46, rgb565(60, 56, 52));
+    fillCircle((int)x, (int)y, 8, sealed ? rgb565(200, 30, 24) : rgb565(110, 30, 26));
+    float a = u * 5 + b * 2.1f, c = cosf(a);
+    if (sealed && c > 0) { glowDisc(x + sinf(a) * 220, y + 150, 110, 255, 40, 30, 0.14f * c); glowDisc(x, y, 30, 255, 60, 40, 0.6f * c); }
+  }
+  {                                                                        // the lamp, whole, steady
+    float lx = 330, ly = CEIL_Y + 192;
+    drawLineF(330, CEIL_Y + 42.0f, lx, ly, rgb565(20, 20, 20), 2.0f);
+    int px[4] = { (int)lx - 14, (int)lx + 14, (int)lx + 8, (int)lx - 8 }, py[4] = { (int)ly + 14, (int)ly + 14, (int)ly, (int)ly };
+    fillPolygon(px, py, 4, rgb565(90, 94, 100));
+    glowDisc(lx, ly + 16, 90, 255, 230, 180, 0.35f);
+    fillCircle((int)lx, (int)ly + 15, 4, rgb565(255, 244, 210));
+  }
+  {                                                                        // the status screen
+    bool blink = fmodf(u, 0.8f) < 0.5f;
+    if (!sealed) {
+      drawVectorText("CAPSULE V-1", 730, 350, 1.6f, rgb565(100, 255, 140), false);
+      drawVectorText(u < open0 ? "READY" : "BOARDING", 730, 380, 1.8f, blink ? rgb565(100, 255, 140) : rgb565(40, 120, 70), true);
+    } else {
+      drawVectorText("CAPSULE SEALED", 730, 350, 1.6f, rgb565(255, 200, 80), false);
+      drawVectorText("LAUNCH", 730, 380, 1.8f, blink ? rgb565(255, 90, 70) : rgb565(120, 40, 30), true);
+    }
+  }
+  // him: in along the walkway, up to the hatch
+  AgentPose p = PERSON_IDLE;
+  float x = (float)hcx;
+  if (u < walk1) {
+    x = -40 + (hcx + 40) * clampv((u - walk0) / (walk1 - walk0), 0.0f, 1.0f);
+    personWalk(p, u * 1.9f);
+  } else if (u < in1 - 0.6f) p.head = -6;                                   // (a last look back)
+  float open = u < open0 ? 0 : (u < open1 ? (u - open0) / (open1 - open0) : (u < shut0 ? 1 : fmaxf(0.0f, 1 - (u - shut0) / (shut1 - shut0))));
+  float gone = clampv((u - (in1 - 0.6f)) / 0.6f, 0.0f, 1.0f);              // (stepping in: into the dark)
+  if (gone < 1) {
+    drawPersonU(p, x, F, 1, AGENT_SCALE, PK_PROFESSOR);
+    if (gone > 0) blendRect(hx0, hy0, hx1, F - 6, 14, 16, 20, gone);
+  }
+  // the hatch: two halves, sliding apart into the hull (and back)
+  int half = (hx1 - hx0) / 2, slide = (int)(half * open);
+  if (open < 1) {
+    fillRect(hx0, hy0, hx0 + half - slide, F - 6, rgb565(206, 210, 218));
+    fillRect(hx0 + half + slide, hy0, hx1, F - 6, rgb565(206, 210, 218));
+    fillRect(hx0 + half - slide, hy0, hx0 + half - slide, F - 6, rgb565(120, 124, 132));
+    fillRect(hx0 + half + slide, hy0, hx0 + half + slide, F - 6, rgb565(120, 124, 132));
+    if (open == 0) fillCircle(hcx, hy0 + 40, 7, rgb565(60, 120, 200));        // its porthole
+  }
+  if (u > open0 && u < open0 + 0.1f) sfxPlay(SFX_DOORS);
+  if (u > shut0 && u < shut0 + 0.1f) sfxPlay(SFX_DOORS);
+  if (u > shut1 && u < shut1 + 0.1f) sfxPlay(SFX_KLAXON);
+  if (sealed) fillCircle(hx1 + 14, hy0 + 14, 4, fmodf(u, 0.4f) < 0.2f ? rgb565(255, 60, 40) : rgb565(90, 20, 16));   // (the lamp over it: red)
+  else fillCircle(hx1 + 14, hy0 + 14, 4, rgb565(80, 220, 120));
+  gfxClipAll();
+  if (u < in1) drawSceneCaption("THE LAUNCH BAY", "DR. VOSS BOARDS HIS ESCAPE CAPSULE", u, 0.6f);
+  else drawSceneCaption("THE CAPSULE IS SEALED", "LAUNCH SEQUENCE STARTED", u, shut1);
+  float fade = u < 0 ? 1 : (u < 0.5f ? 1 - u / 0.5f : (u > (VE_SECONDS - VE_BAY) - 0.5f ? (u - ((VE_SECONDS - VE_BAY) - 0.5f)) / 0.5f : 0));
   if (fade > 0) blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, clampv(fade, 0.0f, 1.0f));
 }
 // The sky over the facility, at night: stars, the hills, the ground (the launch: its silo in it)
@@ -15460,7 +15559,17 @@ static void drawCapEndScene(float t, bool boom) {                          // hi
   float fade = t < 0.5f ? 1 - t / 0.5f : 0;
   if (fade > 0) blendRect(0, HUD_H, SCREEN_W - 1, SCREEN_H - 1, 0, 0, 0, clampv(fade, 0.0f, 1.0f));
 }
+static void paintBayFor() {                                                // the bay, as it was before the launch, into roomBg (the cut scene)
+  int sYL = doorYL;
+  doorYL = ROOM_FLOOR_Y;
+  gfxTarget = roomBg;
+  gfxClipAll();
+  paintLaunchBay(true);
+  gfxTarget = g_frame;
+  doorYL = sYL;
+}
 static void updateEscapeScene() {                                          // (from updateScene: the cut scenes' ends)
+  if (scene == SC_VOSS_ESCAPE && sceneT >= VE_BAY - 0.15f && !veBayPainted) { paintBayFor(); veBayPainted = true; }
   if (scene == SC_VOSS_ESCAPE && sceneT >= VE_SECONDS) {
     scene = SC_CAP_LAUNCH;
     sceneT = 0;

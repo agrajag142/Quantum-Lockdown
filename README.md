@@ -1,7 +1,7 @@
 # QUANTUM LOCKDOWN for the PS5
 
 A new full-screen game in the style of Impossible Mission, built from
-NUCLEAR MISSION's parts. Version 092: a title screen, the lift shafts, four
+NUCLEAR MISSION's parts. Version 093: a title screen, the lift shafts, four
 room designs (four levels each), a new layout of the complex every game,
 equipment to search, the score, health, first aid kits, a 15 minute
 countdown, the lift area's panel with its mini map, music and sound, things
@@ -888,7 +888,12 @@ him.
 by the lift - PLASMA BARRIERS - YOU'RE TRAPPED! Then the cut scenes:
 **MEANWHILE, IN DR. VOSS'S OFFICE...** - him at his computer (SECRET EXIT
 OPEN), a hidden door opening on the right of his office, him walking out
-through it (his own size now) - then **DR. VOSS'S ESCAPE CAPSULE HAS LAUNCHED** (the silo doors,
+through it (his own size now) - then **THE LAUNCH BAY** as it was before the
+launch (clean and lit, the floor whole, no fires, the screen showing CAPSULE V-1
+READY / BOARDING, the white V-1 capsule standing in its cradle): he walks in
+along the walkway to the capsule, its hatch slides open, he steps in, it shuts
+- THE CAPSULE IS SEALED / LAUNCH SEQUENCE STARTED, the beacons turning - then
+**DR. VOSS'S ESCAPE CAPSULE HAS LAUNCHED** (the silo doors,
 the smoke, the capsule climbing): OUT OF RANGE IN 5:00 - STOP IT! The barriers
 go, and the top bar shows **CAPSULE OUT OF RANGE m:ss** beside the nuclear
 clock (which never stops - it can all happen before the missiles are dealt
